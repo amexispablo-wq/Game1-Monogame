@@ -13,6 +13,7 @@ public sealed class EditorScene : IScene
     private const int MinPlatformSize = GridSize; // Must be at least one grid cell
 
     private readonly Game1 _game;
+    private readonly string _levelId;
     private readonly Level _level;
     private readonly Camera _camera;
     private readonly Button _backButton = new("Back to Menu") { TextScale = 2 };
@@ -48,10 +49,11 @@ public sealed class EditorScene : IScene
     private bool _goalSlotHovered;
     private bool _isDirty;
 
-    public EditorScene(Game1 game)
+    public EditorScene(Game1 game, string levelId = "level_1")
     {
         _game = game;
-        _level = LevelStorage.LoadOrCreateDefault();
+        _levelId = levelId;
+        _level = LevelManager.LoadLevel(levelId);
         _camera = new Camera(new Vector2(game.Viewport.Width * 0.5f, game.Viewport.Height * 0.5f));
     }
 
@@ -63,13 +65,13 @@ public sealed class EditorScene : IScene
         if (_backButton.Update(_game.Input))
         {
             SaveLevel();
-            _game.ChangeScene(new MenuScene(_game));
+            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
             return;
         }
 
         if (_game.Input.ExitPressed)
         {
-            _game.ChangeScene(new MenuScene(_game));
+            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
             return;
         }
 
@@ -1093,7 +1095,7 @@ public sealed class EditorScene : IScene
             return;
         }
 
-        LevelStorage.Save(_level);
+        LevelManager.SaveLevel(_level, _levelId);
         _isDirty = false;
     }
 

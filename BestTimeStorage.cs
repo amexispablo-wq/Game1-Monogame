@@ -36,6 +36,21 @@ public static class BestTimeStorage
         return LoadAll().TryGetValue(levelId, out bestTime);
     }
 
+    public static void ResetLevelRecord(string levelId)
+    {
+        Dictionary<string, float> bestTimes = LoadAll();
+        if (bestTimes.ContainsKey(levelId))
+        {
+            bestTimes.Remove(levelId);
+            SaveAll(bestTimes);
+        }
+    }
+
+    public static void DeleteLevelRecord(string levelId)
+    {
+        ResetLevelRecord(levelId);
+    }
+
     public static float RoundToCentiseconds(float elapsedSeconds)
     {
         return MathF.Floor(MathF.Max(0f, elapsedSeconds) * 100f) / 100f;

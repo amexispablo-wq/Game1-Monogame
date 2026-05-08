@@ -14,6 +14,7 @@ public sealed class InputManager
     public bool JumpPressed { get; private set; }
     public bool FastFallHeld { get; private set; }
     public bool ExitPressed { get; private set; }
+    public bool EnterPressed { get; private set; }
     public bool DebugTogglePressed { get; private set; }
     public bool LeftMousePressed { get; private set; }
     public bool LeftMouseHeld { get; private set; }
@@ -53,6 +54,7 @@ public sealed class InputManager
         JumpPressed = IsNewKeyPress(Keys.Space) || IsNewKeyPress(Keys.W);
         FastFallHeld = _currentKeyboard.IsKeyDown(Keys.S);
         ExitPressed = IsNewKeyPress(Keys.Escape);
+        EnterPressed = IsNewKeyPress(Keys.Enter);
         DebugTogglePressed = IsNewKeyPress(Keys.F3);
         ControlHeld = _currentKeyboard.IsKeyDown(Keys.LeftControl) || _currentKeyboard.IsKeyDown(Keys.RightControl);
         ShiftHeld = _currentKeyboard.IsKeyDown(Keys.LeftShift) || _currentKeyboard.IsKeyDown(Keys.RightShift);

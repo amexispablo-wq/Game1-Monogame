@@ -32,3 +32,4 @@ C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.pdb
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.genruntimeconfig.cache
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\ref\Game1 Monogame.dll
 C:\Users\amexi\Desktop\Game1 Monogame\bin\Debug\net9.0\Content\level.json
+C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.sourcelink.json

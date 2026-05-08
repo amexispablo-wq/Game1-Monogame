@@ -9,6 +9,7 @@ public sealed class GameScene : IScene
     private const float CompletionReturnDelaySeconds = 3f;
 
     private readonly Game1 _game;
+    private readonly string _levelId;
     private readonly Level _level;
     private readonly Player _player;
     private readonly Camera _camera;
@@ -22,10 +23,11 @@ public sealed class GameScene : IScene
     private float _completionReturnDelay;
     private float _completionUiElapsed;
 
-    public GameScene(Game1 game)
+    public GameScene(Game1 game, string levelId = "level_1")
     {
         _game = game;
-        _level = LevelStorage.LoadOrCreateDefault();
+        _levelId = levelId;
+        _level = LevelManager.LoadLevel(levelId);
         _player = new Player(_level.PlayerStart);
         _camera = new Camera(GetPlayerCenter());
         timerRunning = true;
@@ -45,13 +47,13 @@ public sealed class GameScene : IScene
 
             if (CanReturnToMenu() && _backButton.Update(_game.Input))
             {
-                _game.ChangeScene(new MenuScene(_game));
+                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
                 return;
             }
 
             if (CanReturnToMenu() && _game.Input.ExitPressed)
             {
-                _game.ChangeScene(new MenuScene(_game));
+                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
                 return;
             }
 
@@ -60,13 +62,13 @@ public sealed class GameScene : IScene
 
         if (_backButton.Update(_game.Input))
         {
-            _game.ChangeScene(new MenuScene(_game));
+            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
             return;
         }
 
         if (_game.Input.ExitPressed)
         {
-            _game.ChangeScene(new MenuScene(_game));
+            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
             return;
         }
 
@@ -162,7 +164,7 @@ public sealed class GameScene : IScene
         _levelComplete = true;
         _finalTime = BestTimeStorage.RoundToCentiseconds(elapsedTime);
         elapsedTime = _finalTime;
-        _newRecord = BestTimeStorage.SaveIfRecord(LevelStorage.LevelId, _finalTime);
+        _newRecord = BestTimeStorage.SaveIfRecord(_levelId, _finalTime);
         _completionReturnDelay = CompletionReturnDelaySeconds;
         _completionUiElapsed = 0f;
     }

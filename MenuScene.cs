@@ -26,11 +26,11 @@ public sealed class MenuScene : IScene
 
         if (_playButton.Update(_game.Input))
         {
-            _game.ChangeScene(new GameScene(_game));
+            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
         }
         else if (_editorButton.Update(_game.Input))
         {
-            _game.ChangeScene(new EditorScene(_game));
+            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
         }
     }
 

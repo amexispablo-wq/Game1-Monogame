@@ -14,16 +14,19 @@ public sealed class Level
     {
         PlayerStart = new Vector2(100f, 300f);
         WorldSize = new Point(1280, 720);
+        Name = string.Empty;
     }
 
-    public Level(Vector2 playerStart, IEnumerable<Platform> platforms, IEnumerable<Goal> goals)
+    public Level(Vector2 playerStart, IEnumerable<Platform> platforms, IEnumerable<Goal> goals, string name = "")
     {
         PlayerStart = playerStart;
+        Name = name;
         _platforms.AddRange(platforms);
         _goals.AddRange(goals);
         RecalculateWorldSize();
     }
 
+    public string Name { get; set; }
     public Vector2 PlayerStart { get; set; }
     public Point WorldSize { get; private set; }
     public IReadOnlyList<Platform> Platforms => _platforms;
@@ -68,13 +71,14 @@ public sealed class Level
             goals.Add(new Goal(new Point(goal.X, goal.Y)));
         }
 
-        return new Level(new Vector2(data.PlayerSpawn.X, data.PlayerSpawn.Y), platforms, goals);
+        return new Level(new Vector2(data.PlayerSpawn.X, data.PlayerSpawn.Y), platforms, goals, data.Name);
     }
 
     public LevelData ToData()
     {
         LevelData data = new()
         {
+            Name = Name,
             PlayerSpawn = new Vector2Data { X = PlayerStart.X, Y = PlayerStart.Y }
         };
 

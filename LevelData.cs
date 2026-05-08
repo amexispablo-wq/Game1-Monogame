@@ -5,6 +5,9 @@ namespace Game1_Monogame;
 
 public sealed class LevelData
 {
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
     [JsonPropertyName("platforms")]
     public List<PlatformData> Platforms { get; set; } = new();
 
