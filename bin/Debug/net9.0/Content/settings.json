@@ -1,0 +1,15 @@
+{
+  "displayMode": "Borderless",
+  "resolutionWidth": 2560,
+  "resolutionHeight": 1080,
+  "musicVolume": 0.8233333,
+  "keybindings": {
+    "MoveLeft": "A",
+    "MoveRight": "D",
+    "Jump": "Space",
+    "FastFall": "S",
+    "Red": "J",
+    "Blue": "K",
+    "Green": "L"
+  }
+}

@@ -415,6 +415,18 @@ public static class SimpleTextRenderer
         DrawString(spriteBatch, pixel, text, position, scale, color);
     }
 
+    public static void DrawLeft(SpriteBatch spriteBatch, Texture2D pixel, string text, Vector2 position, int scale, Color color)
+    {
+        DrawString(spriteBatch, pixel, text, position, scale, color);
+    }
+
+    public static void DrawRight(SpriteBatch spriteBatch, Texture2D pixel, string text, Vector2 position, int scale, Color color)
+    {
+        Point size = MeasureString(text, scale);
+        Vector2 rightPos = new(position.X - size.X, position.Y);
+        DrawString(spriteBatch, pixel, text, rightPos, scale, color);
+    }
+
     public static void DrawString(SpriteBatch spriteBatch, Texture2D pixel, string text, Vector2 position, int scale, Color color)
     {
         if (scale <= 0)

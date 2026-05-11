@@ -23,11 +23,24 @@ public class Game1 : Game
 
         Content.RootDirectory = "Content";
         IsMouseVisible = true;
+
+        // Load settings before creating window
+        SettingsManager.Initialize();
+        var settings = SettingsManager.CurrentSettings;
+        _graphics.PreferredBackBufferWidth = settings.ResolutionWidth;
+        _graphics.PreferredBackBufferHeight = settings.ResolutionHeight;
     }
 
     public InputManager Input => _input;
     public Texture2D Pixel => _pixel;
     public Viewport Viewport => GraphicsDevice.Viewport;
+
+    public void ApplyGraphicsSettings(int width, int height)
+    {
+        _graphics.PreferredBackBufferWidth = width;
+        _graphics.PreferredBackBufferHeight = height;
+        _graphics.ApplyChanges();
+    }
 
     public void ChangeScene(IScene scene)
     {

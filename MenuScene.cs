@@ -8,6 +8,7 @@ public sealed class MenuScene : IScene
     private readonly Game1 _game;
     private readonly Button _playButton = new("Play");
     private readonly Button _editorButton = new("Level Editor");
+    private readonly Button _optionsButton = new("Options");
 
     public MenuScene(Game1 game)
     {
@@ -32,6 +33,10 @@ public sealed class MenuScene : IScene
         {
             _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
         }
+        else if (_optionsButton.Update(_game.Input))
+        {
+            _game.ChangeScene(new OptionsScene(_game));
+        }
     }
 
     public void Draw(GameTime gameTime, SpriteBatch spriteBatch)
@@ -48,6 +53,7 @@ public sealed class MenuScene : IScene
 
         _playButton.Draw(spriteBatch, pixel);
         _editorButton.Draw(spriteBatch, pixel);
+        _optionsButton.Draw(spriteBatch, pixel);
 
         spriteBatch.End();
     }
@@ -55,14 +61,16 @@ public sealed class MenuScene : IScene
     private void LayoutButtons()
     {
         Viewport viewport = _game.Viewport;
-        const int buttonWidth = 380;
-        const int buttonHeight = 82;
-        const int gap = 24;
+        var layout = ButtonRowLayout.Create(
+            new[] { "Play", "Level Editor", "Options" },
+            viewport.Width, viewport.Height,
+            82, 16, 12, 24, 160);
 
-        int x = (viewport.Width - buttonWidth) / 2;
-        int y = (viewport.Height - ((buttonHeight * 2) + gap)) / 2;
-
-        _playButton.Bounds = new Rectangle(x, y, buttonWidth, buttonHeight);
-        _editorButton.Bounds = new Rectangle(x, y + buttonHeight + gap, buttonWidth, buttonHeight);
+        if (layout.ButtonBounds.Length >= 3)
+        {
+            _playButton.Bounds = layout.ButtonBounds[0];
+            _editorButton.Bounds = layout.ButtonBounds[1];
+            _optionsButton.Bounds = layout.ButtonBounds[2];
+        }
     }
 }
