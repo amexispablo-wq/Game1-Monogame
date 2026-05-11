@@ -6,17 +6,7 @@ namespace Game1_Monogame;
 
 public sealed class Player
 {
-    private const float MoveSpeed = 230f;
-    private const float GroundAcceleration = 20f;
-    private const float AirAcceleration = 9f;
-    private const float Gravity = 1600f;
-    private const float FastFallGravity = 2400f;
-    private const float JumpForce = 560f;
-    private const float MaxLaunchSpeed = 4000f;
-    private const float LaunchControlSeconds = 0.24f;
-    private const float LaunchInputAcceleration = 650f;
-    private const float MaxHorizontalVelocity = 760f;
-    private const float MaxVerticalVelocity = 1100f;
+    private const float MinMass = 0.01f;
     private const float ResolveLaunchCooldownSeconds = 0.12f;
     private const float DebugEscapeVectorSeconds = 0.5f;
     private const int MaxOverlapResolveIterations = 10;
@@ -28,62 +18,207 @@ public sealed class Player
     private float _debugEscapeVectorTimeRemaining;
     private Vector2 _debugEscapeVectorStart;
     private Vector2 _debugEscapeVector;
+    private Vector2 _forceAccumulator;
+    private float _mass = 1f;
 
-    public Player(Vector2 startPosition)
+    public Player(PlayerId playerId, int playerIndex, Vector2 startPosition, InputDevice assignedInput)
     {
+        PlayerId = playerId;
+        PlayerIndex = playerIndex;
         Position = startPosition;
+        AssignedInput = assignedInput;
         CurrentColor = GameColor.Red;
     }
 
-    public Vector2 Position { get; private set; }
-    public Vector2 Velocity { get; private set; }
+    public PlayerId PlayerId { get; }
+    public int PlayerIndex { get; }
+    public InputDevice AssignedInput { get; set; }
+    public Vector2 Position { get; set; }
+    public Vector2 Velocity { get; set; }
+    public Vector2 Acceleration { get; private set; }
     public Vector2 Size { get; } = new(40f, 40f);
     public GameColor CurrentColor { get; private set; }
-    public bool IsOnGround { get; private set; }
-    public Rectangle Bounds => CollisionHelper.ToRectangle(Position, Size);
-
-    public void Update(GameTime gameTime, InputManager input, Level level)
+    public GameColor PlayerColor => CurrentColor;
+    public bool IsGrounded { get; internal set; }
+    public bool IsOnGround => IsGrounded;
+    public bool IsFrozen { get; private set; }
+    public Vector2 LastCollisionNormal { get; internal set; }
+    public Vector2 LastCollisionCorrection { get; internal set; }
+    public float GravityScale { get; set; } = 1f;
+    public float FastFallGravityMultiplier { get; set; } = 1.5f;
+    public float GroundAcceleration { get; set; } = 2600f;
+    public float AirAcceleration { get; set; } = 1050f;
+    public float GroundFriction { get; set; } = 16f;
+    public float AirDrag { get; set; } = 0.35f;
+    public float MaxMoveSpeed { get; set; } = 260f;
+    public float MaxHorizontalVelocity { get; set; } = 760f;
+    public float MaxVerticalVelocity { get; set; } = 1150f;
+    public float JumpImpulse { get; set; } = 560f;
+    public float MaxLaunchImpulse { get; set; } = 4000f;
+    public float LaunchControlSeconds { get; set; } = 0.24f;
+    public float LaunchControlAcceleration { get; set; } = 650f;
+    public float Mass
     {
-        float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, 1f / 30f);
-
-        UpdateResolvedCollisionState(dt, level);
-        UpdateLaunchState(dt);
-        UpdateDebugEscapeVector(dt);
-        HandleColorChange(input, level);
-
-        IsOnGround = CollisionHelper.HasGroundBelow(Position, Size, level, CurrentColor);
-
-        ApplyHorizontalMovement(input, dt);
-
-        if (input.JumpPressed && IsOnGround)
-        {
-            Velocity = new Vector2(Velocity.X, -JumpForce);
-            IsOnGround = false;
-        }
-
-        float gravity = input.FastFallHeld && Velocity.Y > 0f ? FastFallGravity : Gravity;
-        Velocity = new Vector2(Velocity.X, Velocity.Y + gravity * dt);
-        ClampVelocity();
-
-        MoveAndCollideHorizontally(dt, level);
-        MoveAndCollideVertically(dt, level);
-        UpdateGroundedLaunchEnd();
+        get => _mass;
+        set => _mass = MathF.Max(MinMass, value);
     }
 
-    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw)
+    public Rectangle Bounds => CollisionHelper.ToRectangle(Position, Size);
+
+    public void AddForce(Vector2 force)
+    {
+        if (!IsFrozen)
+        {
+            _forceAccumulator += force;
+        }
+    }
+
+    public void AddImpulse(Vector2 impulse)
+    {
+        if (!IsFrozen)
+        {
+            Velocity += impulse / Mass;
+        }
+    }
+
+    public void Freeze()
+    {
+        IsFrozen = true;
+        Velocity = Vector2.Zero;
+        Acceleration = Vector2.Zero;
+        _forceAccumulator = Vector2.Zero;
+    }
+
+    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, bool drawIndicator = true)
     {
         Rectangle bounds = Bounds;
         spriteBatch.Draw(pixel, bounds, CurrentColor.ToXnaColor());
         DrawHelper.DrawBorder(spriteBatch, pixel, bounds, Color.Black, 3);
 
+        if (drawIndicator)
+        {
+            DrawPlayerIndicator(spriteBatch, pixel, bounds);
+        }
+
         if (debugDraw)
         {
-            DrawHelper.DrawBorder(spriteBatch, pixel, bounds, Color.White, 1);
+            DrawHelper.DrawBorder(spriteBatch, pixel, bounds, IsGrounded ? Color.LimeGreen : Color.White, 1);
+            DrawDebugPhysics(spriteBatch, pixel);
             DrawDebugEscapeVector(spriteBatch, pixel);
         }
     }
 
-    private void HandleColorChange(InputManager input, Level level)
+    internal void BeginPhysicsStep(float dt, Level level)
+    {
+        LastCollisionNormal = Vector2.Zero;
+        LastCollisionCorrection = Vector2.Zero;
+        UpdateResolvedCollisionState(dt, level);
+        UpdateLaunchState(dt);
+        UpdateDebugEscapeVector(dt);
+    }
+
+    internal void HandleInputState(InputActionState input, Level level)
+    {
+        HandleColorChange(input, level);
+    }
+
+    internal void RefreshGroundedState(Level level)
+    {
+        IsGrounded = CollisionHelper.HasGroundBelow(Position, Size, level, CurrentColor);
+    }
+
+    internal void ApplyMovementForces(InputActionState input)
+    {
+        float horizontalInput = MathHelper.Clamp(input.HorizontalMovement, -1f, 1f);
+
+        if (_justLaunched)
+        {
+            AddForce(new Vector2(LaunchControlAcceleration * horizontalInput * Mass, 0f));
+            ApplyHorizontalDrag(IsGrounded ? GroundFriction * 0.15f : AirDrag);
+            return;
+        }
+
+        if (MathF.Abs(horizontalInput) > 0.01f)
+        {
+            float acceleration = IsGrounded ? GroundAcceleration : AirAcceleration;
+            bool alreadyPastMoveSpeed = MathF.Abs(Velocity.X) >= MaxMoveSpeed
+                && MathF.Sign(Velocity.X) == MathF.Sign(horizontalInput);
+
+            if (!alreadyPastMoveSpeed)
+            {
+                AddForce(new Vector2(horizontalInput * acceleration * Mass, 0f));
+            }
+        }
+
+        if (MathF.Abs(horizontalInput) <= 0.01f || !IsGrounded)
+        {
+            ApplyHorizontalDrag(IsGrounded ? GroundFriction : AirDrag);
+        }
+    }
+
+    internal void ApplyJumpImpulse(InputActionState input)
+    {
+        if (!input.JumpPressed || !IsGrounded)
+        {
+            return;
+        }
+
+        AddImpulse(new Vector2(0f, -JumpImpulse * Mass));
+        IsGrounded = false;
+    }
+
+    internal void ApplyGravity(float gravity, InputActionState input)
+    {
+        float gravityMultiplier = input.FastFallHeld && Velocity.Y > 0f
+            ? GravityScale * FastFallGravityMultiplier
+            : GravityScale;
+
+        AddForce(new Vector2(0f, gravity * gravityMultiplier * Mass));
+    }
+
+    internal void IntegrateForces(float dt)
+    {
+        Acceleration = _forceAccumulator / Mass;
+        Velocity += Acceleration * dt;
+        _forceAccumulator = Vector2.Zero;
+    }
+
+    internal void IntegratePosition(Vector2 delta)
+    {
+        Position += delta;
+    }
+
+    internal void ApplyCollisionCorrection(Vector2 correction, Vector2 normal)
+    {
+        Position += correction;
+        LastCollisionCorrection = correction;
+        LastCollisionNormal = normal;
+    }
+
+    internal void ClampVelocity()
+    {
+        Velocity = Vector2.Clamp(
+            Velocity,
+            new Vector2(-MaxHorizontalVelocity, -MaxVerticalVelocity),
+            new Vector2(MaxHorizontalVelocity, MaxVerticalVelocity));
+    }
+
+    internal void FinishPhysicsStep()
+    {
+        UpdateGroundedLaunchEnd();
+    }
+
+    private void ApplyHorizontalDrag(float drag)
+    {
+        if (MathF.Abs(Velocity.X) <= 0.01f)
+        {
+            return;
+        }
+
+        AddForce(new Vector2(-Velocity.X * drag * Mass, 0f));
+    }
+
+    private void HandleColorChange(InputActionState input, Level level)
     {
         if (input.RequestedColor is not { } requestedColor || requestedColor == CurrentColor)
         {
@@ -96,7 +231,7 @@ public sealed class Player
 
     private void ResolveEmbeddedOverlaps(Level level)
     {
-        IsOnGround = false;
+        IsGrounded = false;
         Vector2 launchDirection = Vector2.Zero;
         float launchSpeed = 0f;
         bool resolvedOverlap = false;
@@ -138,18 +273,18 @@ public sealed class Player
                 break;
             }
 
-            Position += bestEscape;
+            ApplyCollisionCorrection(bestEscape, bestEscapeDirection);
             resolvedOverlap = true;
 
             float normalizedDepth = bestPenetrationDepth / bestPlatformSize;
-            float candidateLaunchSpeed = MathF.Min(normalizedDepth * MaxLaunchSpeed, MaxLaunchSpeed);
+            float candidateLaunchSpeed = MathF.Min(normalizedDepth * MaxLaunchImpulse, MaxLaunchImpulse);
             if (candidateLaunchSpeed > launchSpeed)
             {
                 launchSpeed = candidateLaunchSpeed;
                 launchDirection = bestEscapeDirection;
             }
 
-            IsOnGround = bestEscape.Y < 0f;
+            IsGrounded = bestEscape.Y < 0f;
         }
 
         if (!resolvedOverlap || _justResolvedCollision || launchDirection == Vector2.Zero)
@@ -157,7 +292,7 @@ public sealed class Player
             return;
         }
 
-        Velocity += launchDirection * launchSpeed;
+        AddImpulse(launchDirection * launchSpeed * Mass);
         ClampVelocity();
         _justLaunched = true;
         _launchControlRemaining = LaunchControlSeconds;
@@ -166,21 +301,6 @@ public sealed class Player
         _debugEscapeVectorTimeRemaining = DebugEscapeVectorSeconds;
         _debugEscapeVectorStart = Position + (Size * 0.5f);
         _debugEscapeVector = launchDirection * MathHelper.Clamp(launchSpeed * 0.16f, 20f, 96f);
-    }
-
-    private void ApplyHorizontalMovement(InputManager input, float dt)
-    {
-        if (_justLaunched)
-        {
-            float inputAcceleration = LaunchInputAcceleration * input.HorizontalMovement * dt;
-            Velocity = new Vector2(Velocity.X + inputAcceleration, Velocity.Y);
-            return;
-        }
-
-        float acceleration = IsOnGround ? GroundAcceleration : AirAcceleration;
-        float targetVelocityX = input.HorizontalMovement * MoveSpeed;
-        float smoothing = 1f - MathF.Exp(-acceleration * dt);
-        Velocity = new Vector2(MathHelper.Lerp(Velocity.X, targetVelocityX, smoothing), Velocity.Y);
     }
 
     private void UpdateLaunchState(float dt)
@@ -199,18 +319,10 @@ public sealed class Player
 
     private void UpdateGroundedLaunchEnd()
     {
-        if (_justLaunched && IsOnGround && _launchControlRemaining < LaunchControlSeconds - 0.08f)
+        if (_justLaunched && IsGrounded && _launchControlRemaining < LaunchControlSeconds - 0.08f)
         {
             _justLaunched = false;
         }
-    }
-
-    private void ClampVelocity()
-    {
-        Velocity = Vector2.Clamp(
-            Velocity,
-            new Vector2(-MaxHorizontalVelocity, -MaxVerticalVelocity),
-            new Vector2(MaxHorizontalVelocity, MaxVerticalVelocity));
     }
 
     private void UpdateResolvedCollisionState(float dt, Level level)
@@ -248,6 +360,32 @@ public sealed class Player
         }
     }
 
+    private void DrawDebugPhysics(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        Vector2 center = Position + (Size * 0.5f);
+        DrawDebugVector(spriteBatch, pixel, center, Velocity * 0.12f, Color.Cyan);
+        DrawDebugVector(spriteBatch, pixel, center, Acceleration * 0.015f, new Color(255, 168, 64));
+
+        if (LastCollisionNormal != Vector2.Zero)
+        {
+            DrawDebugVector(spriteBatch, pixel, center, LastCollisionNormal * 28f, Color.LimeGreen);
+        }
+    }
+
+    private void DrawDebugVector(SpriteBatch spriteBatch, Texture2D pixel, Vector2 start, Vector2 vector, Color color)
+    {
+        if (vector == Vector2.Zero)
+        {
+            return;
+        }
+
+        Vector2 corner = start + new Vector2(vector.X, 0f);
+        DrawAxisSegment(spriteBatch, pixel, start, corner, color, 3);
+        DrawAxisSegment(spriteBatch, pixel, corner, start + vector, color, 3);
+        Vector2 end = start + vector;
+        spriteBatch.Draw(pixel, new Rectangle((int)MathF.Round(end.X) - 3, (int)MathF.Round(end.Y) - 3, 6, 6), color);
+    }
+
     private void DrawDebugEscapeVector(SpriteBatch spriteBatch, Texture2D pixel)
     {
         if (_debugEscapeVectorTimeRemaining <= 0f || _debugEscapeVector == Vector2.Zero)
@@ -256,73 +394,38 @@ public sealed class Player
         }
 
         Vector2 end = _debugEscapeVectorStart + _debugEscapeVector;
-        const int thickness = 4;
-
-        if (MathF.Abs(_debugEscapeVector.X) >= MathF.Abs(_debugEscapeVector.Y))
-        {
-            int left = (int)MathF.Round(MathF.Min(_debugEscapeVectorStart.X, end.X));
-            int width = (int)MathF.Round(MathF.Abs(_debugEscapeVector.X)) + thickness;
-            int y = (int)MathF.Round(_debugEscapeVectorStart.Y - (thickness * 0.5f));
-            spriteBatch.Draw(pixel, new Rectangle(left, y, width, thickness), Color.Yellow);
-        }
-        else
-        {
-            int x = (int)MathF.Round(_debugEscapeVectorStart.X - (thickness * 0.5f));
-            int top = (int)MathF.Round(MathF.Min(_debugEscapeVectorStart.Y, end.Y));
-            int height = (int)MathF.Round(MathF.Abs(_debugEscapeVector.Y)) + thickness;
-            spriteBatch.Draw(pixel, new Rectangle(x, top, thickness, height), Color.Yellow);
-        }
-
+        DrawAxisSegment(spriteBatch, pixel, _debugEscapeVectorStart, end, Color.Yellow, 4);
         spriteBatch.Draw(pixel, new Rectangle((int)MathF.Round(end.X) - 5, (int)MathF.Round(end.Y) - 5, 10, 10), Color.Yellow);
     }
 
-    private void MoveAndCollideHorizontally(float dt, Level level)
+    private static void DrawAxisSegment(SpriteBatch spriteBatch, Texture2D pixel, Vector2 start, Vector2 end, Color color, int thickness)
     {
-        Position += new Vector2(Velocity.X * dt, 0f);
-
-        foreach (Platform platform in level.GetCollidablePlatforms(CurrentColor))
+        if (MathF.Abs(end.X - start.X) >= MathF.Abs(end.Y - start.Y))
         {
-            if (!CollisionHelper.Intersects(Position, Size, platform.Bounds))
-            {
-                continue;
-            }
-
-            if (Velocity.X > 0f)
-            {
-                Position = new Vector2(platform.Bounds.Left - Size.X, Position.Y);
-            }
-            else if (Velocity.X < 0f)
-            {
-                Position = new Vector2(platform.Bounds.Right, Position.Y);
-            }
-
-            Velocity = new Vector2(0f, Velocity.Y);
+            int left = (int)MathF.Round(MathF.Min(start.X, end.X));
+            int width = (int)MathF.Round(MathF.Abs(end.X - start.X)) + thickness;
+            int y = (int)MathF.Round(start.Y - (thickness * 0.5f));
+            spriteBatch.Draw(pixel, new Rectangle(left, y, width, thickness), color);
+        }
+        else
+        {
+            int x = (int)MathF.Round(start.X - (thickness * 0.5f));
+            int top = (int)MathF.Round(MathF.Min(start.Y, end.Y));
+            int height = (int)MathF.Round(MathF.Abs(end.Y - start.Y)) + thickness;
+            spriteBatch.Draw(pixel, new Rectangle(x, top, thickness, height), color);
         }
     }
 
-    private void MoveAndCollideVertically(float dt, Level level)
+    private void DrawPlayerIndicator(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds)
     {
-        Position += new Vector2(0f, Velocity.Y * dt);
-        IsOnGround = false;
+        string label = (PlayerIndex + 1).ToString();
+        const int scale = 2;
+        Point textSize = SimpleTextRenderer.MeasureString(label, scale);
+        Vector2 position = new(
+            bounds.Center.X - (textSize.X * 0.5f),
+            bounds.Top - textSize.Y - 6);
 
-        foreach (Platform platform in level.GetCollidablePlatforms(CurrentColor))
-        {
-            if (!CollisionHelper.Intersects(Position, Size, platform.Bounds))
-            {
-                continue;
-            }
-
-            if (Velocity.Y > 0f)
-            {
-                Position = new Vector2(Position.X, platform.Bounds.Top - Size.Y);
-                IsOnGround = true;
-            }
-            else if (Velocity.Y < 0f)
-            {
-                Position = new Vector2(Position.X, platform.Bounds.Bottom);
-            }
-
-            Velocity = new Vector2(Velocity.X, 0f);
-        }
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, label, position + new Vector2(1f, 1f), scale, Color.Black);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, label, position, scale, Color.White);
     }
 }

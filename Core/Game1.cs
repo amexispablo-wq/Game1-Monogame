@@ -1,7 +1,6 @@
 #nullable enable
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
 
 namespace Game1_Monogame;
 
@@ -92,11 +91,6 @@ public class Game1 : Game
     protected override void Update(GameTime gameTime)
     {
         _input.Update();
-
-        if (GamePad.GetState(PlayerIndex.One).Buttons.Back == ButtonState.Pressed)
-        {
-            ExitGame();
-        }
 
         _currentScene.Update(gameTime);
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -7,11 +8,15 @@ namespace Game1_Monogame;
 public sealed class GameScene : IScene
 {
     private const float CompletionReturnDelaySeconds = 3f;
+    private const float MaxPhysicsFrameTime = 0.25f;
+    private const float PlayerSpawnSpacing = 50f;
+    private const int MaxPhysicsStepsPerFrame = 5;
 
     private readonly Game1 _game;
     private readonly string _levelId;
     private readonly Level _level;
-    private readonly Player _player;
+    private readonly List<Player> _players;
+    private readonly PhysicsWorld _physicsWorld;
     private readonly Camera _camera;
     private readonly Button _backButton = new("Back to Menu") { TextScale = 2 };
     private float elapsedTime;
@@ -22,14 +27,16 @@ public sealed class GameScene : IScene
     private bool _newRecord;
     private float _completionReturnDelay;
     private float _completionUiElapsed;
+    private float _physicsAccumulator;
 
     public GameScene(Game1 game, string levelId = "level_1")
     {
         _game = game;
         _levelId = levelId;
         _level = LevelManager.LoadLevel(levelId);
-        _player = new Player(_level.PlayerStart);
-        _camera = new Camera(GetPlayerCenter());
+        _players = CreatePlayers();
+        _physicsWorld = new PhysicsWorld(_level, _players);
+        _camera = new Camera(GetPlayersCenter());
         timerRunning = true;
     }
 
@@ -37,7 +44,7 @@ public sealed class GameScene : IScene
     {
         LayoutBackButton();
 
-        float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+        float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, MaxPhysicsFrameTime);
 
         if (_levelComplete)
         {
@@ -77,14 +84,15 @@ public sealed class GameScene : IScene
             _debugDraw = !_debugDraw;
         }
 
+        HandlePlayerSelectionClick();
+
         if (timerRunning)
         {
             elapsedTime += dt;
         }
 
-        _player.Update(gameTime, _game.Input, _level);
-
-        if (IsPlayerTouchingGoal())
+        UpdatePhysics(dt);
+        if (!_levelComplete && IsAnyPlayerTouchingGoal())
         {
             CompleteLevel();
         }
@@ -107,12 +115,17 @@ public sealed class GameScene : IScene
             transformMatrix: _camera.GetTransform(viewport));
 
         _level.Draw(spriteBatch, _game.Pixel, _debugDraw);
-        _player.Draw(spriteBatch, _game.Pixel, _debugDraw);
+        _physicsWorld.DrawRopes(spriteBatch, _game.Pixel, _debugDraw);
+        foreach (Player player in _players)
+        {
+            player.Draw(spriteBatch, _game.Pixel, _debugDraw);
+        }
 
         spriteBatch.End();
 
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         DrawTimer(spriteBatch, _game.Pixel, viewport);
+        DrawPlayerHud(spriteBatch, _game.Pixel, viewport);
 
         if (_levelComplete)
         {
@@ -127,26 +140,167 @@ public sealed class GameScene : IScene
         spriteBatch.End();
     }
 
+    private List<Player> CreatePlayers()
+    {
+        List<Player> players = new();
+        int spawnIndex = 0;
+
+        foreach (InputProfile profile in _game.Input.ActiveProfiles)
+        {
+            Vector2 spawnPosition = _level.PlayerStart + new Vector2(PlayerSpawnSpacing * spawnIndex, 0f);
+            players.Add(new Player(profile.PlayerId, profile.PlayerIndex, spawnPosition, profile.AssignedInput));
+            spawnIndex++;
+        }
+
+        if (players.Count == 0)
+        {
+            players.Add(new Player(PlayerId.Player1, 0, _level.PlayerStart, InputDevice.Keyboard));
+        }
+
+        return players;
+    }
+
+    private void HandlePlayerSelectionClick()
+    {
+        if (!_game.Input.LeftMousePressed)
+        {
+            return;
+        }
+
+        Matrix inverseCameraTransform = Matrix.Invert(_camera.GetTransform(_game.Viewport));
+        Vector2 worldPosition = Vector2.Transform(
+            new Vector2(_game.Input.MousePosition.X, _game.Input.MousePosition.Y),
+            inverseCameraTransform);
+
+        for (int i = _players.Count - 1; i >= 0; i--)
+        {
+            Player player = _players[i];
+            if (!player.Bounds.Contains((int)MathF.Floor(worldPosition.X), (int)MathF.Floor(worldPosition.Y)))
+            {
+                continue;
+            }
+
+            SetKeyboardControlledPlayer(player);
+            return;
+        }
+    }
+
+    private void SetKeyboardControlledPlayer(Player controlledPlayer)
+    {
+        _game.Input.SetKeyboardControlledPlayer(controlledPlayer.PlayerId);
+
+        foreach (Player player in _players)
+        {
+            if (player.AssignedInput.DeviceType == InputDeviceType.Keyboard)
+            {
+                player.AssignedInput = InputDevice.None;
+            }
+        }
+
+        controlledPlayer.AssignedInput = InputDevice.Keyboard;
+    }
+
+    private void UpdatePhysics(float frameDt)
+    {
+        _physicsAccumulator += frameDt;
+
+        int steps = 0;
+        while (_physicsAccumulator >= PhysicsWorld.FixedTimeStep && steps < MaxPhysicsStepsPerFrame)
+        {
+            _physicsAccumulator -= PhysicsWorld.FixedTimeStep;
+            steps++;
+
+            _physicsWorld.UpdatePhysics(PhysicsWorld.FixedTimeStep, _game.Input);
+
+            if (IsAnyPlayerTouchingGoal())
+            {
+                CompleteLevel();
+                return;
+            }
+        }
+
+        if (steps >= MaxPhysicsStepsPerFrame)
+        {
+            _physicsAccumulator = 0f;
+        }
+    }
+
     private void UpdateCamera(GameTime gameTime)
     {
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
         float smoothing = 1f - MathF.Exp(-6f * dt);
-        _camera.Position = Vector2.Lerp(_camera.Position, GetPlayerCenter(), smoothing);
+        _camera.Position = Vector2.Lerp(_camera.Position, GetPlayersCenter(), smoothing);
+        _camera.SetZoom(MathHelper.Lerp(_camera.Zoom, GetTargetCameraZoom(_game.Viewport), smoothing));
     }
 
-    private Vector2 GetPlayerCenter()
+    private Vector2 GetPlayersCenter()
     {
-        return _player.Position + (_player.Size * 0.5f);
-    }
-
-    private bool IsPlayerTouchingGoal()
-    {
-        Rectangle playerBounds = _player.Bounds;
-        foreach (Goal goal in _level.Goals)
+        if (_players.Count == 0)
         {
-            if (playerBounds.Intersects(goal.TriggerBounds))
+            return _level.PlayerStart;
+        }
+
+        Vector2 total = Vector2.Zero;
+        foreach (Player player in _players)
+        {
+            total += player.Position + (player.Size * 0.5f);
+        }
+
+        return total / _players.Count;
+    }
+
+    private float GetTargetCameraZoom(Viewport viewport)
+    {
+        if (_players.Count <= 1 || viewport.Width <= 0 || viewport.Height <= 0)
+        {
+            return 1f;
+        }
+
+        float minX = float.MaxValue;
+        float minY = float.MaxValue;
+        float maxX = float.MinValue;
+        float maxY = float.MinValue;
+
+        foreach (Player player in _players)
+        {
+            Vector2 center = player.Position + (player.Size * 0.5f);
+            minX = MathF.Min(minX, center.X);
+            minY = MathF.Min(minY, center.Y);
+            maxX = MathF.Max(maxX, center.X);
+            maxY = MathF.Max(maxY, center.Y);
+        }
+
+        foreach (Rope rope in _physicsWorld.Ropes)
+        {
+            foreach (RopeNode node in rope.Nodes)
             {
-                return true;
+                minX = MathF.Min(minX, node.Position.X);
+                minY = MathF.Min(minY, node.Position.Y);
+                maxX = MathF.Max(maxX, node.Position.X);
+                maxY = MathF.Max(maxY, node.Position.Y);
+            }
+        }
+
+        const float cameraPadding = 360f;
+        float groupWidth = MathF.Max(1f, maxX - minX + cameraPadding);
+        float groupHeight = MathF.Max(1f, maxY - minY + cameraPadding);
+        float zoomX = viewport.Width / groupWidth;
+        float zoomY = viewport.Height / groupHeight;
+
+        return MathHelper.Clamp(MathF.Min(zoomX, zoomY), 0.55f, 1f);
+    }
+
+    private bool IsAnyPlayerTouchingGoal()
+    {
+        foreach (Player player in _players)
+        {
+            Rectangle playerBounds = player.Bounds;
+            foreach (Goal goal in _level.Goals)
+            {
+                if (playerBounds.Intersects(goal.TriggerBounds))
+                {
+                    return true;
+                }
             }
         }
 
@@ -167,6 +321,12 @@ public sealed class GameScene : IScene
         _newRecord = BestTimeStorage.SaveIfRecord(_levelId, _finalTime);
         _completionReturnDelay = CompletionReturnDelaySeconds;
         _completionUiElapsed = 0f;
+        _physicsAccumulator = 0f;
+
+        foreach (Player player in _players)
+        {
+            player.Freeze();
+        }
     }
 
     private bool CanReturnToMenu()
@@ -226,6 +386,43 @@ public sealed class GameScene : IScene
 
         DrawCenteredText(spriteBatch, pixel, timeText, viewport.Width / 2 + 2, y + 2, scale, Color.Black * 0.45f);
         DrawCenteredText(spriteBatch, pixel, timeText, viewport.Width / 2, y, scale, Color.White);
+    }
+
+    private void DrawPlayerHud(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
+    {
+        int margin = Math.Max(8, (int)(Math.Min(viewport.Width, viewport.Height) * 0.022f));
+        int scale = Math.Clamp(viewport.Height / 360, 1, 2);
+        string playerCountText = $"PLAYERS {_players.Count}";
+        Vector2 textPosition = new(margin, margin);
+
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, playerCountText, textPosition + new Vector2(1f, 1f), scale, Color.Black * 0.45f);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, playerCountText, textPosition, scale, Color.White);
+
+        Point textSize = SimpleTextRenderer.MeasureString(playerCountText, scale);
+        int swatchSize = Math.Clamp(viewport.Height / 34, 16, 24);
+        int swatchGap = Math.Max(6, swatchSize / 3);
+        int y = margin + textSize.Y + 8;
+
+        for (int i = 0; i < _players.Count; i++)
+        {
+            Player player = _players[i];
+            int x = margin + (i * (swatchSize + swatchGap));
+            Rectangle border = new(x, y, swatchSize, swatchSize);
+            Rectangle fill = new(x + 2, y + 2, swatchSize - 4, swatchSize - 4);
+
+            spriteBatch.Draw(pixel, border, Color.Black);
+            spriteBatch.Draw(pixel, fill, player.PlayerColor.ToXnaColor());
+
+            string label = (player.PlayerIndex + 1).ToString();
+            int numberScale = 1;
+            Point labelSize = SimpleTextRenderer.MeasureString(label, numberScale);
+            Vector2 labelPosition = new(
+                border.Center.X - (labelSize.X * 0.5f),
+                border.Center.Y - (labelSize.Y * 0.5f));
+
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, label, labelPosition + new Vector2(1f, 1f), numberScale, Color.Black);
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, label, labelPosition, numberScale, Color.White);
+        }
     }
 
     private void DrawCompletionUi(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)

@@ -2,11 +2,11 @@
   "displayMode": "Windowed",
   "resolutionWidth": 1920,
   "resolutionHeight": 1080,
-  "musicVolume": 0.715,
+  "musicVolume": 0.5321543,
   "keybindings": {
     "MoveLeft": "A",
     "MoveRight": "D",
-    "Jump": "Space",
+    "Jump": "W",
     "FastFall": "S",
     "Red": "J",
     "Blue": "K",

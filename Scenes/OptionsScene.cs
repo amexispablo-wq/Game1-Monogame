@@ -28,14 +28,27 @@ public sealed class OptionsScene : IScene
     private int? _rebindingIndex;
     private double _rebindingWaitTime;
 
-    // Layout constants
+    // Layout constants (tuned for tighter, centered composition)
     private const int LeftMargin = 30;
     private const int RightMargin = 30;
-    private const int TopMargin = 90;
+    private const int TopMargin = 70; // reduced top gap
     private const int RowHeight = 40;
-    private const int RowSpacing = 15;
-    private const int SectionSpacing = 35;
-    private const int ControlWidth = 400;
+    private const int RowSpacing = 14;
+    private const int SectionSpacing = 34;
+    private const int MinContentWidth = 480;
+    private const int MaxContentWidth = 820;
+    private const int LabelWidth = 180;
+    private const int ColumnGap = 18;
+    private const int HeaderToContentSpacing = 20;
+    private const int HeaderTopOffset = 34;
+    private const int BottomPanelHeight = 100;
+    private const int BottomMargin = 25;
+    private const int ActionButtonWidth = 140;
+    private const int ActionButtonGap = 18;
+    private const int BackButtonWidth = 120;
+    private const int ButtonHeight = 50;
+
+    public int ControlWidth { get; private set; }
 
     public OptionsScene(Game1 game)
     {
@@ -52,6 +65,8 @@ public sealed class OptionsScene : IScene
 
         var pending = SettingsManager.PendingSettings;
         _resolutionDropdown.SelectedResolution = new Resolution(pending.ResolutionWidth, pending.ResolutionHeight);
+        _resolutionDropdown.Label = string.Empty;
+        _volumeSlider.Label = "MUSIC VOLUME";
         _volumeSlider.Value = pending.MusicVolume;
 
         // Initialize display mode from settings
@@ -120,10 +135,11 @@ public sealed class OptionsScene : IScene
         }
 
         // Handle control binding clicks
+        LayoutMetrics layout = GetLayoutMetrics(_game.Viewport);
         for (int i = 0; i < _controlBindings.Count; i++)
         {
-            int yOffset = TopMargin + (3 * (RowHeight + RowSpacing)) + SectionSpacing + (i * (RowHeight + RowSpacing));
-            Rectangle bindingBounds = new(LeftMargin, yOffset, ControlWidth, RowHeight);
+            int yOffset = layout.ControlListY + (i * (RowHeight + RowSpacing));
+            Rectangle bindingBounds = new(layout.ContentX, yOffset, ControlWidth, RowHeight);
             if (_game.Input.LeftMousePressed && bindingBounds.Contains(_game.Input.MousePosition))
             {
                 _rebindingIndex = i;
@@ -163,7 +179,7 @@ public sealed class OptionsScene : IScene
         DrawControlSettings(spriteBatch, pixel, viewport);
 
         // Draw bottom panel and buttons
-        spriteBatch.Draw(pixel, new Rectangle(0, viewport.Height - 100, viewport.Width, 100), new Color(22, 26, 34));
+        spriteBatch.Draw(pixel, new Rectangle(0, viewport.Height - BottomPanelHeight, viewport.Width, BottomPanelHeight), new Color(22, 26, 34));
         _backButton.Draw(spriteBatch, pixel);
         _applyButton.Draw(spriteBatch, pixel);
         _cancelButton.Draw(spriteBatch, pixel);
@@ -188,15 +204,13 @@ public sealed class OptionsScene : IScene
 
     private void DrawDisplaySettings(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
     {
-        int startY = TopMargin - 40;
-        // Section header: DISPLAY SETTINGS
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "DISPLAY SETTINGS", new Vector2(LeftMargin, startY), 3, Color.Yellow);
+        LayoutMetrics layout = GetLayoutMetrics(viewport);
 
-        // Draw labels for controls
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Mode:", new Vector2(LeftMargin, TopMargin + 8), 2, Color.White);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Resolution:", new Vector2(LeftMargin, TopMargin + RowHeight + RowSpacing + 8), 2, Color.White);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "DISPLAY SETTINGS", new Vector2(layout.ContentX, layout.DisplayHeaderY), 3, Color.Yellow);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "MODE", new Vector2(layout.LabelX, layout.DisplayModeY + 9), 2, Color.White);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "RESOLUTION", new Vector2(layout.LabelX, layout.ResolutionY + 9), 2, Color.White);
 
-        // Draw the controls
+        // Draw the controls (aligned to control column)
         _displayModeSelector.Draw(spriteBatch, pixel);
 
         // Draw resolution dropdown header (body drawn on top if expanded)
@@ -206,7 +220,6 @@ public sealed class OptionsScene : IScene
         }
         else
         {
-            // Draw just the header when expanded
             Rectangle headerBounds = new(_resolutionDropdown.Bounds.X, _resolutionDropdown.Bounds.Y, _resolutionDropdown.Bounds.Width, 40);
             Color headerBg = new Color(62, 71, 90);
             spriteBatch.Draw(pixel, headerBounds, headerBg);
@@ -214,32 +227,28 @@ public sealed class OptionsScene : IScene
 
             string displayText = _resolutionDropdown.SelectedResolution?.ToString() ?? "Select...";
             SimpleTextRenderer.DrawCentered(spriteBatch, pixel, displayText, headerBounds, 2, Color.White);
-            SimpleTextRenderer.DrawRight(spriteBatch, pixel, "▲",
-                new Vector2(headerBounds.Right - 10, headerBounds.Y + 10), 2, Color.LightGray);
+            SimpleTextRenderer.DrawRight(spriteBatch, pixel, "▲", new Vector2(headerBounds.Right - 10, headerBounds.Y + 10), 2, Color.LightGray);
         }
     }
 
     private void DrawAudioSettings(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
     {
-        int sectionY = TopMargin + (RowHeight + RowSpacing) * 2 + SectionSpacing;
-        // Section header: AUDIO SETTINGS
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "AUDIO SETTINGS", new Vector2(LeftMargin, sectionY), 3, Color.Yellow);
-
+        LayoutMetrics layout = GetLayoutMetrics(viewport);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "AUDIO SETTINGS", new Vector2(layout.ContentX, layout.AudioHeaderY), 3, Color.Yellow);
         _volumeSlider.Draw(spriteBatch, pixel);
     }
 
     private void DrawControlSettings(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
     {
-        int sectionY = TopMargin + (RowHeight + RowSpacing) * 3 + (SectionSpacing * 2);
-        // Section header: CONTROL SETTINGS
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "CONTROL SETTINGS", new Vector2(LeftMargin, sectionY), 3, Color.Yellow);
+        LayoutMetrics layout = GetLayoutMetrics(viewport);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "CONTROL SETTINGS", new Vector2(layout.ContentX, layout.ControlHeaderY), 3, Color.Yellow);
 
-        int yOffset = sectionY + 40;
+        int yOffset = layout.ControlListY;
         for (int i = 0; i < _controlBindings.Count; i++)
         {
             var (action, keyName) = _controlBindings[i];
             int bindingY = yOffset + (i * (RowHeight + RowSpacing));
-            Rectangle bindingBounds = new(LeftMargin, bindingY, ControlWidth, RowHeight);
+            Rectangle bindingBounds = new(layout.ContentX, bindingY, ControlWidth, RowHeight);
 
             Color bgColor = _rebindingIndex == i ? new Color(100, 50, 50) : new Color(50, 60, 80);
             spriteBatch.Draw(pixel, bindingBounds, bgColor);
@@ -315,49 +324,76 @@ public sealed class OptionsScene : IScene
     private void LayoutUI()
     {
         Viewport viewport = _game.Viewport;
+        LayoutMetrics layout = GetLayoutMetrics(viewport);
 
-        // Calculate dynamic control width based on viewport
-        int maxControlWidth = Math.Min(ControlWidth, viewport.Width - LeftMargin - RightMargin);
-        int centerX = LeftMargin + ((viewport.Width - LeftMargin - RightMargin - maxControlWidth) / 2);
+        _displayModeSelector.Bounds = new Rectangle(layout.ControlX, layout.DisplayModeY, layout.ControlWidth, RowHeight);
+        _resolutionDropdown.Bounds = new Rectangle(layout.ControlX, layout.ResolutionY, layout.ControlWidth, RowHeight);
+        _volumeSlider.Bounds = new Rectangle(layout.ControlX, layout.VolumeY, layout.ControlWidth, RowHeight + 18);
 
-        // Display Settings Section (Row 0)
-        int displayModeY = TopMargin;
-        _displayModeSelector.Bounds = new Rectangle(centerX, displayModeY, maxControlWidth, RowHeight);
+        ControlWidth = layout.ContentWidth;
 
-        // Resolution Settings Section (Row 1)
-        int resolutionY = displayModeY + RowHeight + RowSpacing;
-        _resolutionDropdown.Bounds = new Rectangle(centerX, resolutionY, maxControlWidth, RowHeight);
-
-        // Audio Settings Section (Row 2)
-        int volumeY = resolutionY + RowHeight + RowSpacing;
-        _volumeSlider.Bounds = new Rectangle(centerX, volumeY, maxControlWidth, RowHeight + 20);
-
-        // Control Settings Section starts after spacing
-        // (Control bindings are drawn in DrawControlSettings)
-
-        // Bottom buttons
-        const int buttonHeight = 50;
-        const int buttonGap = 15;
-        const int bottomMargin = 25;
-
-        int buttonsY = viewport.Height - buttonHeight - bottomMargin;
-        _backButton.Bounds = new Rectangle(25, buttonsY, 120, buttonHeight);
-
-        var layout = ButtonRowLayout.Create(
-            new[] { "Apply", "Cancel" },
-            viewport.Width, viewport.Height,
-            buttonHeight, 16, 12, buttonGap, bottomMargin);
-
-        if (layout.ButtonBounds.Length >= 2)
-        {
-            _applyButton.Bounds = layout.ButtonBounds[0];
-            _cancelButton.Bounds = layout.ButtonBounds[1];
-        }
+        int buttonsY = viewport.Height - ButtonHeight - BottomMargin;
+        _backButton.Bounds = new Rectangle(layout.ContentX, buttonsY, BackButtonWidth, ButtonHeight);
+        _applyButton.Bounds = new Rectangle(layout.ActionButtonsX, buttonsY, ActionButtonWidth, ButtonHeight);
+        _cancelButton.Bounds = new Rectangle(layout.ActionButtonsX + ActionButtonWidth + ActionButtonGap, buttonsY, ActionButtonWidth, ButtonHeight);
     }
+
+    private LayoutMetrics GetLayoutMetrics(Viewport viewport)
+    {
+        int contentWidth = Math.Clamp(viewport.Width - LeftMargin - RightMargin, MinContentWidth, MaxContentWidth);
+        int contentX = (viewport.Width - contentWidth) / 2;
+        int labelX = contentX;
+        int controlX = contentX + LabelWidth + ColumnGap;
+        int controlWidth = contentWidth - LabelWidth - ColumnGap;
+
+        int displayHeaderY = TopMargin - HeaderTopOffset;
+        int displayModeY = displayHeaderY + HeaderToContentSpacing;
+        int resolutionY = displayModeY + RowHeight + RowSpacing;
+
+        int audioHeaderY = resolutionY + RowHeight + SectionSpacing;
+        int volumeY = audioHeaderY + HeaderToContentSpacing;
+
+        int controlHeaderY = volumeY + RowHeight + 18 + SectionSpacing;
+        int controlListY = controlHeaderY + HeaderToContentSpacing;
+
+        int actionsTotalWidth = (ActionButtonWidth * 2) + ActionButtonGap;
+        int actionButtonsX = contentX + ((contentWidth - actionsTotalWidth) / 2);
+
+        return new LayoutMetrics(
+            contentX,
+            contentWidth,
+            labelX,
+            controlX,
+            controlWidth,
+            displayHeaderY,
+            displayModeY,
+            resolutionY,
+            audioHeaderY,
+            volumeY,
+            controlHeaderY,
+            controlListY,
+            actionButtonsX);
+    }
+
+    private readonly record struct LayoutMetrics(
+        int ContentX,
+        int ContentWidth,
+        int LabelX,
+        int ControlX,
+        int ControlWidth,
+        int DisplayHeaderY,
+        int DisplayModeY,
+        int ResolutionY,
+        int AudioHeaderY,
+        int VolumeY,
+        int ControlHeaderY,
+        int ControlListY,
+        int ActionButtonsX);
 
     private void ApplySettings()
     {
         SettingsManager.SaveSettings(SettingsManager.PendingSettings);
+        _game.Input.ReloadProfilesFromSettings();
 
         // Apply graphics changes
         var settings = SettingsManager.CurrentSettings;

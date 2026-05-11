@@ -23,6 +23,11 @@ public sealed class Camera
             * Matrix.CreateTranslation(new Vector3(viewport.Width * 0.5f, viewport.Height * 0.5f, 0f));
     }
 
+    public void SetZoom(float zoom)
+    {
+        Zoom = MathHelper.Clamp(zoom, MinZoom, MaxZoom);
+    }
+
     public Vector2 ScreenToWorld(Point screenPosition, Viewport viewport)
     {
         return ScreenToWorld(new Vector2(screenPosition.X, screenPosition.Y), viewport);

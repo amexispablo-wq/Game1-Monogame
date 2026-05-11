@@ -1,3 +1,6 @@
+#nullable enable
+using System;
+using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -5,10 +8,58 @@ namespace Game1_Monogame;
 
 public sealed class InputManager
 {
+    public const int MaxLocalPlayers = 4;
+
+    private readonly Dictionary<PlayerId, InputActionState> _playerActionStates = new();
+    private List<InputProfile> _profiles;
+    private KeyboardInputBindings _keyboardBindings;
+    private InputActionState _keyboardActionState;
+    private PlayerId _keyboardControlledPlayerId = PlayerId.Player1;
     private KeyboardState _currentKeyboard;
     private KeyboardState _previousKeyboard;
     private MouseState _currentMouse;
     private MouseState _previousMouse;
+
+    public InputManager()
+    {
+        _profiles = InputProfile.CreateDefaultProfiles();
+        _keyboardBindings = KeyboardInputBindings.FromSettings(SettingsManager.CurrentSettings);
+        InitializeActionStates();
+        SetKeyboardControlledPlayer(PlayerId.Player1);
+    }
+
+    public IReadOnlyList<InputProfile> Profiles => _profiles;
+    public PlayerId KeyboardControlledPlayerId => _keyboardControlledPlayerId;
+    public IEnumerable<InputProfile> ActiveProfiles
+    {
+        get
+        {
+            foreach (InputProfile profile in _profiles)
+            {
+                if (profile.IsActive)
+                {
+                    yield return profile;
+                }
+            }
+        }
+    }
+
+    public int ActivePlayerCount
+    {
+        get
+        {
+            int count = 0;
+            foreach (InputProfile profile in _profiles)
+            {
+                if (profile.IsActive)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+    }
 
     public float HorizontalMovement { get; private set; }
     public bool JumpPressed { get; private set; }
@@ -40,19 +91,12 @@ public sealed class InputManager
         _previousMouse = _currentMouse;
         _currentMouse = Mouse.GetState();
 
-        HorizontalMovement = 0f;
-        if (_currentKeyboard.IsKeyDown(Keys.A))
-        {
-            HorizontalMovement -= 1f;
-        }
+        _keyboardActionState = ReadKeyboardActionState();
+        UpdatePlayerActionStates(_keyboardActionState);
 
-        if (_currentKeyboard.IsKeyDown(Keys.D))
-        {
-            HorizontalMovement += 1f;
-        }
-
-        JumpPressed = IsNewKeyPress(Keys.Space) || IsNewKeyPress(Keys.W);
-        FastFallHeld = _currentKeyboard.IsKeyDown(Keys.S);
+        HorizontalMovement = _keyboardActionState.HorizontalMovement;
+        JumpPressed = _keyboardActionState.JumpPressed;
+        FastFallHeld = _keyboardActionState.FastFallHeld;
         ExitPressed = IsNewKeyPress(Keys.Escape);
         EnterPressed = IsNewKeyPress(Keys.Enter);
         DebugTogglePressed = IsNewKeyPress(Keys.F3);
@@ -74,7 +118,74 @@ public sealed class InputManager
         MiddleMouseReleased = _currentMouse.MiddleButton == ButtonState.Released
             && _previousMouse.MiddleButton == ButtonState.Pressed;
         MouseWheelDelta = _currentMouse.ScrollWheelValue - _previousMouse.ScrollWheelValue;
-        RequestedColor = GetRequestedColor();
+        RequestedColor = _keyboardActionState.RequestedColor ?? GetLegacyEditorRequestedColor();
+    }
+
+    public void ReloadProfilesFromSettings()
+    {
+        bool[] activeProfiles = new bool[MaxLocalPlayers];
+        for (int i = 0; i < _profiles.Count && i < activeProfiles.Length; i++)
+        {
+            activeProfiles[i] = _profiles[i].IsActive;
+        }
+
+        PlayerId previousControlledPlayerId = _keyboardControlledPlayerId;
+        _profiles = InputProfile.CreateDefaultProfiles();
+        for (int i = 0; i < _profiles.Count && i < activeProfiles.Length; i++)
+        {
+            _profiles[i].IsActive = activeProfiles[i];
+        }
+
+        _keyboardBindings = KeyboardInputBindings.FromSettings(SettingsManager.CurrentSettings);
+        InitializeActionStates();
+        SetKeyboardControlledPlayer(IsActivePlayer(previousControlledPlayerId)
+            ? previousControlledPlayerId
+            : GetFirstActivePlayerId());
+    }
+
+    public void SetActivePlayerCount(int activePlayerCount)
+    {
+        int clampedCount = Math.Clamp(activePlayerCount, 1, MaxLocalPlayers);
+        for (int i = 0; i < _profiles.Count; i++)
+        {
+            _profiles[i].IsActive = i < clampedCount;
+        }
+
+        if (!IsActivePlayer(_keyboardControlledPlayerId))
+        {
+            SetKeyboardControlledPlayer(GetFirstActivePlayerId());
+        }
+    }
+
+    public void SetKeyboardControlledPlayer(PlayerId playerId)
+    {
+        if (!IsActivePlayer(playerId))
+        {
+            return;
+        }
+
+        _keyboardControlledPlayerId = playerId;
+        foreach (InputProfile profile in _profiles)
+        {
+            if (profile.AssignedInput.DeviceType == InputDeviceType.Keyboard)
+            {
+                profile.AssignedInput = InputDevice.None;
+            }
+
+            if (profile.PlayerId == playerId)
+            {
+                profile.AssignedInput = InputDevice.Keyboard;
+            }
+        }
+
+        UpdatePlayerActionStates(_keyboardActionState);
+    }
+
+    public InputActionState GetActionState(PlayerId playerId)
+    {
+        return _playerActionStates.TryGetValue(playerId, out InputActionState state)
+            ? state
+            : InputActionState.Empty;
     }
 
     public bool IsKeyDown(Keys key)
@@ -87,23 +198,135 @@ public sealed class InputManager
         return _currentKeyboard.IsKeyDown(key) && !_previousKeyboard.IsKeyDown(key);
     }
 
-    private GameColor? GetRequestedColor()
+    private void InitializeActionStates()
     {
-        if (IsNewKeyPress(Keys.J) || IsNewKeyPress(Keys.R))
+        _playerActionStates.Clear();
+        foreach (InputProfile profile in _profiles)
+        {
+            _playerActionStates[profile.PlayerId] = InputActionState.Empty;
+        }
+    }
+
+    private void UpdatePlayerActionStates(InputActionState keyboardActionState)
+    {
+        foreach (InputProfile profile in _profiles)
+        {
+            _playerActionStates[profile.PlayerId] = profile.IsActive && profile.PlayerId == _keyboardControlledPlayerId
+                ? keyboardActionState
+                : InputActionState.Empty;
+        }
+    }
+
+    private InputActionState ReadKeyboardActionState()
+    {
+        float horizontalMovement = 0f;
+        if (_currentKeyboard.IsKeyDown(_keyboardBindings.MoveLeft))
+        {
+            horizontalMovement -= 1f;
+        }
+
+        if (_currentKeyboard.IsKeyDown(_keyboardBindings.MoveRight))
+        {
+            horizontalMovement += 1f;
+        }
+
+        GameColor? requestedColor = null;
+        if (IsNewKeyPress(_keyboardBindings.Red))
+        {
+            requestedColor = GameColor.Red;
+        }
+        else if (IsNewKeyPress(_keyboardBindings.Blue))
+        {
+            requestedColor = GameColor.Blue;
+        }
+        else if (IsNewKeyPress(_keyboardBindings.Green))
+        {
+            requestedColor = GameColor.Green;
+        }
+
+        return new InputActionState(
+            horizontalMovement,
+            IsNewKeyPress(_keyboardBindings.Jump),
+            _currentKeyboard.IsKeyDown(_keyboardBindings.FastFall),
+            requestedColor);
+    }
+
+    private bool IsActivePlayer(PlayerId playerId)
+    {
+        foreach (InputProfile profile in _profiles)
+        {
+            if (profile.PlayerId == playerId && profile.IsActive)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private PlayerId GetFirstActivePlayerId()
+    {
+        foreach (InputProfile profile in _profiles)
+        {
+            if (profile.IsActive)
+            {
+                return profile.PlayerId;
+            }
+        }
+
+        return PlayerId.Player1;
+    }
+
+    private GameColor? GetLegacyEditorRequestedColor()
+    {
+        if (IsNewKeyPress(Keys.R))
         {
             return GameColor.Red;
         }
 
-        if (IsNewKeyPress(Keys.K) || IsNewKeyPress(Keys.B))
+        if (IsNewKeyPress(Keys.B))
         {
             return GameColor.Blue;
         }
 
-        if (IsNewKeyPress(Keys.L) || IsNewKeyPress(Keys.G))
+        if (IsNewKeyPress(Keys.G))
         {
             return GameColor.Green;
         }
 
         return null;
+    }
+
+    private readonly record struct KeyboardInputBindings(
+        Keys MoveLeft,
+        Keys MoveRight,
+        Keys Jump,
+        Keys FastFall,
+        Keys Red,
+        Keys Blue,
+        Keys Green)
+    {
+        public static KeyboardInputBindings FromSettings(GameSettings settings)
+        {
+            return new KeyboardInputBindings(
+                GetSettingKey(settings, "MoveLeft", Keys.A),
+                GetSettingKey(settings, "MoveRight", Keys.D),
+                GetSettingKey(settings, "Jump", Keys.Space),
+                GetSettingKey(settings, "FastFall", Keys.S),
+                GetSettingKey(settings, "Red", Keys.J),
+                GetSettingKey(settings, "Blue", Keys.K),
+                GetSettingKey(settings, "Green", Keys.L));
+        }
+
+        private static Keys GetSettingKey(GameSettings settings, string actionName, Keys fallback)
+        {
+            if (settings.Keybindings.TryGetValue(actionName, out string? keyName)
+                && Enum.TryParse(keyName, ignoreCase: true, out Keys key))
+            {
+                return key;
+            }
+
+            return fallback;
+        }
     }
 }
