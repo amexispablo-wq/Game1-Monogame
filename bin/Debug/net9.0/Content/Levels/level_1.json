@@ -2,17 +2,10 @@
   "name": "Level 1",
   "platforms": [
     {
-      "x": 32,
-      "y": 512,
-      "width": 512,
+      "x": 704,
+      "y": 704,
+      "width": 384,
       "height": 64,
-      "color": "Red"
-    },
-    {
-      "x": -480,
-      "y": 448,
-      "width": 1856,
-      "height": 320,
       "color": "Red"
     }
   ],

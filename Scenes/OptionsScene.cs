@@ -10,24 +10,60 @@ namespace Game1_Monogame;
 public sealed class OptionsScene : IScene
 {
     private readonly Game1 _game;
+
+    // Display settings
     private ResolutionDropdown _resolutionDropdown = new();
+    private CycleSelector<DisplayMode> _displayModeSelector;
+
+    // Audio settings
     private Slider _volumeSlider = new("Music Volume", 0.75f, 0f, 1f);
+
+    // Buttons
     private Button _applyButton = new("Apply");
     private Button _cancelButton = new("Cancel");
     private Button _backButton = new("Back") { TextScale = 2 };
 
+    // Control bindings
     private List<(string action, string keyName)> _controlBindings = new();
-
     private int? _rebindingIndex;
     private double _rebindingWaitTime;
+
+    // Layout constants
+    private const int LeftMargin = 30;
+    private const int RightMargin = 30;
+    private const int TopMargin = 90;
+    private const int RowHeight = 40;
+    private const int RowSpacing = 15;
+    private const int SectionSpacing = 35;
+    private const int ControlWidth = 400;
 
     public OptionsScene(Game1 game)
     {
         _game = game;
 
+        // Initialize display mode cycle selector
+        var displayModes = new List<DisplayMode>
+        {
+            DisplayMode.Fullscreen,
+            DisplayMode.Windowed,
+            DisplayMode.BorderlessWindowed
+        };
+        _displayModeSelector = new CycleSelector<DisplayMode>(displayModes, mode => mode.ToString());
+
         var pending = SettingsManager.PendingSettings;
         _resolutionDropdown.SelectedResolution = new Resolution(pending.ResolutionWidth, pending.ResolutionHeight);
         _volumeSlider.Value = pending.MusicVolume;
+
+        // Initialize display mode from settings
+        string displayMode = pending.DisplayMode.ToLower();
+        DisplayMode initialMode = displayMode switch
+        {
+            "fullscreen" => DisplayMode.Fullscreen,
+            "windowed" => DisplayMode.Windowed,
+            "borderless" or "borderlesswindowed" => DisplayMode.BorderlessWindowed,
+            _ => DisplayMode.BorderlessWindowed
+        };
+        _displayModeSelector.CurrentOption = initialMode;
 
         // Load control bindings
         InitializeControlBindings();
@@ -58,6 +94,7 @@ public sealed class OptionsScene : IScene
             return;
         }
 
+        _displayModeSelector.Update(_game.Input);
         _resolutionDropdown.Update(_game.Input);
         _volumeSlider.Update(_game.Input);
 
@@ -85,8 +122,8 @@ public sealed class OptionsScene : IScene
         // Handle control binding clicks
         for (int i = 0; i < _controlBindings.Count; i++)
         {
-            int yOffset = 350 + 40 + (i * 35);
-            Rectangle bindingBounds = new(30, yOffset, 400, 30);
+            int yOffset = TopMargin + (3 * (RowHeight + RowSpacing)) + SectionSpacing + (i * (RowHeight + RowSpacing));
+            Rectangle bindingBounds = new(LeftMargin, yOffset, ControlWidth, RowHeight);
             if (_game.Input.LeftMousePressed && bindingBounds.Contains(_game.Input.MousePosition))
             {
                 _rebindingIndex = i;
@@ -96,6 +133,7 @@ public sealed class OptionsScene : IScene
 
         // Update pending settings
         SettingsManager.PendingSettings.MusicVolume = _volumeSlider.Value;
+        SettingsManager.PendingSettings.DisplayMode = _displayModeSelector.CurrentOption.ToString();
         if (_resolutionDropdown.SelectedResolution != null)
         {
             SettingsManager.PendingSettings.ResolutionWidth = _resolutionDropdown.SelectedResolution.Width;
@@ -130,6 +168,13 @@ public sealed class OptionsScene : IScene
         _applyButton.Draw(spriteBatch, pixel);
         _cancelButton.Draw(spriteBatch, pixel);
 
+        // Draw resolution dropdown on top if expanded (for layering)
+        if (_resolutionDropdown.IsExpanded)
+        {
+            spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(0, 0, 0, 80));
+            _resolutionDropdown.Draw(spriteBatch, pixel);
+        }
+
         spriteBatch.End();
 
         // Draw rebinding prompt if active
@@ -143,30 +188,58 @@ public sealed class OptionsScene : IScene
 
     private void DrawDisplaySettings(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
     {
-        int startY = 90;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "DISPLAY", new Vector2(30, startY), 3, Color.Yellow);
+        int startY = TopMargin - 40;
+        // Section header: DISPLAY SETTINGS
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "DISPLAY SETTINGS", new Vector2(LeftMargin, startY), 3, Color.Yellow);
 
-        _resolutionDropdown.Draw(spriteBatch, pixel);
+        // Draw labels for controls
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Mode:", new Vector2(LeftMargin, TopMargin + 8), 2, Color.White);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Resolution:", new Vector2(LeftMargin, TopMargin + RowHeight + RowSpacing + 8), 2, Color.White);
+
+        // Draw the controls
+        _displayModeSelector.Draw(spriteBatch, pixel);
+
+        // Draw resolution dropdown header (body drawn on top if expanded)
+        if (!_resolutionDropdown.IsExpanded)
+        {
+            _resolutionDropdown.Draw(spriteBatch, pixel);
+        }
+        else
+        {
+            // Draw just the header when expanded
+            Rectangle headerBounds = new(_resolutionDropdown.Bounds.X, _resolutionDropdown.Bounds.Y, _resolutionDropdown.Bounds.Width, 40);
+            Color headerBg = new Color(62, 71, 90);
+            spriteBatch.Draw(pixel, headerBounds, headerBg);
+            DrawHelper.DrawBorder(spriteBatch, pixel, headerBounds, new Color(80, 90, 110), 2);
+
+            string displayText = _resolutionDropdown.SelectedResolution?.ToString() ?? "Select...";
+            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, displayText, headerBounds, 2, Color.White);
+            SimpleTextRenderer.DrawRight(spriteBatch, pixel, "▲",
+                new Vector2(headerBounds.Right - 10, headerBounds.Y + 10), 2, Color.LightGray);
+        }
     }
 
     private void DrawAudioSettings(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
     {
-        int startY = 250;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "AUDIO", new Vector2(30, startY), 3, Color.Yellow);
+        int sectionY = TopMargin + (RowHeight + RowSpacing) * 2 + SectionSpacing;
+        // Section header: AUDIO SETTINGS
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "AUDIO SETTINGS", new Vector2(LeftMargin, sectionY), 3, Color.Yellow);
 
         _volumeSlider.Draw(spriteBatch, pixel);
     }
 
     private void DrawControlSettings(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
     {
-        int startY = 350;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "CONTROLS", new Vector2(30, startY), 3, Color.Yellow);
+        int sectionY = TopMargin + (RowHeight + RowSpacing) * 3 + (SectionSpacing * 2);
+        // Section header: CONTROL SETTINGS
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "CONTROL SETTINGS", new Vector2(LeftMargin, sectionY), 3, Color.Yellow);
 
-        int yOffset = startY + 40;
+        int yOffset = sectionY + 40;
         for (int i = 0; i < _controlBindings.Count; i++)
         {
             var (action, keyName) = _controlBindings[i];
-            Rectangle bindingBounds = new(30, yOffset + (i * 35), 400, 30);
+            int bindingY = yOffset + (i * (RowHeight + RowSpacing));
+            Rectangle bindingBounds = new(LeftMargin, bindingY, ControlWidth, RowHeight);
 
             Color bgColor = _rebindingIndex == i ? new Color(100, 50, 50) : new Color(50, 60, 80);
             spriteBatch.Draw(pixel, bindingBounds, bgColor);
@@ -243,13 +316,26 @@ public sealed class OptionsScene : IScene
     {
         Viewport viewport = _game.Viewport;
 
-        // Resolution dropdown
-        _resolutionDropdown.Bounds = new Rectangle(30, 135, 300, 40);
+        // Calculate dynamic control width based on viewport
+        int maxControlWidth = Math.Min(ControlWidth, viewport.Width - LeftMargin - RightMargin);
+        int centerX = LeftMargin + ((viewport.Width - LeftMargin - RightMargin - maxControlWidth) / 2);
 
-        // Volume slider
-        _volumeSlider.Bounds = new Rectangle(30, 285, 300, 60);
+        // Display Settings Section (Row 0)
+        int displayModeY = TopMargin;
+        _displayModeSelector.Bounds = new Rectangle(centerX, displayModeY, maxControlWidth, RowHeight);
 
-        // Buttons at bottom
+        // Resolution Settings Section (Row 1)
+        int resolutionY = displayModeY + RowHeight + RowSpacing;
+        _resolutionDropdown.Bounds = new Rectangle(centerX, resolutionY, maxControlWidth, RowHeight);
+
+        // Audio Settings Section (Row 2)
+        int volumeY = resolutionY + RowHeight + RowSpacing;
+        _volumeSlider.Bounds = new Rectangle(centerX, volumeY, maxControlWidth, RowHeight + 20);
+
+        // Control Settings Section starts after spacing
+        // (Control bindings are drawn in DrawControlSettings)
+
+        // Bottom buttons
         const int buttonHeight = 50;
         const int buttonGap = 15;
         const int bottomMargin = 25;
@@ -275,7 +361,7 @@ public sealed class OptionsScene : IScene
 
         // Apply graphics changes
         var settings = SettingsManager.CurrentSettings;
-        _game.ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight);
+        _game.ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);
     }
 
     public void OnExit()

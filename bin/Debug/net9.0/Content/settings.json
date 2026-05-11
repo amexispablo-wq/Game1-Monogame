@@ -1,8 +1,8 @@
 {
-  "displayMode": "Borderless",
-  "resolutionWidth": 2560,
+  "displayMode": "Windowed",
+  "resolutionWidth": 1920,
   "resolutionHeight": 1080,
-  "musicVolume": 0.8233333,
+  "musicVolume": 0.715,
   "keybindings": {
     "MoveLeft": "A",
     "MoveRight": "D",

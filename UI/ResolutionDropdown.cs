@@ -108,26 +108,33 @@ public sealed class ResolutionDropdown
         string displayText = SelectedResolution?.ToString() ?? "Select...";
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, displayText, headerBounds, 2, Color.White);
 
+        // Draw dropdown arrow indicator
+        SimpleTextRenderer.DrawRight(spriteBatch, pixel, IsExpanded ? "▲" : "▼",
+            new Vector2(headerBounds.Right - 10, headerBounds.Y + 10), 2, Color.LightGray);
+
         if (IsExpanded)
         {
-            int maxItemsVisible = 5;
+            int maxItemsVisible = 6;
             int itemsToShow = System.Math.Min(Resolutions.Count, maxItemsVisible);
-            int dropdownHeight = itemsToShow * 28;
+            int dropdownHeight = itemsToShow * 32;
 
+            // Draw semi-transparent background for dropdown area
             Rectangle dropdownBg = new(Bounds.X, Bounds.Y + 40, Bounds.Width, dropdownHeight);
-            spriteBatch.Draw(pixel, dropdownBg, new Color(45, 55, 75));
-            DrawHelper.DrawBorder(spriteBatch, pixel, dropdownBg, new Color(80, 90, 110), 2);
+            spriteBatch.Draw(pixel, dropdownBg, new Color(35, 45, 65, 220));
+            DrawHelper.DrawBorder(spriteBatch, pixel, dropdownBg, new Color(100, 110, 140), 2);
 
             for (int i = 0; i < itemsToShow; i++)
             {
-                int itemY = Bounds.Y + 40 + (i * 28);
-                Rectangle itemBounds = new(Bounds.X, itemY, Bounds.Width, 28);
+                int itemY = Bounds.Y + 40 + (i * 32);
+                Rectangle itemBounds = new(Bounds.X, itemY, Bounds.Width, 32);
 
-                Color itemBg = HighlightedIndex == i ? new Color(74, 120, 180) : new Color(50, 60, 80);
+                Color itemBg = HighlightedIndex == i ? new Color(80, 130, 200) : new Color(50, 60, 80);
                 spriteBatch.Draw(pixel, itemBounds, itemBg);
+                DrawHelper.DrawBorder(spriteBatch, pixel, itemBounds, new Color(70, 80, 110), 1);
 
                 string itemText = Resolutions[i].ToString();
-                SimpleTextRenderer.DrawCentered(spriteBatch, pixel, itemText, itemBounds, 2, Color.White);
+                SimpleTextRenderer.DrawCentered(spriteBatch, pixel, itemText, itemBounds, 2,
+                    HighlightedIndex == i ? Color.Yellow : Color.White);
             }
         }
     }

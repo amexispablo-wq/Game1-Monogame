@@ -61,10 +61,12 @@ public sealed class MenuScene : IScene
     private void LayoutButtons()
     {
         Viewport viewport = _game.Viewport;
-        var layout = ButtonRowLayout.Create(
+        var layout = ButtonColumnLayout.CreateAuto(
             new[] { "Play", "Level Editor", "Options" },
             viewport.Width, viewport.Height,
-            82, 16, 12, 24, 160);
+            buttonHeight: 60,
+            verticalGap: 25,
+            topMargin: 100);
 
         if (layout.ButtonBounds.Length >= 3)
         {

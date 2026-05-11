@@ -1,3 +1,4 @@
+#nullable enable
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -35,10 +36,30 @@ public class Game1 : Game
     public Texture2D Pixel => _pixel;
     public Viewport Viewport => GraphicsDevice.Viewport;
 
-    public void ApplyGraphicsSettings(int width, int height)
+    public void ApplyGraphicsSettings(int width, int height, string? displayMode = null)
     {
         _graphics.PreferredBackBufferWidth = width;
         _graphics.PreferredBackBufferHeight = height;
+
+        if (!string.IsNullOrEmpty(displayMode))
+        {
+            switch (displayMode.ToLower())
+            {
+                case "fullscreen":
+                    _graphics.IsFullScreen = true;
+                    Window.IsBorderless = false;
+                    break;
+                case "windowed":
+                    _graphics.IsFullScreen = false;
+                    Window.IsBorderless = false;
+                    break;
+                case "borderless" or "borderlesswindowed":
+                    _graphics.IsFullScreen = false;
+                    Window.IsBorderless = true;
+                    break;
+            }
+        }
+
         _graphics.ApplyChanges();
     }
 

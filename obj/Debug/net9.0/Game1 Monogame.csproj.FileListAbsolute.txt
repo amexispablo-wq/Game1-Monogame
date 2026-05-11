@@ -1,3 +1,4 @@
+C:\Users\amexi\Desktop\Game1 Monogame\bin\Debug\net9.0\Content\level.json
 C:\Users\amexi\Desktop\Game1 Monogame\bin\Debug\net9.0\Game1 Monogame.exe
 C:\Users\amexi\Desktop\Game1 Monogame\bin\Debug\net9.0\Game1 Monogame.deps.json
 C:\Users\amexi\Desktop\Game1 Monogame\bin\Debug\net9.0\Game1 Monogame.runtimeconfig.json
@@ -25,11 +26,10 @@ C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.GeneratedM
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.AssemblyInfoInputs.cache
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.AssemblyInfo.cs
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.csproj.CoreCompileInputs.cache
+C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.sourcelink.json
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Mo.9F9E8876.Up2Date
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.dll
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\refint\Game1 Monogame.dll
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.pdb
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.genruntimeconfig.cache
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\ref\Game1 Monogame.dll
-C:\Users\amexi\Desktop\Game1 Monogame\bin\Debug\net9.0\Content\level.json
-C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.sourcelink.json
