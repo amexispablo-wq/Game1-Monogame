@@ -10,14 +10,24 @@ public sealed class Rope
     private const int DefaultNodeCount = 24;
     private const float MinimumRopeLength = 280f;
     private const float MaximumInitialSag = 190f;
-    private const float EndpointImpulseScale = 0.16f;
-    private const float MaxEndpointVelocityDelta = 420f;
+    private const float EndpointImpulseScale = 0.055f;
+    private const float EndpointImpulseTensionStart = 0.055f;
+    private const float EndpointImpulseTensionFull = 0.22f;
+    private const float MaxEndpointVelocityDelta = 190f;
     private const float MaxNodeVelocity = 950f;
     private const float NodeCollisionRadius = 5f;
     private const float NodeCollisionSoftness = 0.72f;
     private const float MaxNodeCollisionCorrection = 9f;
     private const float NodeCollisionDamping = 0.42f;
-    private const float MaxConstraintCorrection = 14f;
+    private const float MaxConstraintCorrection = 10f;
+    private const float SlackStiffness = 0.16f;
+    private const float TenseStretchRange = 0.14f;
+    private const float TenseStateThreshold = 0.08f;
+    private const float PullAcceleration = 18500f;
+    private const float PullInfluenceFalloff = 0.58f;
+    private const float PullDistanceForFullForce = 120f;
+    private const float MaxPullStep = 7.5f;
+    private const int PullInfluenceRadius = 3;
 
     private readonly IReadOnlyList<Player> _colorPlayers;
     private Vector2 _startPinnedCorrection;
@@ -37,14 +47,20 @@ public sealed class Rope
     public List<RopeConstraint> Constraints { get; } = new();
     public Player StartPlayer { get; }
     public Player EndPlayer { get; }
-    public float RopeStiffness { get; set; } = 0.9f;
-    public float RopeElasticity { get; set; } = 0.035f;
-    public float VerletDamping { get; set; } = 0.992f;
-    public int SolverIterations { get; set; } = 16;
+    public float RopeStiffness { get; set; } = 0.86f;
+    public float RopeElasticity { get; set; } = 0.075f;
+    public float VerletDamping { get; set; } = 0.998f;
+    public int SolverIterations { get; set; } = 10;
     public float LastTension { get; private set; }
     public int LastCollisionCount { get; private set; }
+    public bool IsTense => LastTension >= TenseStateThreshold;
 
-    public void Simulate(float dt, float gravity, IEnumerable<Platform> platforms)
+    public void Simulate(
+        float dt,
+        float gravity,
+        IEnumerable<Platform> platforms,
+        bool startPlayerPulling,
+        bool endPlayerPulling)
     {
         if (dt <= 0f || Nodes.Count < 2)
         {
@@ -61,6 +77,8 @@ public sealed class Rope
 
         SyncPinnedNodesToPlayers();
         ClearNodeCollisionState();
+        ClearPullDebugState();
+        ApplyPullForces(dt, startPlayerPulling, endPlayerPulling);
         IntegrateNodes(dt, gravity);
         ResolveNodeCollisions(collidablePlatforms);
 
@@ -71,14 +89,16 @@ public sealed class Rope
             foreach (RopeConstraint constraint in Constraints)
             {
                 constraint.Solve(
+                    SlackStiffness,
                     RopeStiffness,
                     RopeElasticity,
+                    TenseStretchRange,
                     MaxConstraintCorrection,
                     out Vector2 pinnedACorrection,
                     out Vector2 pinnedBCorrection);
 
-                AccumulatePinnedCorrection(constraint.A, pinnedACorrection);
-                AccumulatePinnedCorrection(constraint.B, pinnedBCorrection);
+                AccumulatePinnedCorrection(constraint.A, pinnedACorrection, constraint.CurrentTension);
+                AccumulatePinnedCorrection(constraint.B, pinnedBCorrection, constraint.CurrentTension);
                 LastTension = MathF.Max(LastTension, constraint.CurrentTension);
             }
 
@@ -105,7 +125,7 @@ public sealed class Rope
             Vector2 end = constraint.B.Position;
             Vector2 midpoint = (start + end) * 0.5f;
             Color segmentColor = debugDraw
-                ? Color.Lerp(ropeColor, Color.Red, MathHelper.Clamp(constraint.CurrentTension * 2.2f, 0f, 1f))
+                ? Color.Lerp(new Color(104, 210, 255), Color.Red, GetTenseAmount(constraint.CurrentTension))
                 : ropeColor;
 
             DrawLine(spriteBatch, pixel, start, midpoint, segmentColor, debugDraw ? 4 : 6);
@@ -134,8 +154,11 @@ public sealed class Rope
         DrawDebugText(spriteBatch, pixel, $"NODES {Nodes.Count}", labelPosition, Color.White);
         DrawDebugText(spriteBatch, pixel, $"LINKS {Constraints.Count}", labelPosition + new Vector2(0f, 10f), Color.White);
         DrawDebugText(spriteBatch, pixel, $"TENSION {(int)MathF.Round(LastTension * 100f)}", labelPosition + new Vector2(0f, 20f), Color.White);
-        DrawDebugText(spriteBatch, pixel, $"COLOR {_colorState.Name}", labelPosition + new Vector2(0f, 30f), _colorState.XnaColor);
-        DrawDebugText(spriteBatch, pixel, $"HITS {LastCollisionCount}", labelPosition + new Vector2(0f, 40f), Color.White);
+        DrawDebugText(spriteBatch, pixel, IsTense ? "STATE TENSE" : "STATE SLACK", labelPosition + new Vector2(0f, 30f), IsTense ? Color.Red : Color.Cyan);
+        DrawDebugText(spriteBatch, pixel, $"COLOR {_colorState.Name}", labelPosition + new Vector2(0f, 40f), _colorState.XnaColor);
+        DrawDebugText(spriteBatch, pixel, $"HITS {LastCollisionCount}", labelPosition + new Vector2(0f, 50f), Color.White);
+
+        DrawPullDebug(spriteBatch, pixel);
     }
 
     private void GenerateNodes(int nodeCount)
@@ -236,6 +259,87 @@ public sealed class Rope
         }
     }
 
+    private void ClearPullDebugState()
+    {
+        foreach (RopeNode node in Nodes)
+        {
+            node.PullAcceleration = Vector2.Zero;
+            node.LastPullForce = Vector2.Zero;
+        }
+    }
+
+    private void ApplyPullForces(float dt, bool startPlayerPulling, bool endPlayerPulling)
+    {
+        if (startPlayerPulling)
+        {
+            ApplyPullForce(StartPlayer, dt);
+        }
+
+        if (endPlayerPulling)
+        {
+            ApplyPullForce(EndPlayer, dt);
+        }
+    }
+
+    private void ApplyPullForce(Player player, float dt)
+    {
+        int closestIndex = FindClosestFreeNode(GetPlayerAnchor(player));
+        if (closestIndex < 0)
+        {
+            return;
+        }
+
+        for (int offset = -PullInfluenceRadius; offset <= PullInfluenceRadius; offset++)
+        {
+            int nodeIndex = closestIndex + offset;
+            if (nodeIndex <= 0 || nodeIndex >= Nodes.Count - 1)
+            {
+                continue;
+            }
+
+            RopeNode node = Nodes[nodeIndex];
+            Vector2 target = GetPlayerAnchor(player);
+            Vector2 toPlayer = target - node.Position;
+            float distance = toPlayer.Length();
+            if (distance <= 0.001f)
+            {
+                continue;
+            }
+
+            float indexFalloff = MathF.Pow(PullInfluenceFalloff, MathF.Abs(offset));
+            float distanceFactor = MathHelper.Clamp(distance / PullDistanceForFullForce, 0.25f, 1f);
+            Vector2 pullAcceleration = (toPlayer / distance) * PullAcceleration * indexFalloff * distanceFactor;
+            float maxPullAcceleration = MaxPullStep / MathF.Max(dt * dt, 0.000001f);
+            if (pullAcceleration.LengthSquared() > maxPullAcceleration * maxPullAcceleration)
+            {
+                pullAcceleration = Vector2.Normalize(pullAcceleration) * maxPullAcceleration;
+            }
+
+            node.PullAcceleration += pullAcceleration;
+            node.LastPullForce += pullAcceleration;
+        }
+    }
+
+    private int FindClosestFreeNode(Vector2 target)
+    {
+        int closestIndex = -1;
+        float closestDistanceSquared = float.MaxValue;
+
+        for (int i = 1; i < Nodes.Count - 1; i++)
+        {
+            float distanceSquared = Vector2.DistanceSquared(Nodes[i].Position, target);
+            if (distanceSquared >= closestDistanceSquared)
+            {
+                continue;
+            }
+
+            closestDistanceSquared = distanceSquared;
+            closestIndex = i;
+        }
+
+        return closestIndex;
+    }
+
     private void IntegrateNodes(float dt, float gravity)
     {
         Vector2 gravityStep = new(0f, gravity * dt * dt);
@@ -255,8 +359,10 @@ public sealed class Rope
             }
 
             velocity *= VerletDamping;
+            Vector2 pullStep = node.PullAcceleration * dt * dt;
             node.PreviousPosition = node.Position;
-            node.Position += velocity + gravityStep;
+            node.Position += velocity + gravityStep + pullStep;
+            node.PullAcceleration = Vector2.Zero;
         }
     }
 
@@ -343,12 +449,20 @@ public sealed class Rope
         }
     }
 
-    private void AccumulatePinnedCorrection(RopeNode node, Vector2 correction)
+    private void AccumulatePinnedCorrection(RopeNode node, Vector2 correction, float tension)
     {
         if (correction == Vector2.Zero)
         {
             return;
         }
+
+        float transfer = GetEndpointImpulseTransfer(tension);
+        if (transfer <= 0f)
+        {
+            return;
+        }
+
+        correction *= transfer;
 
         if (node == Nodes[0])
         {
@@ -397,6 +511,42 @@ public sealed class Rope
         return Nodes.Count == 0
             ? (GetPlayerAnchor(StartPlayer) + GetPlayerAnchor(EndPlayer)) * 0.5f
             : Nodes[Nodes.Count / 2].Position;
+    }
+
+    private static float GetEndpointImpulseTransfer(float tension)
+    {
+        if (tension <= EndpointImpulseTensionStart)
+        {
+            return 0f;
+        }
+
+        float range = MathF.Max(0.001f, EndpointImpulseTensionFull - EndpointImpulseTensionStart);
+        float amount = MathHelper.Clamp((tension - EndpointImpulseTensionStart) / range, 0f, 1f);
+        return amount * amount * (3f - (2f * amount));
+    }
+
+    private static float GetTenseAmount(float tension)
+    {
+        return MathHelper.Clamp(tension / TenseStateThreshold, 0f, 1f);
+    }
+
+    private void DrawPullDebug(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        foreach (RopeNode node in Nodes)
+        {
+            if (node.LastPullForce == Vector2.Zero)
+            {
+                continue;
+            }
+
+            Vector2 vector = node.LastPullForce * 0.0035f;
+            if (vector.LengthSquared() > 42f * 42f)
+            {
+                vector = Vector2.Normalize(vector) * 42f;
+            }
+
+            DrawLine(spriteBatch, pixel, node.Position, node.Position + vector, Color.LimeGreen, 3);
+        }
     }
 
     private static bool IsFinite(Vector2 value)

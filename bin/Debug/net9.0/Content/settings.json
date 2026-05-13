@@ -3,13 +3,14 @@
   "resolutionWidth": 1920,
   "resolutionHeight": 1080,
   "musicVolume": 0.5321543,
-  "keybindings": {
+  "Keybindings": {
     "MoveLeft": "A",
     "MoveRight": "D",
     "Jump": "W",
     "FastFall": "S",
     "Red": "J",
     "Blue": "K",
-    "Green": "L"
+    "Green": "L",
+    "PullRope": "Space"
   }
 }

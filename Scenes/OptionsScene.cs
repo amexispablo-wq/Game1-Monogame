@@ -31,22 +31,22 @@ public sealed class OptionsScene : IScene
     // Layout constants (tuned for tighter, centered composition)
     private const int LeftMargin = 30;
     private const int RightMargin = 30;
-    private const int TopMargin = 70; // reduced top gap
-    private const int RowHeight = 40;
-    private const int RowSpacing = 14;
-    private const int SectionSpacing = 34;
+    private const int TopMargin = 108;
+    private const int RowHeight = 32;
+    private const int RowSpacing = 6;
+    private const int SectionSpacing = 20;
     private const int MinContentWidth = 480;
     private const int MaxContentWidth = 820;
     private const int LabelWidth = 180;
     private const int ColumnGap = 18;
-    private const int HeaderToContentSpacing = 20;
+    private const int HeaderToContentSpacing = 16;
     private const int HeaderTopOffset = 34;
-    private const int BottomPanelHeight = 100;
-    private const int BottomMargin = 25;
+    private const int BottomPanelHeight = 86;
+    private const int BottomMargin = 18;
     private const int ActionButtonWidth = 140;
     private const int ActionButtonGap = 18;
     private const int BackButtonWidth = 120;
-    private const int ButtonHeight = 50;
+    private const int ButtonHeight = 42;
 
     public int ControlWidth { get; private set; }
 
@@ -86,7 +86,7 @@ public sealed class OptionsScene : IScene
 
     private void InitializeControlBindings()
     {
-        var actions = new[] { "MoveLeft", "MoveRight", "Jump", "FastFall", "Red", "Blue", "Green" };
+        var actions = new[] { "MoveLeft", "MoveRight", "Jump", "PullRope", "FastFall", "Red", "Blue", "Green" };
         _controlBindings.Clear();
 
         foreach (string action in actions)
@@ -259,6 +259,7 @@ public sealed class OptionsScene : IScene
                 "MoveLeft" => "MOVE LEFT",
                 "MoveRight" => "MOVE RIGHT",
                 "Jump" => "JUMP",
+                "PullRope" => "PULL ROPE",
                 "FastFall" => "FAST FALL",
                 "Red" => "RED",
                 "Blue" => "BLUE",

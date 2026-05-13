@@ -52,7 +52,12 @@ public sealed class PhysicsWorld
 
         foreach (Rope rope in Ropes)
         {
-            rope.Simulate(dt, Gravity, _level.Platforms);
+            rope.Simulate(
+                dt,
+                Gravity,
+                _level.Platforms,
+                input.GetActionState(rope.StartPlayer.PlayerId).PullRopeHeld,
+                input.GetActionState(rope.EndPlayer.PlayerId).PullRopeHeld);
         }
 
         foreach (Player player in Players)

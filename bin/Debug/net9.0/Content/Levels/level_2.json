@@ -1,0 +1,24 @@
+{
+  "name": "New Leveladada",
+  "platforms": [
+    {
+      "x": 256,
+      "y": 448,
+      "width": 1568,
+      "height": 288,
+      "color": "Red"
+    },
+    {
+      "x": 352,
+      "y": 672,
+      "width": 1408,
+      "height": 128,
+      "color": "Red"
+    }
+  ],
+  "goals": [],
+  "playerSpawn": {
+    "x": 0,
+    "y": 0
+  }
+}

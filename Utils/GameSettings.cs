@@ -18,15 +18,16 @@ public sealed class GameSettings
     [JsonPropertyName("musicVolume")]
     public float MusicVolume { get; set; } = 0.75f;
 
-    [JsonPropertyName("keybindings")]
+    [JsonPropertyName("Keybindings")]
     public Dictionary<string, string> Keybindings { get; set; } = new()
     {
         { "MoveLeft", "A" },
         { "MoveRight", "D" },
-        { "Jump", "Space" },
+        { "Jump", "W" },
         { "FastFall", "S" },
         { "Red", "J" },
         { "Blue", "K" },
-        { "Green", "L" }
+        { "Green", "L" },
+        { "PullRope", "Space" }
     };
 }

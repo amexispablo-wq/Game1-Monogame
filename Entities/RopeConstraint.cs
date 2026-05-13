@@ -18,8 +18,10 @@ public sealed class RopeConstraint
     public float CurrentTension { get; private set; }
 
     public void Solve(
-        float stiffness,
-        float elasticity,
+        float slackStiffness,
+        float tenseStiffness,
+        float slackStretchTolerance,
+        float tenseStretchRange,
         float maxCorrection,
         out Vector2 pinnedACorrection,
         out Vector2 pinnedBCorrection)
@@ -36,23 +38,34 @@ public sealed class RopeConstraint
         }
 
         float error = distance - RestLength;
-        float allowedError = RestLength * MathHelper.Clamp(elasticity, 0f, 0.4f);
-        if (MathF.Abs(error) <= allowedError)
+        if (error <= 0f)
         {
             return;
         }
 
-        float solvedError = error > 0f
-            ? error - allowedError
-            : error + allowedError;
-        Vector2 correction = (delta / distance) * solvedError * MathHelper.Clamp(stiffness, 0f, 1f);
+        float allowedError = RestLength * MathHelper.Clamp(slackStretchTolerance, 0f, 0.65f);
+        if (error <= allowedError)
+        {
+            return;
+        }
+
+        float solvedError = error - allowedError;
+        CurrentTension = solvedError / RestLength;
+
+        float tenseRange = MathF.Max(0.001f, tenseStretchRange);
+        float tenseAmount = MathHelper.Clamp(CurrentTension / tenseRange, 0f, 1f);
+        tenseAmount = tenseAmount * tenseAmount * (3f - (2f * tenseAmount));
+        float stiffness = MathHelper.Lerp(
+            MathHelper.Clamp(slackStiffness, 0f, 1f),
+            MathHelper.Clamp(tenseStiffness, 0f, 1f),
+            tenseAmount);
+
+        Vector2 correction = (delta / distance) * solvedError * stiffness;
         float maxSafeCorrection = MathF.Max(0.01f, maxCorrection);
         if (correction.LengthSquared() > maxSafeCorrection * maxSafeCorrection)
         {
             correction = Vector2.Normalize(correction) * maxSafeCorrection;
         }
-
-        CurrentTension = MathF.Abs(solvedError) / RestLength;
 
         float aWeight = A.IsPinned ? 0f : 1f;
         float bWeight = B.IsPinned ? 0f : 1f;

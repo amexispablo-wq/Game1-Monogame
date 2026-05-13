@@ -42,7 +42,7 @@ public static class SettingsManager
                 GameSettings? loaded = JsonSerializer.Deserialize<GameSettings>(json, JsonOptions);
                 if (loaded != null)
                 {
-                    _currentSettings = loaded;
+                    _currentSettings = NormalizeSettings(loaded);
                     return;
                 }
             }
@@ -52,19 +52,19 @@ public static class SettingsManager
             }
         }
 
-        _currentSettings = new GameSettings();
+        _currentSettings = NormalizeSettings(new GameSettings());
     }
 
     public static void SaveSettings(GameSettings settings)
     {
-        _currentSettings = new GameSettings
+        _currentSettings = NormalizeSettings(new GameSettings
         {
             DisplayMode = settings.DisplayMode,
             ResolutionWidth = settings.ResolutionWidth,
             ResolutionHeight = settings.ResolutionHeight,
             MusicVolume = settings.MusicVolume,
             Keybindings = new Dictionary<string, string>(settings.Keybindings)
-        };
+        });
 
         try
         {
@@ -95,6 +95,29 @@ public static class SettingsManager
 
     public static float GetMusicVolume() => _currentSettings.MusicVolume;
     public static string GetKeybinding(string actionName) => _currentSettings.Keybindings.TryGetValue(actionName, out var key) ? key : "UNBOUND";
+
+    private static GameSettings NormalizeSettings(GameSettings settings)
+    {
+        settings.Keybindings ??= new Dictionary<string, string>();
+
+        bool migratingOldJumpDefault = !settings.Keybindings.ContainsKey("PullRope")
+            && settings.Keybindings.TryGetValue("Jump", out string? jumpKey)
+            && string.Equals(jumpKey, "Space", StringComparison.OrdinalIgnoreCase);
+
+        GameSettings defaults = new();
+        foreach (KeyValuePair<string, string> binding in defaults.Keybindings)
+        {
+            settings.Keybindings.TryAdd(binding.Key, binding.Value);
+        }
+
+        if (migratingOldJumpDefault)
+        {
+            settings.Keybindings["Jump"] = defaults.Keybindings["Jump"];
+            settings.Keybindings["PullRope"] = defaults.Keybindings["PullRope"];
+        }
+
+        return settings;
+    }
 
     private static string GetWritablePath()
     {

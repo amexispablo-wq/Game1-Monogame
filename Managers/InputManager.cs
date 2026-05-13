@@ -64,6 +64,7 @@ public sealed class InputManager
     public float HorizontalMovement { get; private set; }
     public bool JumpPressed { get; private set; }
     public bool FastFallHeld { get; private set; }
+    public bool PullRopeHeld { get; private set; }
     public bool ExitPressed { get; private set; }
     public bool EnterPressed { get; private set; }
     public bool DebugTogglePressed { get; private set; }
@@ -97,6 +98,7 @@ public sealed class InputManager
         HorizontalMovement = _keyboardActionState.HorizontalMovement;
         JumpPressed = _keyboardActionState.JumpPressed;
         FastFallHeld = _keyboardActionState.FastFallHeld;
+        PullRopeHeld = _keyboardActionState.PullRopeHeld;
         ExitPressed = IsNewKeyPress(Keys.Escape);
         EnterPressed = IsNewKeyPress(Keys.Enter);
         DebugTogglePressed = IsNewKeyPress(Keys.F3);
@@ -248,6 +250,7 @@ public sealed class InputManager
             horizontalMovement,
             IsNewKeyPress(_keyboardBindings.Jump),
             _currentKeyboard.IsKeyDown(_keyboardBindings.FastFall),
+            _currentKeyboard.IsKeyDown(_keyboardBindings.PullRope),
             requestedColor);
     }
 
@@ -302,6 +305,7 @@ public sealed class InputManager
         Keys MoveRight,
         Keys Jump,
         Keys FastFall,
+        Keys PullRope,
         Keys Red,
         Keys Blue,
         Keys Green)
@@ -311,8 +315,9 @@ public sealed class InputManager
             return new KeyboardInputBindings(
                 GetSettingKey(settings, "MoveLeft", Keys.A),
                 GetSettingKey(settings, "MoveRight", Keys.D),
-                GetSettingKey(settings, "Jump", Keys.Space),
+                GetSettingKey(settings, "Jump", Keys.W),
                 GetSettingKey(settings, "FastFall", Keys.S),
+                GetSettingKey(settings, "PullRope", Keys.Space),
                 GetSettingKey(settings, "Red", Keys.J),
                 GetSettingKey(settings, "Blue", Keys.K),
                 GetSettingKey(settings, "Green", Keys.L));
