@@ -33,3 +33,9 @@ C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\refint\Game1 Monogame.dll
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.pdb
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\Game1 Monogame.genruntimeconfig.cache
 C:\Users\amexi\Desktop\Game1 Monogame\obj\Debug\net9.0\ref\Game1 Monogame.dll
+C:\Users\amexi\AppData\Local\Temp\Game1MonoBuildCheck\Content\level.json
+C:\Users\amexi\AppData\Local\Temp\Game1MonoBuildCheck\Game1 Monogame.exe
+C:\Users\amexi\AppData\Local\Temp\Game1MonoBuildCheck\Game1 Monogame.deps.json
+C:\Users\amexi\AppData\Local\Temp\Game1MonoBuildCheck\Game1 Monogame.runtimeconfig.json
+C:\Users\amexi\AppData\Local\Temp\Game1MonoBuildCheck\Game1 Monogame.dll
+C:\Users\amexi\AppData\Local\Temp\Game1MonoBuildCheck\Game1 Monogame.pdb

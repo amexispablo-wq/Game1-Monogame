@@ -2,18 +2,60 @@
   "name": "New Leveladada",
   "platforms": [
     {
-      "x": 256,
-      "y": 448,
-      "width": 1568,
-      "height": 288,
+      "x": 192,
+      "y": 608,
+      "width": 1088,
+      "height": 64,
       "color": "Red"
     },
     {
-      "x": 352,
-      "y": 672,
-      "width": 1408,
-      "height": 128,
+      "x": 192,
+      "y": 608,
+      "width": 1088,
+      "height": 64,
+      "color": "Blue"
+    },
+    {
+      "x": 256,
+      "y": 736,
+      "width": 576,
+      "height": 96,
+      "color": "Blue"
+    },
+    {
+      "x": 928,
+      "y": 736,
+      "width": 768,
+      "height": 96,
+      "color": "Blue"
+    },
+    {
+      "x": 1120,
+      "y": 768,
+      "width": 32,
+      "height": 64,
       "color": "Red"
+    },
+    {
+      "x": 1184,
+      "y": 768,
+      "width": 128,
+      "height": 64,
+      "color": "Green"
+    },
+    {
+      "x": 1344,
+      "y": 768,
+      "width": 64,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 672,
+      "y": 672,
+      "width": 384,
+      "height": 224,
+      "color": "Green"
     }
   ],
   "goals": [],

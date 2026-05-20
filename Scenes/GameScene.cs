@@ -14,6 +14,7 @@ public sealed class GameScene : IScene
 
     private readonly Game1 _game;
     private readonly string _levelId;
+    private readonly RopeGameplayMode _ropeGameplayMode;
     private readonly Level _level;
     private readonly List<Player> _players;
     private readonly PhysicsWorld _physicsWorld;
@@ -29,13 +30,17 @@ public sealed class GameScene : IScene
     private float _completionUiElapsed;
     private float _physicsAccumulator;
 
-    public GameScene(Game1 game, string levelId = "level_1")
+    public GameScene(
+        Game1 game,
+        string levelId = "level_1",
+        RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics)
     {
         _game = game;
         _levelId = levelId;
+        _ropeGameplayMode = ropeGameplayMode;
         _level = LevelManager.LoadLevel(levelId);
         _players = CreatePlayers();
-        _physicsWorld = new PhysicsWorld(_level, _players);
+        _physicsWorld = new PhysicsWorld(_level, _players, _ropeGameplayMode);
         _camera = new Camera(GetPlayersCenter());
         timerRunning = true;
     }
@@ -126,6 +131,10 @@ public sealed class GameScene : IScene
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         DrawTimer(spriteBatch, _game.Pixel, viewport);
         DrawPlayerHud(spriteBatch, _game.Pixel, viewport);
+        if (_debugDraw)
+        {
+            DrawDebugHud(spriteBatch, _game.Pixel, viewport);
+        }
 
         if (_levelComplete)
         {
@@ -423,6 +432,21 @@ public sealed class GameScene : IScene
             SimpleTextRenderer.DrawString(spriteBatch, pixel, label, labelPosition + new Vector2(1f, 1f), numberScale, Color.Black);
             SimpleTextRenderer.DrawString(spriteBatch, pixel, label, labelPosition, numberScale, Color.White);
         }
+    }
+
+    private void DrawDebugHud(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
+    {
+        int margin = Math.Max(8, (int)(Math.Min(viewport.Width, viewport.Height) * 0.022f));
+        int scale = 1;
+        string ropeModeText = $"Rope Mode: {_ropeGameplayMode.ToDebugName()}";
+        Point textSize = SimpleTextRenderer.MeasureString(ropeModeText, scale);
+        Vector2 textPosition = new(margin, viewport.Height - margin - textSize.Y);
+        Color textColor = _ropeGameplayMode == RopeGameplayMode.Neutral
+            ? new Color(210, 180, 140)
+            : Color.White;
+
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, ropeModeText, textPosition + new Vector2(1f, 1f), scale, Color.Black * 0.55f);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, ropeModeText, textPosition, scale, textColor);
     }
 
     private void DrawCompletionUi(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)

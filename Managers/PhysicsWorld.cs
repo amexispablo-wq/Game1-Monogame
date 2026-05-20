@@ -12,19 +12,24 @@ public sealed class PhysicsWorld
 
     private readonly Level _level;
 
-    public PhysicsWorld(Level level, List<Player> players)
+    public PhysicsWorld(
+        Level level,
+        List<Player> players,
+        RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics)
     {
         _level = level;
         Players = players;
+        RopeGameplayMode = ropeGameplayMode;
 
         for (int i = 0; i < Players.Count - 1; i++)
         {
-            Ropes.Add(new Rope(Players[i], Players[i + 1], Players));
+            Ropes.Add(new Rope(Players[i], Players[i + 1], Players, RopeGameplayMode));
         }
     }
 
     public List<Player> Players { get; }
     public List<Rope> Ropes { get; } = new();
+    public RopeGameplayMode RopeGameplayMode { get; }
 
     public void UpdatePhysics(float dt, InputManager input)
     {

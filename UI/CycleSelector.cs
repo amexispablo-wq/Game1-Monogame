@@ -26,7 +26,7 @@ public sealed class CycleSelector<T> where T : notnull
     public Rectangle Bounds { get; set; }
     public Func<T, string> DisplayFunc { get; set; } = obj => obj.ToString() ?? "Unknown";
 
-    private int _selectedIndex = 0;
+    private int _selectedIndex;
     private Rectangle _leftArrowBounds;
     private Rectangle _rightArrowBounds;
     private Rectangle _displayBounds;
@@ -67,52 +67,69 @@ public sealed class CycleSelector<T> where T : notnull
     {
         CalculateBounds();
 
-        // Draw background
-        spriteBatch.Draw(pixel, Bounds, new Color(50, 60, 80));
-        DrawHelper.DrawBorder(spriteBatch, pixel, Bounds, new Color(80, 90, 110), 1);
+        spriteBatch.Draw(pixel, new Rectangle(Bounds.X + 3, Bounds.Y + 4, Bounds.Width, Bounds.Height), new Color(4, 6, 10, 90));
+        spriteBatch.Draw(pixel, Bounds, new Color(46, 56, 76));
+        DrawHelper.DrawBorder(spriteBatch, pixel, Bounds, new Color(105, 121, 150), 2);
 
-        // Draw left arrow
-        Color leftArrowColor = _leftArrowHovered ? new Color(200, 200, 200) : new Color(134, 145, 166);
-        spriteBatch.Draw(pixel, _leftArrowBounds, new Color(60, 70, 90));
-        DrawHelper.DrawBorder(spriteBatch, pixel, _leftArrowBounds, leftArrowColor, 1);
-        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "◀", _leftArrowBounds, 2, leftArrowColor);
+        Color leftArrowColor = _leftArrowHovered ? new Color(255, 226, 122) : new Color(184, 196, 216);
+        Color rightArrowColor = _rightArrowHovered ? new Color(255, 226, 122) : new Color(184, 196, 216);
+        Color arrowFill = new Color(58, 70, 94);
+        Color arrowHoverFill = new Color(78, 94, 126);
 
-        // Draw center display
-        spriteBatch.Draw(pixel, _displayBounds, new Color(45, 52, 70));
+        spriteBatch.Draw(pixel, _leftArrowBounds, _leftArrowHovered ? arrowHoverFill : arrowFill);
+        DrawHelper.DrawBorder(spriteBatch, pixel, _leftArrowBounds, leftArrowColor, _leftArrowHovered ? 2 : 1);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "<", _leftArrowBounds, 3, leftArrowColor);
+
+        spriteBatch.Draw(pixel, _displayBounds, new Color(35, 43, 60));
         string displayText = DisplayFunc(CurrentOption);
-        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, displayText, _displayBounds, 2, Color.White);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, displayText, _displayBounds, GetFittedTextScale(displayText, _displayBounds, 2), Color.White);
 
-        // Draw right arrow
-        Color rightArrowColor = _rightArrowHovered ? new Color(200, 200, 200) : new Color(134, 145, 166);
-        spriteBatch.Draw(pixel, _rightArrowBounds, new Color(60, 70, 90));
-        DrawHelper.DrawBorder(spriteBatch, pixel, _rightArrowBounds, rightArrowColor, 1);
-        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "▶", _rightArrowBounds, 2, rightArrowColor);
+        spriteBatch.Draw(pixel, _rightArrowBounds, _rightArrowHovered ? arrowHoverFill : arrowFill);
+        DrawHelper.DrawBorder(spriteBatch, pixel, _rightArrowBounds, rightArrowColor, _rightArrowHovered ? 2 : 1);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, ">", _rightArrowBounds, 3, rightArrowColor);
     }
 
     private void CalculateBounds()
     {
-        int arrowWidth = 35;
-        int padding = 2;
+        int arrowWidth = Math.Clamp(Bounds.Height + 8, 48, 64);
+        int padding = 4;
 
         _leftArrowBounds = new Rectangle(
             Bounds.X + padding,
             Bounds.Y + padding,
             arrowWidth,
-            Bounds.Height - (padding * 2)
-        );
+            Bounds.Height - (padding * 2));
 
         _rightArrowBounds = new Rectangle(
             Bounds.Right - arrowWidth - padding,
             Bounds.Y + padding,
             arrowWidth,
-            Bounds.Height - (padding * 2)
-        );
+            Bounds.Height - (padding * 2));
 
         _displayBounds = new Rectangle(
             _leftArrowBounds.Right + padding,
             Bounds.Y + padding,
             _rightArrowBounds.Left - _leftArrowBounds.Right - (padding * 2),
-            Bounds.Height - (padding * 2)
-        );
+            Bounds.Height - (padding * 2));
+    }
+
+    private static int GetFittedTextScale(string text, Rectangle bounds, int preferredScale)
+    {
+        int scale = Math.Max(1, preferredScale);
+        int maxWidth = Math.Max(1, bounds.Width - 12);
+        int maxHeight = Math.Max(1, bounds.Height - 8);
+
+        while (scale > 1)
+        {
+            Point size = SimpleTextRenderer.MeasureString(text, scale);
+            if (size.X <= maxWidth && size.Y <= maxHeight)
+            {
+                break;
+            }
+
+            scale--;
+        }
+
+        return scale;
     }
 }

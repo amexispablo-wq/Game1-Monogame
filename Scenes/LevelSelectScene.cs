@@ -15,6 +15,8 @@ public enum LevelSelectMode
 
 public sealed class LevelSelectScene : IScene
 {
+    private static RopeGameplayMode s_selectedRopeMode = RopeGameplayMode.ColoredPhysics;
+
     private readonly Game1 _game;
     private readonly LevelSelectMode _mode;
     private IReadOnlyList<LevelMetadata> _levels = new List<LevelMetadata>();
@@ -27,6 +29,10 @@ public sealed class LevelSelectScene : IScene
     private Button? _primaryButton;
     private Button? _secondaryButton;
     private Button? _tertiaryButton;
+    private CycleSelector<RopeGameplayMode>? _ropeModeSelector;
+    private Rectangle _ropeModePanelBounds;
+    private Rectangle _ropeModeLabelBounds;
+    private Rectangle _ropeModeDescriptionBounds;
 
     // Constants
     private const int CellWidth = 200;
@@ -52,7 +58,7 @@ public sealed class LevelSelectScene : IScene
             _levels = LevelManager.GetAllLevels();
         }
 
-        _gridLayout = GridLayout.Create(_levels.Count, _game.Viewport.Width, _game.Viewport.Height, CellWidth, CellHeight, HorizontalGap, VerticalGap);
+        _gridLayout = GridLayout.Create(_levels.Count, _game.Viewport.Width, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap);
     }
 
     private void InitializeButtons()
@@ -72,6 +78,20 @@ public sealed class LevelSelectScene : IScene
         };
 
         _tertiaryButton = _mode == LevelSelectMode.EditMode ? new Button("Create New") : null;
+
+        if (_mode == LevelSelectMode.PlayMode)
+        {
+            _ropeModeSelector = new CycleSelector<RopeGameplayMode>(
+                new List<RopeGameplayMode>
+                {
+                    RopeGameplayMode.ColoredPhysics,
+                    RopeGameplayMode.Neutral
+                },
+                mode => mode.ToDisplayName())
+            {
+                CurrentOption = s_selectedRopeMode
+            };
+        }
     }
 
     public void Update(GameTime gameTime)
@@ -101,6 +121,12 @@ public sealed class LevelSelectScene : IScene
         {
             _game.ChangeScene(new MenuScene(_game));
             return;
+        }
+
+        if (_ropeModeSelector != null)
+        {
+            _ropeModeSelector.Update(_game.Input);
+            s_selectedRopeMode = _ropeModeSelector.CurrentOption;
         }
 
         // Handle level grid clicks
@@ -158,6 +184,7 @@ public sealed class LevelSelectScene : IScene
 
         // Draw level grid
         DrawLevelGrid(spriteBatch, pixel);
+        DrawRopeModeSelector(spriteBatch, pixel, viewport);
 
         // Draw buttons
         spriteBatch.Draw(pixel, new Rectangle(0, viewport.Height - 100, viewport.Width, 100), new Color(22, 26, 34));
@@ -231,6 +258,19 @@ public sealed class LevelSelectScene : IScene
         // Layout back button separately (left side)
         _backButton.Bounds = new Rectangle(25, viewport.Height - buttonHeight - bottomMargin, 120, buttonHeight);
 
+        if (_mode == LevelSelectMode.PlayMode && _ropeModeSelector != null)
+        {
+            int stripY = Math.Max(78, viewport.Height - 190);
+            int stripBottom = viewport.Height - 100;
+            int selectorWidth = Math.Min(380, Math.Max(1, viewport.Width - 40));
+            int selectorHeight = 46;
+            int selectorY = Math.Max(86, viewport.Height - 172);
+            _ropeModePanelBounds = new Rectangle(0, stripY, viewport.Width, Math.Max(0, stripBottom - stripY));
+            _ropeModeLabelBounds = new Rectangle(20, selectorY - 22, Math.Max(1, viewport.Width - 40), 18);
+            _ropeModeSelector.Bounds = new Rectangle((viewport.Width - selectorWidth) / 2, selectorY, selectorWidth, selectorHeight);
+            _ropeModeDescriptionBounds = new Rectangle(20, selectorY + selectorHeight + 8, Math.Max(1, viewport.Width - 40), 18);
+        }
+
         if (_mode == LevelSelectMode.PlayMode)
         {
             // Play | Delete Highscore (centered)
@@ -264,7 +304,7 @@ public sealed class LevelSelectScene : IScene
 
     private void RefreshGridLayout()
     {
-        _gridLayout = GridLayout.Create(_levels.Count, _game.Viewport.Width, _game.Viewport.Height, CellWidth, CellHeight, HorizontalGap, VerticalGap);
+        _gridLayout = GridLayout.Create(_levels.Count, _game.Viewport.Width, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap);
     }
 
     private bool IsMouseOverButtons()
@@ -276,6 +316,10 @@ public sealed class LevelSelectScene : IScene
         if (_secondaryButton?.Bounds.Contains(_game.Input.MousePosition) ?? false)
             return true;
         if (_tertiaryButton?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+            return true;
+        if (_ropeModePanelBounds.Contains(_game.Input.MousePosition))
+            return true;
+        if (_ropeModeSelector?.Bounds.Contains(_game.Input.MousePosition) ?? false)
             return true;
 
         return false;
@@ -290,7 +334,8 @@ public sealed class LevelSelectScene : IScene
 
         if (_mode == LevelSelectMode.PlayMode)
         {
-            _game.ChangeScene(new GameScene(_game, levelId));
+            s_selectedRopeMode = _ropeModeSelector?.CurrentOption ?? s_selectedRopeMode;
+            _game.ChangeScene(new GameScene(_game, levelId, s_selectedRopeMode));
         }
         else
         {
@@ -376,5 +421,31 @@ public sealed class LevelSelectScene : IScene
 
     public void OnExit()
     {
+    }
+
+    private int GetGridLayoutHeight()
+    {
+        return _mode == LevelSelectMode.PlayMode
+            ? Math.Max(240, _game.Viewport.Height - 160)
+            : _game.Viewport.Height;
+    }
+
+    private void DrawRopeModeSelector(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
+    {
+        if (_mode != LevelSelectMode.PlayMode || _ropeModeSelector == null)
+        {
+            return;
+        }
+
+        if (_ropeModePanelBounds.Height > 0)
+        {
+            spriteBatch.Draw(pixel, _ropeModePanelBounds, new Color(27, 32, 43));
+        }
+
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "ROPE MODE", _ropeModeLabelBounds, 1, new Color(184, 196, 216));
+        _ropeModeSelector.Draw(spriteBatch, pixel);
+
+        string description = _ropeModeSelector.CurrentOption.ToDescription();
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, description, _ropeModeDescriptionBounds, 1, new Color(180, 200, 220));
     }
 }

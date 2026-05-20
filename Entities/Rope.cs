@@ -23,30 +23,42 @@ public sealed class Rope
     private const float SlackStiffness = 0.16f;
     private const float TenseStretchRange = 0.14f;
     private const float TenseStateThreshold = 0.08f;
-    private const float PullAcceleration = 18500f;
-    private const float PullInfluenceFalloff = 0.58f;
-    private const float PullDistanceForFullForce = 120f;
-    private const float MaxPullStep = 7.5f;
-    private const int PullInfluenceRadius = 3;
+    private const int MaxPullNodeRadius = 8;
+    private const float PullingEndpointImpulseScale = 0.72f;
+    private static readonly Color NeutralRopeColor = new(210, 180, 140);
 
     private readonly IReadOnlyList<Player> _colorPlayers;
     private Vector2 _startPinnedCorrection;
     private Vector2 _endPinnedCorrection;
     private RopeColorState _colorState;
+    private bool _startPlayerPulling;
+    private bool _endPlayerPulling;
 
     public Rope(Player startPlayer, Player endPlayer, IReadOnlyList<Player> colorPlayers, int nodeCount = DefaultNodeCount)
+        : this(startPlayer, endPlayer, colorPlayers, RopeGameplayMode.ColoredPhysics, nodeCount)
+    {
+    }
+
+    public Rope(
+        Player startPlayer,
+        Player endPlayer,
+        IReadOnlyList<Player> colorPlayers,
+        RopeGameplayMode gameplayMode,
+        int nodeCount = DefaultNodeCount)
     {
         StartPlayer = startPlayer;
         EndPlayer = endPlayer;
         _colorPlayers = colorPlayers;
+        GameplayMode = gameplayMode;
         GenerateNodes(Math.Max(2, nodeCount));
-        RefreshColorState();
+        RefreshGameplayModeState();
     }
 
     public List<RopeNode> Nodes { get; } = new();
     public List<RopeConstraint> Constraints { get; } = new();
     public Player StartPlayer { get; }
     public Player EndPlayer { get; }
+    public RopeGameplayMode GameplayMode { get; }
     public float RopeStiffness { get; set; } = 0.86f;
     public float RopeElasticity { get; set; } = 0.075f;
     public float VerletDamping { get; set; } = 0.998f;
@@ -54,6 +66,12 @@ public sealed class Rope
     public float LastTension { get; private set; }
     public int LastCollisionCount { get; private set; }
     public bool IsTense => LastTension >= TenseStateThreshold;
+    public float PullForceStrength { get; set; } = 24f;
+    public int PullNodeRadius { get; set; } = 4;
+    public float PullFalloff { get; set; } = 0.7f;
+    public float PullDampingReduction { get; set; } = 1f;
+    public float LastPullIntensity { get; private set; }
+    public int LastPulledNodeCount { get; private set; }
 
     public void Simulate(
         float dt,
@@ -67,13 +85,17 @@ public sealed class Rope
             return;
         }
 
-        RefreshColorState();
+        RefreshGameplayModeState();
         List<Platform> collidablePlatforms = GetCollidablePlatforms(platforms);
 
         _startPinnedCorrection = Vector2.Zero;
         _endPinnedCorrection = Vector2.Zero;
         LastTension = 0f;
         LastCollisionCount = 0;
+        LastPullIntensity = 0f;
+        LastPulledNodeCount = 0;
+        _startPlayerPulling = startPlayerPulling;
+        _endPlayerPulling = endPlayerPulling;
 
         SyncPinnedNodesToPlayers();
         ClearNodeCollisionState();
@@ -124,9 +146,11 @@ public sealed class Rope
             Vector2 start = constraint.A.Position;
             Vector2 end = constraint.B.Position;
             Vector2 midpoint = (start + end) * 0.5f;
-            Color segmentColor = debugDraw
-                ? Color.Lerp(new Color(104, 210, 255), Color.Red, GetTenseAmount(constraint.CurrentTension))
-                : ropeColor;
+            Color segmentColor = GameplayMode == RopeGameplayMode.Neutral
+                ? ropeColor
+                : debugDraw
+                    ? Color.Lerp(new Color(104, 210, 255), Color.Red, GetTenseAmount(constraint.CurrentTension))
+                    : ropeColor;
 
             DrawLine(spriteBatch, pixel, start, midpoint, segmentColor, debugDraw ? 4 : 6);
             DrawLine(spriteBatch, pixel, midpoint, end, segmentColor, debugDraw ? 4 : 6);
@@ -145,7 +169,19 @@ public sealed class Rope
                 (int)MathF.Round(node.Position.Y) - (size / 2),
                 size,
                 size);
-            Color fill = node.IsPinned ? Color.White : node.IsColliding ? new Color(255, 168, 64) : Color.Yellow;
+            Color fill;
+            if (node.IsPinned)
+            {
+                fill = Color.White;
+            }
+            else if (node.PullWeight > 0.001f)
+            {
+                fill = Color.Lerp(Color.Yellow, Color.LimeGreen, MathHelper.Clamp(node.PullWeight, 0f, 1f));
+            }
+            else
+            {
+                fill = node.IsColliding ? new Color(255, 168, 64) : Color.Yellow;
+            }
             spriteBatch.Draw(pixel, bounds, fill);
             DrawHelper.DrawBorder(spriteBatch, pixel, bounds, Color.Black, 1);
         }
@@ -155,8 +191,9 @@ public sealed class Rope
         DrawDebugText(spriteBatch, pixel, $"LINKS {Constraints.Count}", labelPosition + new Vector2(0f, 10f), Color.White);
         DrawDebugText(spriteBatch, pixel, $"TENSION {(int)MathF.Round(LastTension * 100f)}", labelPosition + new Vector2(0f, 20f), Color.White);
         DrawDebugText(spriteBatch, pixel, IsTense ? "STATE TENSE" : "STATE SLACK", labelPosition + new Vector2(0f, 30f), IsTense ? Color.Red : Color.Cyan);
-        DrawDebugText(spriteBatch, pixel, $"COLOR {_colorState.Name}", labelPosition + new Vector2(0f, 40f), _colorState.XnaColor);
-        DrawDebugText(spriteBatch, pixel, $"HITS {LastCollisionCount}", labelPosition + new Vector2(0f, 50f), Color.White);
+        DrawDebugText(spriteBatch, pixel, $"PULL {(int)MathF.Round(LastPullIntensity * 100f)} N{LastPulledNodeCount}", labelPosition + new Vector2(0f, 40f), Color.LimeGreen);
+        DrawDebugText(spriteBatch, pixel, $"COLOR {_colorState.Name}", labelPosition + new Vector2(0f, 50f), _colorState.XnaColor);
+        DrawDebugText(spriteBatch, pixel, $"HITS {LastCollisionCount}", labelPosition + new Vector2(0f, 60f), Color.White);
 
         DrawPullDebug(spriteBatch, pixel);
     }
@@ -188,6 +225,17 @@ public sealed class Rope
         }
     }
 
+    private void RefreshGameplayModeState()
+    {
+        if (GameplayMode == RopeGameplayMode.Neutral)
+        {
+            _colorState = RopeColorState.CreateNeutral();
+            return;
+        }
+
+        RefreshColorState();
+    }
+
     private void RefreshColorState()
     {
         bool hasRed = false;
@@ -216,6 +264,11 @@ public sealed class Rope
     private List<Platform> GetCollidablePlatforms(IEnumerable<Platform> platforms)
     {
         List<Platform> collidablePlatforms = new();
+        if (GameplayMode == RopeGameplayMode.Neutral)
+        {
+            return collidablePlatforms;
+        }
+
         foreach (Platform platform in platforms)
         {
             if (CanCollideWith(platform.PlatformColor))
@@ -263,7 +316,8 @@ public sealed class Rope
     {
         foreach (RopeNode node in Nodes)
         {
-            node.PullAcceleration = Vector2.Zero;
+            node.PullVelocityDelta = Vector2.Zero;
+            node.PullWeight = 0f;
             node.LastPullForce = Vector2.Zero;
         }
     }
@@ -283,13 +337,23 @@ public sealed class Rope
 
     private void ApplyPullForce(Player player, float dt)
     {
+        float pullStrength = MathF.Max(0f, PullForceStrength);
+        if (pullStrength <= 0.01f)
+        {
+            return;
+        }
+
         int closestIndex = FindClosestFreeNode(GetPlayerAnchor(player));
         if (closestIndex < 0)
         {
             return;
         }
 
-        for (int offset = -PullInfluenceRadius; offset <= PullInfluenceRadius; offset++)
+        int radius = Math.Clamp(PullNodeRadius, 1, MaxPullNodeRadius);
+        float falloff = MathHelper.Clamp(PullFalloff, 0f, 1f);
+        Vector2 target = GetPlayerAnchor(player);
+
+        for (int offset = -radius; offset <= radius; offset++)
         {
             int nodeIndex = closestIndex + offset;
             if (nodeIndex <= 0 || nodeIndex >= Nodes.Count - 1)
@@ -298,7 +362,12 @@ public sealed class Rope
             }
 
             RopeNode node = Nodes[nodeIndex];
-            Vector2 target = GetPlayerAnchor(player);
+            float weight = offset == 0 ? 1f : MathF.Pow(falloff, MathF.Abs(offset));
+            if (weight <= 0.0001f)
+            {
+                continue;
+            }
+
             Vector2 toPlayer = target - node.Position;
             float distance = toPlayer.Length();
             if (distance <= 0.001f)
@@ -306,17 +375,24 @@ public sealed class Rope
                 continue;
             }
 
-            float indexFalloff = MathF.Pow(PullInfluenceFalloff, MathF.Abs(offset));
-            float distanceFactor = MathHelper.Clamp(distance / PullDistanceForFullForce, 0.25f, 1f);
-            Vector2 pullAcceleration = (toPlayer / distance) * PullAcceleration * indexFalloff * distanceFactor;
-            float maxPullAcceleration = MaxPullStep / MathF.Max(dt * dt, 0.000001f);
-            if (pullAcceleration.LengthSquared() > maxPullAcceleration * maxPullAcceleration)
+            float step = MathF.Min(pullStrength * weight, distance);
+            Vector2 velocityDelta = (toPlayer / distance) * step;
+
+            node.PullVelocityDelta += velocityDelta;
+            float maxTotalDelta = pullStrength * 1.6f;
+            if (node.PullVelocityDelta.LengthSquared() > maxTotalDelta * maxTotalDelta)
             {
-                pullAcceleration = Vector2.Normalize(pullAcceleration) * maxPullAcceleration;
+                node.PullVelocityDelta = Vector2.Normalize(node.PullVelocityDelta) * maxTotalDelta;
             }
 
-            node.PullAcceleration += pullAcceleration;
-            node.LastPullForce += pullAcceleration;
+            bool wasPulled = node.PullWeight > 0.0001f;
+            node.PullWeight = MathF.Max(node.PullWeight, weight);
+            node.LastPullForce += velocityDelta;
+            LastPullIntensity = MathF.Max(LastPullIntensity, node.PullWeight);
+            if (!wasPulled)
+            {
+                LastPulledNodeCount++;
+            }
         }
     }
 
@@ -343,6 +419,7 @@ public sealed class Rope
     private void IntegrateNodes(float dt, float gravity)
     {
         Vector2 gravityStep = new(0f, gravity * dt * dt);
+        float pullDampingReduction = MathHelper.Clamp(PullDampingReduction, 0f, 1f);
         foreach (RopeNode node in Nodes)
         {
             if (node.IsPinned)
@@ -358,11 +435,14 @@ public sealed class Rope
                     : Vector2.Normalize(velocity) * MaxNodeVelocity;
             }
 
-            velocity *= VerletDamping;
-            Vector2 pullStep = node.PullAcceleration * dt * dt;
+            float pullWeight = MathHelper.Clamp(node.PullWeight, 0f, 1f);
+            float damping = MathHelper.Lerp(VerletDamping, 1f, pullDampingReduction * pullWeight);
+            velocity *= damping;
+            velocity += node.PullVelocityDelta;
+
             node.PreviousPosition = node.Position;
-            node.Position += velocity + gravityStep + pullStep;
-            node.PullAcceleration = Vector2.Zero;
+            node.Position += velocity + gravityStep;
+            node.PullVelocityDelta = Vector2.Zero;
         }
     }
 
@@ -466,10 +546,20 @@ public sealed class Rope
 
         if (node == Nodes[0])
         {
+            if (_startPlayerPulling)
+            {
+                correction *= PullingEndpointImpulseScale;
+            }
+
             _startPinnedCorrection += correction;
         }
         else if (node == Nodes[^1])
         {
+            if (_endPlayerPulling)
+            {
+                correction *= PullingEndpointImpulseScale;
+            }
+
             _endPinnedCorrection += correction;
         }
     }
@@ -539,10 +629,10 @@ public sealed class Rope
                 continue;
             }
 
-            Vector2 vector = node.LastPullForce * 0.0035f;
-            if (vector.LengthSquared() > 42f * 42f)
+            Vector2 vector = node.LastPullForce * 2.2f;
+            if (vector.LengthSquared() > 70f * 70f)
             {
-                vector = Vector2.Normalize(vector) * 42f;
+                vector = Vector2.Normalize(vector) * 70f;
             }
 
             DrawLine(spriteBatch, pixel, node.Position, node.Position + vector, Color.LimeGreen, 3);
@@ -636,6 +726,11 @@ public sealed class Rope
             }
 
             return new RopeColorState(hasRed, hasGreen, hasBlue, color, name);
+        }
+
+        public static RopeColorState CreateNeutral()
+        {
+            return new RopeColorState(false, false, false, Rope.NeutralRopeColor, "NEUTRAL");
         }
     }
 }

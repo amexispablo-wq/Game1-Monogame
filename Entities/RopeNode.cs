@@ -16,6 +16,7 @@ public sealed class RopeNode
     public bool IsPinned { get; set; }
     public bool IsColliding { get; set; }
     public Vector2 LastCollisionNormal { get; set; }
-    public Vector2 PullAcceleration { get; set; }
+    public Vector2 PullVelocityDelta { get; set; }
+    public float PullWeight { get; set; }
     public Vector2 LastPullForce { get; set; }
 }
