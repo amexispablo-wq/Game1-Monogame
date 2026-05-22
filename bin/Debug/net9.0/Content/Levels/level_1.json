@@ -10,9 +10,9 @@
     },
     {
       "x": -32,
-      "y": 672,
+      "y": 736,
       "width": 320,
-      "height": 96,
+      "height": 32,
       "color": "Green"
     },
     {
@@ -70,6 +70,34 @@
       "width": 4672,
       "height": 1216,
       "color": "Red"
+    },
+    {
+      "x": -224,
+      "y": 704,
+      "width": 192,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -512,
+      "y": 384,
+      "width": 288,
+      "height": 352,
+      "color": "Red"
+    },
+    {
+      "x": -160,
+      "y": 544,
+      "width": 160,
+      "height": 96,
+      "color": "Blue"
+    },
+    {
+      "x": -288,
+      "y": 640,
+      "width": 64,
+      "height": 96,
+      "color": "Green"
     }
   ],
   "goals": [],

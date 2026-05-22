@@ -92,6 +92,7 @@ public sealed class PhysicsWorld
         player.ApplyMovementForces(input);
         player.ApplyJumpImpulse(input);
         player.ApplyGravity(Gravity, input);
+        player.ApplyEjectionForces();
     }
 
     private void IntegrateBodyForces(Player player, float dt)
@@ -125,13 +126,18 @@ public sealed class PhysicsWorld
         player.IsGrounded = false;
         ResolveVerticalCollisions(player);
 
-        player.FinishPhysicsStep();
+        player.FinishPhysicsStep(_level);
     }
 
     private void ResolveHorizontalCollisions(Player player)
     {
         foreach (Platform platform in _level.GetCollidablePlatforms(player.CurrentColor))
         {
+            if (player.IsEjectingFrom(platform))
+            {
+                continue;
+            }
+
             if (!CollisionHelper.Intersects(player.Position, player.Size, platform.Bounds))
             {
                 continue;
@@ -176,6 +182,11 @@ public sealed class PhysicsWorld
     {
         foreach (Platform platform in _level.GetCollidablePlatforms(player.CurrentColor))
         {
+            if (player.IsEjectingFrom(platform))
+            {
+                continue;
+            }
+
             if (!CollisionHelper.Intersects(player.Position, player.Size, platform.Bounds))
             {
                 continue;
