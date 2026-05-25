@@ -6,14 +6,14 @@ using Microsoft.Xna.Framework.Input;
 
 namespace Game1_Monogame;
 
-public sealed class InputManager
+public sealed class InputManager : ILocalPlayerInputSource
 {
     public const int MaxLocalPlayers = 4;
 
-    private readonly Dictionary<PlayerId, InputActionState> _playerActionStates = new();
+    private readonly Dictionary<PlayerId, PlayerInputState> _playerInputStates = new();
     private List<InputProfile> _profiles;
     private KeyboardInputBindings _keyboardBindings;
-    private InputActionState _keyboardActionState;
+    private PlayerInputState _keyboardInputState;
     private PlayerId _keyboardControlledPlayerId = PlayerId.Player1;
     private KeyboardState _currentKeyboard;
     private KeyboardState _previousKeyboard;
@@ -92,13 +92,13 @@ public sealed class InputManager
         _previousMouse = _currentMouse;
         _currentMouse = Mouse.GetState();
 
-        _keyboardActionState = ReadKeyboardActionState();
-        UpdatePlayerActionStates(_keyboardActionState);
+        _keyboardInputState = ReadKeyboardInputState();
+        UpdatePlayerInputStates(_keyboardInputState);
 
-        HorizontalMovement = _keyboardActionState.HorizontalMovement;
-        JumpPressed = _keyboardActionState.JumpPressed;
-        FastFallHeld = _keyboardActionState.FastFallHeld;
-        PullRopeHeld = _keyboardActionState.PullRopeHeld;
+        HorizontalMovement = _keyboardInputState.HorizontalMovement;
+        JumpPressed = _keyboardInputState.JumpPressed;
+        FastFallHeld = _keyboardInputState.FastFallHeld;
+        PullRopeHeld = _keyboardInputState.PullRopeHeld;
         ExitPressed = IsNewKeyPress(Keys.Escape);
         EnterPressed = IsNewKeyPress(Keys.Enter);
         DebugTogglePressed = IsNewKeyPress(Keys.F3);
@@ -120,7 +120,7 @@ public sealed class InputManager
         MiddleMouseReleased = _currentMouse.MiddleButton == ButtonState.Released
             && _previousMouse.MiddleButton == ButtonState.Pressed;
         MouseWheelDelta = _currentMouse.ScrollWheelValue - _previousMouse.ScrollWheelValue;
-        RequestedColor = _keyboardActionState.RequestedColor ?? GetLegacyEditorRequestedColor();
+        RequestedColor = _keyboardInputState.RequestedColor ?? GetLegacyEditorRequestedColor();
     }
 
     public void ReloadProfilesFromSettings()
@@ -180,14 +180,14 @@ public sealed class InputManager
             }
         }
 
-        UpdatePlayerActionStates(_keyboardActionState);
+        UpdatePlayerInputStates(_keyboardInputState);
     }
 
-    public InputActionState GetActionState(PlayerId playerId)
+    public PlayerInputState GetPlayerInput(PlayerId playerId)
     {
-        return _playerActionStates.TryGetValue(playerId, out InputActionState state)
+        return _playerInputStates.TryGetValue(playerId, out PlayerInputState state)
             ? state
-            : InputActionState.Empty;
+            : PlayerInputState.Empty;
     }
 
     public bool IsKeyDown(Keys key)
@@ -202,24 +202,24 @@ public sealed class InputManager
 
     private void InitializeActionStates()
     {
-        _playerActionStates.Clear();
+        _playerInputStates.Clear();
         foreach (InputProfile profile in _profiles)
         {
-            _playerActionStates[profile.PlayerId] = InputActionState.Empty;
+            _playerInputStates[profile.PlayerId] = PlayerInputState.Empty;
         }
     }
 
-    private void UpdatePlayerActionStates(InputActionState keyboardActionState)
+    private void UpdatePlayerInputStates(PlayerInputState keyboardInputState)
     {
         foreach (InputProfile profile in _profiles)
         {
-            _playerActionStates[profile.PlayerId] = profile.IsActive && profile.PlayerId == _keyboardControlledPlayerId
-                ? keyboardActionState
-                : InputActionState.Empty;
+            _playerInputStates[profile.PlayerId] = profile.IsActive && profile.PlayerId == _keyboardControlledPlayerId
+                ? keyboardInputState
+                : PlayerInputState.Empty;
         }
     }
 
-    private InputActionState ReadKeyboardActionState()
+    private PlayerInputState ReadKeyboardInputState()
     {
         float horizontalMovement = 0f;
         if (_currentKeyboard.IsKeyDown(_keyboardBindings.MoveLeft))
@@ -246,7 +246,7 @@ public sealed class InputManager
             requestedColor = GameColor.Green;
         }
 
-        return new InputActionState(
+        return new PlayerInputState(
             horizontalMovement,
             IsNewKeyPress(_keyboardBindings.Jump),
             _currentKeyboard.IsKeyDown(_keyboardBindings.FastFall),

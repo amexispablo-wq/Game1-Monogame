@@ -5,7 +5,7 @@ using Microsoft.Xna.Framework.Graphics;
 
 namespace Game1_Monogame;
 
-public sealed class Rope
+public sealed class Rope : INetworkEntity
 {
     private const int DefaultNodeCount = 24;
     private const float MinimumRopeLength = 280f;
@@ -35,7 +35,7 @@ public sealed class Rope
     private bool _endPlayerPulling;
 
     public Rope(Player startPlayer, Player endPlayer, IReadOnlyList<Player> colorPlayers, int nodeCount = DefaultNodeCount)
-        : this(startPlayer, endPlayer, colorPlayers, RopeGameplayMode.ColoredPhysics, nodeCount)
+        : this(startPlayer, endPlayer, colorPlayers, RopeGameplayMode.ColoredPhysics, NetworkEntityOwnership.LocalHost(0), nodeCount)
     {
     }
 
@@ -45,15 +45,32 @@ public sealed class Rope
         IReadOnlyList<Player> colorPlayers,
         RopeGameplayMode gameplayMode,
         int nodeCount = DefaultNodeCount)
+        : this(startPlayer, endPlayer, colorPlayers, gameplayMode, NetworkEntityOwnership.LocalHost(0), nodeCount)
+    {
+    }
+
+    public Rope(
+        Player startPlayer,
+        Player endPlayer,
+        IReadOnlyList<Player> colorPlayers,
+        RopeGameplayMode gameplayMode,
+        NetworkEntityOwnership ownership,
+        int nodeCount = DefaultNodeCount)
     {
         StartPlayer = startPlayer;
         EndPlayer = endPlayer;
         _colorPlayers = colorPlayers;
         GameplayMode = gameplayMode;
+        ConfigureNetworkOwnership(ownership);
         GenerateNodes(Math.Max(2, nodeCount));
         RefreshGameplayModeState();
     }
 
+    public int NetworkId { get; private set; }
+    public int OwnerId { get; private set; }
+    public bool IsLocal { get; private set; }
+    public bool IsRemote => !IsLocal;
+    public bool IsHostControlled { get; private set; }
     public List<RopeNode> Nodes { get; } = new();
     public List<RopeConstraint> Constraints { get; } = new();
     public Player StartPlayer { get; }
@@ -73,6 +90,64 @@ public sealed class Rope
     public float LastPullIntensity { get; private set; }
     public int LastPulledNodeCount { get; private set; }
 
+    public void ConfigureNetworkOwnership(NetworkEntityOwnership ownership)
+    {
+        NetworkId = ownership.NetworkId;
+        OwnerId = ownership.OwnerId;
+        IsLocal = ownership.IsLocal;
+        IsHostControlled = ownership.IsHostControlled;
+    }
+
+    public RopeSnapshot CreateSnapshot()
+    {
+        RopeSnapshot snapshot = new()
+        {
+            NetworkId = NetworkId,
+            OwnerId = OwnerId,
+            StartPlayerNetworkId = StartPlayer.NetworkId,
+            EndPlayerNetworkId = EndPlayer.NetworkId,
+            RopeMode = GameplayMode,
+            Tension = LastTension,
+            IsTense = IsTense,
+            PullIntensity = LastPullIntensity,
+            PulledNodeCount = LastPulledNodeCount
+        };
+
+        foreach (RopeNode node in Nodes)
+        {
+            snapshot.NodePositions.Add(NetworkVector2.FromVector2(node.Position));
+        }
+
+        return snapshot;
+    }
+
+    public void ApplySnapshot(RopeSnapshot snapshot)
+    {
+        ConfigureNetworkOwnership(new NetworkEntityOwnership(
+            snapshot.NetworkId,
+            snapshot.OwnerId,
+            IsLocal,
+            IsHostControlled));
+
+        if (snapshot.NodePositions.Count != Nodes.Count)
+        {
+            RebuildNodesFromSnapshot(snapshot.NodePositions);
+        }
+        else
+        {
+            for (int i = 0; i < Nodes.Count; i++)
+            {
+                Vector2 position = snapshot.NodePositions[i].ToVector2();
+                Nodes[i].PreviousPosition = position;
+                Nodes[i].Position = position;
+            }
+        }
+
+        LastTension = snapshot.Tension;
+        LastPullIntensity = snapshot.PullIntensity;
+        LastPulledNodeCount = snapshot.PulledNodeCount;
+    }
+
     public void Simulate(
         float dt,
         float gravity,
@@ -80,7 +155,7 @@ public sealed class Rope
         bool startPlayerPulling,
         bool endPlayerPulling)
     {
-        if (dt <= 0f || Nodes.Count < 2)
+        if (!IsHostControlled || dt <= 0f || Nodes.Count < 2)
         {
             return;
         }
@@ -216,6 +291,23 @@ public sealed class Rope
             float t = nodeCount <= 1 ? 0f : i / (float)(nodeCount - 1);
             Vector2 position = Vector2.Lerp(start, end, t) + new Vector2(0f, MathF.Sin(t * MathF.PI) * sag);
             Nodes.Add(new RopeNode(position, i == 0 || i == nodeCount - 1));
+        }
+
+        for (int i = 0; i < Nodes.Count - 1; i++)
+        {
+            float restLength = Vector2.Distance(Nodes[i].Position, Nodes[i + 1].Position);
+            Constraints.Add(new RopeConstraint(Nodes[i], Nodes[i + 1], restLength));
+        }
+    }
+
+    private void RebuildNodesFromSnapshot(IReadOnlyList<NetworkVector2> nodePositions)
+    {
+        Nodes.Clear();
+        Constraints.Clear();
+
+        for (int i = 0; i < nodePositions.Count; i++)
+        {
+            Nodes.Add(new RopeNode(nodePositions[i].ToVector2(), i == 0 || i == nodePositions.Count - 1));
         }
 
         for (int i = 0; i < Nodes.Count - 1; i++)

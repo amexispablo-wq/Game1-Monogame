@@ -16,91 +16,236 @@
       "color": "Green"
     },
     {
-      "x": 320,
-      "y": 576,
-      "width": 128,
-      "height": 160,
-      "color": "Red"
-    },
-    {
-      "x": 512,
-      "y": 544,
-      "width": 160,
-      "height": 128,
+      "x": -672,
+      "y": 768,
+      "width": 4672,
+      "height": 1216,
       "color": "Blue"
     },
     {
-      "x": 736,
-      "y": 448,
-      "width": 160,
-      "height": 160,
+      "x": -672,
+      "y": 768,
+      "width": 4672,
+      "height": 1216,
+      "color": "Red"
+    },
+    {
+      "x": 352,
+      "y": 704,
+      "width": 256,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 672,
+      "y": 672,
+      "width": 224,
+      "height": 64,
+      "color": "Blue"
+    },
+    {
+      "x": 928,
+      "y": 640,
+      "width": 192,
+      "height": 96,
       "color": "Green"
     },
     {
-      "x": 800,
-      "y": 320,
-      "width": 32,
+      "x": 1088,
+      "y": 576,
+      "width": 256,
       "height": 160,
       "color": "Blue"
     },
     {
-      "x": 960,
+      "x": 1216,
       "y": 416,
       "width": 128,
-      "height": 256,
+      "height": 160,
+      "color": "Red"
+    },
+    {
+      "x": 1536,
+      "y": 576,
+      "width": 320,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 1696,
+      "y": 384,
+      "width": 160,
+      "height": 192,
+      "color": "Green"
+    },
+    {
+      "x": 1856,
+      "y": 320,
+      "width": 192,
+      "height": 288,
       "color": "Blue"
     },
     {
-      "x": 960,
-      "y": 224,
+      "x": 1824,
+      "y": 608,
+      "width": 256,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 2048,
+      "y": 416,
       "width": 96,
       "height": 192,
-      "color": "Red"
+      "color": "Green"
     },
     {
-      "x": -672,
-      "y": 768,
-      "width": 4672,
-      "height": 1216,
-      "color": "Blue"
-    },
-    {
-      "x": -672,
-      "y": 768,
-      "width": 4672,
-      "height": 1216,
-      "color": "Red"
-    },
-    {
-      "x": -224,
-      "y": 704,
-      "width": 192,
+      "x": 2112,
+      "y": 576,
+      "width": 288,
       "height": 32,
       "color": "Blue"
     },
     {
-      "x": -512,
-      "y": 384,
-      "width": 288,
-      "height": 352,
+      "x": 2240,
+      "y": 512,
+      "width": 160,
+      "height": 64,
       "color": "Red"
     },
     {
-      "x": -160,
-      "y": 544,
+      "x": 2368,
+      "y": 352,
+      "width": 192,
+      "height": 160,
+      "color": "Red"
+    },
+    {
+      "x": 2368,
+      "y": 480,
+      "width": 384,
+      "height": 64,
+      "color": "Blue"
+    },
+    {
+      "x": 2752,
+      "y": 416,
       "width": 160,
+      "height": 64,
+      "color": "Blue"
+    },
+    {
+      "x": 2944,
+      "y": 352,
+      "width": 128,
+      "height": 64,
+      "color": "Blue"
+    },
+    {
+      "x": 3072,
+      "y": 256,
+      "width": 128,
+      "height": 64,
+      "color": "Blue"
+    },
+    {
+      "x": 3040,
+      "y": 320,
+      "width": 64,
+      "height": 160,
+      "color": "Red"
+    },
+    {
+      "x": 2912,
+      "y": 384,
+      "width": 32,
+      "height": 128,
+      "color": "Green"
+    },
+    {
+      "x": 2784,
+      "y": 128,
+      "width": 224,
       "height": 96,
       "color": "Blue"
     },
     {
-      "x": -288,
+      "x": 3008,
+      "y": 192,
+      "width": 64,
+      "height": 64,
+      "color": "Green"
+    },
+    {
+      "x": 2560,
+      "y": 32,
+      "width": 224,
+      "height": 320,
+      "color": "Green"
+    },
+    {
+      "x": 1792,
+      "y": 160,
+      "width": 768,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 3072,
+      "y": -128,
+      "width": 32,
+      "height": 224,
+      "color": "Green"
+    },
+    {
+      "x": 1440,
+      "y": -32,
+      "width": 320,
+      "height": 192,
+      "color": "Red"
+    },
+    {
+      "x": 1792,
+      "y": 64,
+      "width": 64,
+      "height": 64,
+      "color": "Green"
+    },
+    {
+      "x": 1952,
+      "y": 96,
+      "width": 128,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 2176,
+      "y": 128,
+      "width": 96,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": 1408,
       "y": 640,
       "width": 64,
-      "height": 96,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 1472,
+      "y": 608,
+      "width": 64,
+      "height": 64,
       "color": "Green"
     }
   ],
-  "goals": [],
+  "goals": [
+    {
+      "x": 1568,
+      "y": -96
+    }
+  ],
   "playerSpawn": {
     "x": 0,
     "y": 0

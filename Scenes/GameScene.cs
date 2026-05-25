@@ -8,27 +8,22 @@ namespace Game1_Monogame;
 public sealed class GameScene : IScene
 {
     private const float CompletionReturnDelaySeconds = 3f;
-    private const float MaxPhysicsFrameTime = 0.25f;
-    private const float PlayerSpawnSpacing = 50f;
-    private const int MaxPhysicsStepsPerFrame = 5;
+    private const float MaxSceneFrameTime = 0.25f;
 
     private readonly Game1 _game;
-    private readonly string _levelId;
     private readonly RopeGameplayMode _ropeGameplayMode;
+    private readonly GameSession _session;
     private readonly Level _level;
-    private readonly List<Player> _players;
-    private readonly PhysicsWorld _physicsWorld;
+    private readonly PlayerManager _playerManager;
+    private readonly GameSimulation _simulation;
     private readonly Camera _camera;
     private readonly Button _backButton = new("Back to Menu") { TextScale = 2 };
-    private float elapsedTime;
-    private bool timerRunning;
     private bool _debugDraw;
-    private bool _levelComplete;
+    private bool _completionUiActive;
     private float _finalTime;
     private bool _newRecord;
     private float _completionReturnDelay;
     private float _completionUiElapsed;
-    private float _physicsAccumulator;
 
     public GameScene(
         Game1 game,
@@ -36,23 +31,27 @@ public sealed class GameScene : IScene
         RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics)
     {
         _game = game;
-        _levelId = levelId;
         _ropeGameplayMode = ropeGameplayMode;
+        _session = GameSession.CreateLocalTest(levelId, ropeGameplayMode);
         _level = LevelManager.LoadLevel(levelId);
-        _players = CreatePlayers();
-        _physicsWorld = new PhysicsWorld(_level, _players, _ropeGameplayMode);
+        _playerManager = new PlayerManager(_session, _level);
+        _playerManager.SpawnLocalPlayers(_game.Input.ActiveProfiles);
+        _simulation = new GameSimulation(_session, _level, _playerManager);
         _camera = new Camera(GetPlayersCenter());
-        timerRunning = true;
     }
+
+    private IReadOnlyList<Player> Players => _simulation.Players;
+    private IReadOnlyList<Rope> Ropes => _simulation.Ropes;
 
     public void Update(GameTime gameTime)
     {
         LayoutBackButton();
 
-        float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, MaxPhysicsFrameTime);
+        float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, MaxSceneFrameTime);
 
-        if (_levelComplete)
+        if (_simulation.IsLevelComplete)
         {
+            BeginCompletionUi();
             _completionReturnDelay = MathF.Max(0f, _completionReturnDelay - dt);
             _completionUiElapsed += dt;
             UpdateCamera(gameTime);
@@ -91,16 +90,8 @@ public sealed class GameScene : IScene
 
         HandlePlayerSelectionClick();
 
-        if (timerRunning)
-        {
-            elapsedTime += dt;
-        }
-
-        UpdatePhysics(dt);
-        if (!_levelComplete && IsAnyPlayerTouchingGoal())
-        {
-            CompleteLevel();
-        }
+        _simulation.Advance(dt, _game.Input);
+        BeginCompletionUi();
 
         UpdateCamera(gameTime);
     }
@@ -120,8 +111,12 @@ public sealed class GameScene : IScene
             transformMatrix: _camera.GetTransform(viewport));
 
         _level.Draw(spriteBatch, _game.Pixel, _debugDraw);
-        _physicsWorld.DrawRopes(spriteBatch, _game.Pixel, _debugDraw);
-        foreach (Player player in _players)
+        foreach (Rope rope in Ropes)
+        {
+            rope.Draw(spriteBatch, _game.Pixel, _debugDraw);
+        }
+
+        foreach (Player player in Players)
         {
             player.Draw(spriteBatch, _game.Pixel, _debugDraw);
         }
@@ -136,7 +131,7 @@ public sealed class GameScene : IScene
             DrawDebugHud(spriteBatch, _game.Pixel, viewport);
         }
 
-        if (_levelComplete)
+        if (_simulation.IsLevelComplete)
         {
             DrawCompletionUi(spriteBatch, _game.Pixel, viewport);
         }
@@ -147,26 +142,6 @@ public sealed class GameScene : IScene
         }
 
         spriteBatch.End();
-    }
-
-    private List<Player> CreatePlayers()
-    {
-        List<Player> players = new();
-        int spawnIndex = 0;
-
-        foreach (InputProfile profile in _game.Input.ActiveProfiles)
-        {
-            Vector2 spawnPosition = _level.PlayerStart + new Vector2(PlayerSpawnSpacing * spawnIndex, 0f);
-            players.Add(new Player(profile.PlayerId, profile.PlayerIndex, spawnPosition, profile.AssignedInput));
-            spawnIndex++;
-        }
-
-        if (players.Count == 0)
-        {
-            players.Add(new Player(PlayerId.Player1, 0, _level.PlayerStart, InputDevice.Keyboard));
-        }
-
-        return players;
     }
 
     private void HandlePlayerSelectionClick()
@@ -181,9 +156,14 @@ public sealed class GameScene : IScene
             new Vector2(_game.Input.MousePosition.X, _game.Input.MousePosition.Y),
             inverseCameraTransform);
 
-        for (int i = _players.Count - 1; i >= 0; i--)
+        for (int i = Players.Count - 1; i >= 0; i--)
         {
-            Player player = _players[i];
+            Player player = Players[i];
+            if (player.IsRemote)
+            {
+                continue;
+            }
+
             if (!player.Bounds.Contains((int)MathF.Floor(worldPosition.X), (int)MathF.Floor(worldPosition.Y)))
             {
                 continue;
@@ -196,9 +176,14 @@ public sealed class GameScene : IScene
 
     private void SetKeyboardControlledPlayer(Player controlledPlayer)
     {
+        if (!controlledPlayer.IsLocal)
+        {
+            return;
+        }
+
         _game.Input.SetKeyboardControlledPlayer(controlledPlayer.PlayerId);
 
-        foreach (Player player in _players)
+        foreach (Player player in Players)
         {
             if (player.AssignedInput.DeviceType == InputDeviceType.Keyboard)
             {
@@ -207,31 +192,6 @@ public sealed class GameScene : IScene
         }
 
         controlledPlayer.AssignedInput = InputDevice.Keyboard;
-    }
-
-    private void UpdatePhysics(float frameDt)
-    {
-        _physicsAccumulator += frameDt;
-
-        int steps = 0;
-        while (_physicsAccumulator >= PhysicsWorld.FixedTimeStep && steps < MaxPhysicsStepsPerFrame)
-        {
-            _physicsAccumulator -= PhysicsWorld.FixedTimeStep;
-            steps++;
-
-            _physicsWorld.UpdatePhysics(PhysicsWorld.FixedTimeStep, _game.Input);
-
-            if (IsAnyPlayerTouchingGoal())
-            {
-                CompleteLevel();
-                return;
-            }
-        }
-
-        if (steps >= MaxPhysicsStepsPerFrame)
-        {
-            _physicsAccumulator = 0f;
-        }
     }
 
     private void UpdateCamera(GameTime gameTime)
@@ -244,23 +204,23 @@ public sealed class GameScene : IScene
 
     private Vector2 GetPlayersCenter()
     {
-        if (_players.Count == 0)
+        if (Players.Count == 0)
         {
             return _level.PlayerStart;
         }
 
         Vector2 total = Vector2.Zero;
-        foreach (Player player in _players)
+        foreach (Player player in Players)
         {
             total += player.Position + (player.Size * 0.5f);
         }
 
-        return total / _players.Count;
+        return total / Players.Count;
     }
 
     private float GetTargetCameraZoom(Viewport viewport)
     {
-        if (_players.Count <= 1 || viewport.Width <= 0 || viewport.Height <= 0)
+        if (Players.Count <= 1 || viewport.Width <= 0 || viewport.Height <= 0)
         {
             return 1f;
         }
@@ -270,7 +230,7 @@ public sealed class GameScene : IScene
         float maxX = float.MinValue;
         float maxY = float.MinValue;
 
-        foreach (Player player in _players)
+        foreach (Player player in Players)
         {
             Vector2 center = player.Position + (player.Size * 0.5f);
             minX = MathF.Min(minX, center.X);
@@ -279,7 +239,7 @@ public sealed class GameScene : IScene
             maxY = MathF.Max(maxY, center.Y);
         }
 
-        foreach (Rope rope in _physicsWorld.Ropes)
+        foreach (Rope rope in Ropes)
         {
             foreach (RopeNode node in rope.Nodes)
             {
@@ -299,48 +259,23 @@ public sealed class GameScene : IScene
         return MathHelper.Clamp(MathF.Min(zoomX, zoomY), 0.55f, 1f);
     }
 
-    private bool IsAnyPlayerTouchingGoal()
+    private void BeginCompletionUi()
     {
-        foreach (Player player in _players)
-        {
-            Rectangle playerBounds = player.Bounds;
-            foreach (Goal goal in _level.Goals)
-            {
-                if (playerBounds.Intersects(goal.TriggerBounds))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private void CompleteLevel()
-    {
-        if (_levelComplete)
+        if (!_simulation.IsLevelComplete || _completionUiActive)
         {
             return;
         }
 
-        timerRunning = false;
-        _levelComplete = true;
-        _finalTime = BestTimeStorage.RoundToCentiseconds(elapsedTime);
-        elapsedTime = _finalTime;
-        _newRecord = BestTimeStorage.SaveIfRecord(_levelId, _finalTime);
+        _completionUiActive = true;
+        _finalTime = _simulation.FinalTime;
+        _newRecord = _simulation.NewRecord;
         _completionReturnDelay = CompletionReturnDelaySeconds;
         _completionUiElapsed = 0f;
-        _physicsAccumulator = 0f;
-
-        foreach (Player player in _players)
-        {
-            player.Freeze();
-        }
     }
 
     private bool CanReturnToMenu()
     {
-        return !_levelComplete || _completionReturnDelay <= 0f;
+        return !_simulation.IsLevelComplete || _completionReturnDelay <= 0f;
     }
 
     private static string FormatTime(float seconds)
@@ -385,7 +320,7 @@ public sealed class GameScene : IScene
 
     private void DrawTimer(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
     {
-        string timeText = FormatTime(elapsedTime);
+        string timeText = FormatTime(_simulation.ElapsedTime);
         int margin = Math.Max(8, (int)(viewport.Width * 0.03f));
         int scale = FitTextScale(
             timeText,
@@ -401,7 +336,7 @@ public sealed class GameScene : IScene
     {
         int margin = Math.Max(8, (int)(Math.Min(viewport.Width, viewport.Height) * 0.022f));
         int scale = Math.Clamp(viewport.Height / 360, 1, 2);
-        string playerCountText = $"PLAYERS {_players.Count}";
+        string playerCountText = $"PLAYERS {Players.Count}";
         Vector2 textPosition = new(margin, margin);
 
         SimpleTextRenderer.DrawString(spriteBatch, pixel, playerCountText, textPosition + new Vector2(1f, 1f), scale, Color.Black * 0.45f);
@@ -412,9 +347,9 @@ public sealed class GameScene : IScene
         int swatchGap = Math.Max(6, swatchSize / 3);
         int y = margin + textSize.Y + 8;
 
-        for (int i = 0; i < _players.Count; i++)
+        for (int i = 0; i < Players.Count; i++)
         {
-            Player player = _players[i];
+            Player player = Players[i];
             int x = margin + (i * (swatchSize + swatchGap));
             Rectangle border = new(x, y, swatchSize, swatchSize);
             Rectangle fill = new(x + 2, y + 2, swatchSize - 4, swatchSize - 4);
@@ -438,15 +373,48 @@ public sealed class GameScene : IScene
     {
         int margin = Math.Max(8, (int)(Math.Min(viewport.Width, viewport.Height) * 0.022f));
         int scale = 1;
-        string ropeModeText = $"Rope Mode: {_ropeGameplayMode.ToDebugName()}";
-        Point textSize = SimpleTextRenderer.MeasureString(ropeModeText, scale);
-        Vector2 textPosition = new(margin, viewport.Height - margin - textSize.Y);
-        Color textColor = _ropeGameplayMode == RopeGameplayMode.Neutral
+        int lineHeight = SimpleTextRenderer.MeasureString("A", scale).Y + 3;
+        List<string> lines = new()
+        {
+            $"ROPE MODE {_ropeGameplayMode.ToDebugName()}",
+            $"TICK {_simulation.CurrentTick.Value} RATE {_simulation.TickRate.TicksPerSecond}",
+            $"SNAPS {_simulation.SnapshotCount} INPUT {_simulation.InputBuffer.FrameCount} DROPPED {_simulation.InputBuffer.DroppedFrameCount}",
+            $"SESSION {_session.Role} OWNER {_session.LocalOwnerId} HOST {_session.HostOwnerId}"
+        };
+
+        foreach (Player player in Players)
+        {
+            lines.Add($"P{player.PlayerIndex + 1} N{player.NetworkId} O{player.OwnerId} {GetNetworkRoleText(player)} {GetAuthorityText(player)}");
+        }
+
+        foreach (Rope rope in Ropes)
+        {
+            int tension = (int)MathF.Round(rope.LastTension * 100f);
+            lines.Add($"ROPE N{rope.NetworkId} O{rope.OwnerId} {GetNetworkRoleText(rope)} {GetAuthorityText(rope)} T{tension}");
+        }
+
+        int y = Math.Max(margin, viewport.Height - margin - (lines.Count * lineHeight));
+        Color ropeModeColor = _ropeGameplayMode == RopeGameplayMode.Neutral
             ? new Color(210, 180, 140)
             : Color.White;
 
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, ropeModeText, textPosition + new Vector2(1f, 1f), scale, Color.Black * 0.55f);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, ropeModeText, textPosition, scale, textColor);
+        for (int i = 0; i < lines.Count; i++)
+        {
+            Vector2 position = new(margin, y + (i * lineHeight));
+            Color textColor = i == 0 ? ropeModeColor : Color.White;
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, lines[i], position + new Vector2(1f, 1f), scale, Color.Black * 0.55f);
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, lines[i], position, scale, textColor);
+        }
+    }
+
+    private static string GetNetworkRoleText(INetworkEntity entity)
+    {
+        return entity.IsLocal ? "LOCAL" : "REMOTE";
+    }
+
+    private static string GetAuthorityText(INetworkEntity entity)
+    {
+        return entity.IsHostControlled ? "HOST" : "REPLICA";
     }
 
     private void DrawCompletionUi(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)

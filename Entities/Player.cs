@@ -4,7 +4,7 @@ using Microsoft.Xna.Framework.Graphics;
 
 namespace Game1_Monogame;
 
-public sealed class Player
+public sealed class Player : INetworkEntity
 {
     private const float MinMass = 0.01f;
     private const float DebugEscapeVectorSeconds = 0.5f;
@@ -29,14 +29,30 @@ public sealed class Player
     private float _mass = 1f;
 
     public Player(PlayerId playerId, int playerIndex, Vector2 startPosition, InputDevice assignedInput)
+        : this(playerId, playerIndex, startPosition, assignedInput, NetworkEntityOwnership.LocalHost(0))
+    {
+    }
+
+    public Player(
+        PlayerId playerId,
+        int playerIndex,
+        Vector2 startPosition,
+        InputDevice assignedInput,
+        NetworkEntityOwnership ownership)
     {
         PlayerId = playerId;
         PlayerIndex = playerIndex;
         Position = startPosition;
         AssignedInput = assignedInput;
         CurrentColor = GameColor.Red;
+        ConfigureNetworkOwnership(ownership);
     }
 
+    public int NetworkId { get; private set; }
+    public int OwnerId { get; private set; }
+    public bool IsLocal { get; private set; }
+    public bool IsRemote => !IsLocal;
+    public bool IsHostControlled { get; private set; }
     public PlayerId PlayerId { get; }
     public int PlayerIndex { get; }
     public InputDevice AssignedInput { get; set; }
@@ -82,6 +98,48 @@ public sealed class Player
     public event Action<Player> OnEjectionStart;
     public event Action<Player> OnEjectionPeak;
     public event Action<Player> OnEjectionEnd;
+
+    public void ConfigureNetworkOwnership(NetworkEntityOwnership ownership)
+    {
+        NetworkId = ownership.NetworkId;
+        OwnerId = ownership.OwnerId;
+        IsLocal = ownership.IsLocal;
+        IsHostControlled = ownership.IsHostControlled;
+    }
+
+    public PlayerSnapshot CreateSnapshot()
+    {
+        return new PlayerSnapshot(
+            NetworkId,
+            OwnerId,
+            PlayerIndex,
+            PlayerId,
+            NetworkVector2.FromVector2(Position),
+            NetworkVector2.FromVector2(Velocity),
+            NetworkVector2.FromVector2(Acceleration),
+            CurrentColor,
+            State,
+            IsGrounded,
+            IsFrozen);
+    }
+
+    public void ApplySnapshot(PlayerSnapshot snapshot)
+    {
+        ConfigureNetworkOwnership(new NetworkEntityOwnership(
+            snapshot.NetworkId,
+            snapshot.OwnerId,
+            IsLocal,
+            IsHostControlled));
+
+        Position = snapshot.Position.ToVector2();
+        Velocity = snapshot.Velocity.ToVector2();
+        Acceleration = snapshot.Acceleration.ToVector2();
+        CurrentColor = snapshot.Color;
+        State = snapshot.State;
+        IsGrounded = snapshot.IsGrounded;
+        IsFrozen = snapshot.IsFrozen;
+        _forceAccumulator = Vector2.Zero;
+    }
 
     public void AddForce(Vector2 force)
     {
@@ -148,7 +206,7 @@ public sealed class Player
         TryStartEjectionFromOverlaps(level);
     }
 
-    internal void HandleInputState(InputActionState input, Level level)
+    internal void HandleInputState(PlayerInputState input, Level level)
     {
         HandleColorChange(input, level);
     }
@@ -158,7 +216,7 @@ public sealed class Player
         IsGrounded = HasGroundBelow(level);
     }
 
-    internal void ApplyMovementForces(InputActionState input)
+    internal void ApplyMovementForces(PlayerInputState input)
     {
         float horizontalInput = MathHelper.Clamp(input.HorizontalMovement, -1f, 1f);
         float controlFactor = State == PlayerState.Ejecting
@@ -190,7 +248,7 @@ public sealed class Player
         }
     }
 
-    internal void ApplyJumpImpulse(InputActionState input)
+    internal void ApplyJumpImpulse(PlayerInputState input)
     {
         if (!input.JumpPressed || !IsGrounded)
         {
@@ -201,7 +259,7 @@ public sealed class Player
         IsGrounded = false;
     }
 
-    internal void ApplyGravity(float gravity, InputActionState input)
+    internal void ApplyGravity(float gravity, PlayerInputState input)
     {
         float gravityMultiplier = input.FastFallHeld && Velocity.Y > 0f
             ? GravityScale * FastFallGravityMultiplier
@@ -292,7 +350,7 @@ public sealed class Player
         AddForce(new Vector2(-Velocity.X * drag * Mass, 0f));
     }
 
-    private void HandleColorChange(InputActionState input, Level level)
+    private void HandleColorChange(PlayerInputState input, Level level)
     {
         if (input.RequestedColor is not { } requestedColor || requestedColor == CurrentColor)
         {

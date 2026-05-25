@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
 
 namespace Game1_Monogame;
 
@@ -15,6 +14,7 @@ public sealed class PhysicsWorld
     public PhysicsWorld(
         Level level,
         List<Player> players,
+        GameSession session,
         RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics)
     {
         _level = level;
@@ -23,7 +23,12 @@ public sealed class PhysicsWorld
 
         for (int i = 0; i < Players.Count - 1; i++)
         {
-            Ropes.Add(new Rope(Players[i], Players[i + 1], Players, RopeGameplayMode));
+            Ropes.Add(new Rope(
+                Players[i],
+                Players[i + 1],
+                Players,
+                RopeGameplayMode,
+                new NetworkEntityOwnership(session.AllocateNetworkId(), session.HostOwnerId, session.IsHost, true)));
         }
     }
 
@@ -31,7 +36,7 @@ public sealed class PhysicsWorld
     public List<Rope> Ropes { get; } = new();
     public RopeGameplayMode RopeGameplayMode { get; }
 
-    public void UpdatePhysics(float dt, InputManager input)
+    public void UpdatePhysics(float dt, IReadOnlyDictionary<int, PlayerInputState> inputStates)
     {
         if (dt <= 0f)
         {
@@ -40,7 +45,7 @@ public sealed class PhysicsWorld
 
         foreach (Player player in Players)
         {
-            PrepareBody(player, input.GetActionState(player.PlayerId), dt);
+            PrepareBody(player, GetInputFor(player, inputStates), dt);
         }
 
         foreach (Player player in Players)
@@ -61,8 +66,8 @@ public sealed class PhysicsWorld
                 dt,
                 Gravity,
                 _level.Platforms,
-                input.GetActionState(rope.StartPlayer.PlayerId).PullRopeHeld,
-                input.GetActionState(rope.EndPlayer.PlayerId).PullRopeHeld);
+                GetInputFor(rope.StartPlayer, inputStates).PullRopeHeld,
+                GetInputFor(rope.EndPlayer, inputStates).PullRopeHeld);
         }
 
         foreach (Player player in Players)
@@ -71,17 +76,9 @@ public sealed class PhysicsWorld
         }
     }
 
-    public void DrawRopes(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw)
+    private void PrepareBody(Player player, PlayerInputState input, float dt)
     {
-        foreach (Rope rope in Ropes)
-        {
-            rope.Draw(spriteBatch, pixel, debugDraw);
-        }
-    }
-
-    private void PrepareBody(Player player, InputActionState input, float dt)
-    {
-        if (player.IsFrozen)
+        if (!ShouldSimulate(player) || player.IsFrozen)
         {
             return;
         }
@@ -97,7 +94,7 @@ public sealed class PhysicsWorld
 
     private void IntegrateBodyForces(Player player, float dt)
     {
-        if (player.IsFrozen)
+        if (!ShouldSimulate(player) || player.IsFrozen)
         {
             return;
         }
@@ -114,7 +111,7 @@ public sealed class PhysicsWorld
 
     private void MoveAndSolveCollisions(Player player, float dt)
     {
-        if (player.IsFrozen)
+        if (!ShouldSimulate(player) || player.IsFrozen)
         {
             return;
         }
@@ -227,5 +224,24 @@ public sealed class PhysicsWorld
             player.ApplyCollisionCorrection(correction, normal);
             player.Velocity = new Vector2(player.Velocity.X, 0f);
         }
+    }
+
+    private static PlayerInputState GetInputFor(
+        Player player,
+        IReadOnlyDictionary<int, PlayerInputState> inputStates)
+    {
+        if (!ShouldSimulate(player))
+        {
+            return PlayerInputState.Empty;
+        }
+
+        return inputStates.TryGetValue(player.NetworkId, out PlayerInputState input)
+            ? input
+            : PlayerInputState.Empty;
+    }
+
+    private static bool ShouldSimulate(Player player)
+    {
+        return player.IsLocal || player.IsHostControlled;
     }
 }
