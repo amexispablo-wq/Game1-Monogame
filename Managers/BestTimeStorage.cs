@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public static class BestTimeStorage
 {

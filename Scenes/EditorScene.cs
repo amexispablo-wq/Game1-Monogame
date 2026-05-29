@@ -4,7 +4,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed class EditorScene : IScene
 {
@@ -12,7 +12,7 @@ public sealed class EditorScene : IScene
     private const int ResizeMargin = 8;
     private const int MinPlatformSize = GridSize; // Must be at least one grid cell
 
-    private readonly Game1 _game;
+    private readonly ColorBlocksGame _game;
     private readonly string _levelId;
     private readonly Level _level;
     private readonly Camera _camera;
@@ -49,7 +49,7 @@ public sealed class EditorScene : IScene
     private bool _goalSlotHovered;
     private bool _isDirty;
 
-    public EditorScene(Game1 game, string levelId = "level_1")
+    public EditorScene(ColorBlocksGame game, string levelId = "level_1")
     {
         _game = game;
         _levelId = levelId;

@@ -1,2 +1,2 @@
-﻿using var game = new Game1_Monogame.Game1();
+using var game = new ColorBlocks.ColorBlocksGame();
 game.Run();

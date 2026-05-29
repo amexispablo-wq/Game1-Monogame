@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed class InputManager : ILocalPlayerInputSource
 {

@@ -5,7 +5,7 @@ using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public enum LevelSelectMode
 {
@@ -17,7 +17,7 @@ public sealed class LevelSelectScene : IScene
 {
     private static RopeGameplayMode s_selectedRopeMode = RopeGameplayMode.ColoredPhysics;
 
-    private readonly Game1 _game;
+    private readonly ColorBlocksGame _game;
     private readonly LevelSelectMode _mode;
     private IReadOnlyList<LevelMetadata> _levels = new List<LevelMetadata>();
     private GridLayout _gridLayout = null!;
@@ -40,7 +40,7 @@ public sealed class LevelSelectScene : IScene
     private const int HorizontalGap = 20;
     private const int VerticalGap = 20;
 
-    public LevelSelectScene(Game1 game, LevelSelectMode mode)
+    public LevelSelectScene(ColorBlocksGame game, LevelSelectMode mode)
     {
         _game = game;
         _mode = mode;

@@ -3,14 +3,14 @@ using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed class GameScene : IScene
 {
     private const float CompletionReturnDelaySeconds = 3f;
     private const float MaxSceneFrameTime = 0.25f;
 
-    private readonly Game1 _game;
+    private readonly ColorBlocksGame _game;
     private readonly RopeGameplayMode _ropeGameplayMode;
     private readonly GameSession _session;
     private readonly Level _level;
@@ -26,7 +26,7 @@ public sealed class GameScene : IScene
     private float _completionUiElapsed;
 
     public GameScene(
-        Game1 game,
+        ColorBlocksGame game,
         string levelId = "level_1",
         RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics)
     {
@@ -374,12 +374,18 @@ public sealed class GameScene : IScene
         int margin = Math.Max(8, (int)(Math.Min(viewport.Width, viewport.Height) * 0.022f));
         int scale = 1;
         int lineHeight = SimpleTextRenderer.MeasureString("A", scale).Y + 3;
+        SteamManager steam = _game.Steam;
         List<string> lines = new()
         {
             $"ROPE MODE {_ropeGameplayMode.ToDebugName()}",
             $"TICK {_simulation.CurrentTick.Value} RATE {_simulation.TickRate.TicksPerSecond}",
             $"SNAPS {_simulation.SnapshotCount} INPUT {_simulation.InputBuffer.FrameCount} DROPPED {_simulation.InputBuffer.DroppedFrameCount}",
-            $"SESSION {_session.Role} OWNER {_session.LocalOwnerId} HOST {_session.HostOwnerId}"
+            $"SESSION {_session.Role} OWNER {_session.LocalOwnerId} HOST {_session.HostOwnerId}",
+            $"STEAM INITIALIZED: {FormatDebugBool(steam.IsInitialized)}",
+            $"STEAM USERNAME: {steam.Username}",
+            $"STEAMID: {steam.SteamId}",
+            $"OVERLAY ENABLED: {FormatDebugBool(steam.IsOverlayEnabled)}",
+            $"STEAM STATUS: {steam.Status}"
         };
 
         foreach (Player player in Players)
@@ -410,6 +416,11 @@ public sealed class GameScene : IScene
     private static string GetNetworkRoleText(INetworkEntity entity)
     {
         return entity.IsLocal ? "LOCAL" : "REMOTE";
+    }
+
+    private static string FormatDebugBool(bool value)
+    {
+        return value ? "true" : "false";
     }
 
     private static string GetAuthorityText(INetworkEntity entity)

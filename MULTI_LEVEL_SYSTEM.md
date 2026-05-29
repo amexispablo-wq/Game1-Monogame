@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MonoGame project has been extended with a complete multi-level management system featuring:
+Color Blocks has been extended with a complete multi-level management system featuring:
 - Multiple level storage and management
 - Responsive level selection menu (both Play and Edit modes)
 - Popup dialogs for confirmations and text input
@@ -264,4 +264,4 @@ Potential improvements:
 - Backward compatible with single-level gameplay
 - Legacy `LevelStorage.LoadOrCreateDefault()` still works
 - Existing level data can be migrated to multi-level system
-- No breaking changes to existing Game1, GameScene, or EditorScene APIs
+- No breaking changes to existing ColorBlocksGame, GameScene, or EditorScene APIs

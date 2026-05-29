@@ -2,7 +2,7 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed class Slider
 {

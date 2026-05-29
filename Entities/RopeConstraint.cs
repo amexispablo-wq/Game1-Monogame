@@ -1,7 +1,7 @@
 using System;
 using Microsoft.Xna.Framework;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed class RopeConstraint
 {

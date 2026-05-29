@@ -1,4 +1,4 @@
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public static class NetworkOwners
 {

@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 /// <summary>
 /// Generic cycle selector component for cycling through a list of options using arrow buttons.

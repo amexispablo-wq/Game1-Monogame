@@ -1,7 +1,7 @@
 using System;
 using Microsoft.Xna.Framework;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 /// <summary>
 /// Creates a vertical column layout for buttons with dynamic spacing and centering.

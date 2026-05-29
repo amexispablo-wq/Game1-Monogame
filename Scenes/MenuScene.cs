@@ -1,16 +1,16 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed class MenuScene : IScene
 {
-    private readonly Game1 _game;
+    private readonly ColorBlocksGame _game;
     private readonly Button _playButton = new("Play");
     private readonly Button _editorButton = new("Level Editor");
     private readonly Button _optionsButton = new("Options");
 
-    public MenuScene(Game1 game)
+    public MenuScene(ColorBlocksGame game)
     {
         _game = game;
     }

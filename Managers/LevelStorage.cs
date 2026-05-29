@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public static class LevelStorage
 {

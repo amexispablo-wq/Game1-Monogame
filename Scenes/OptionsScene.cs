@@ -5,11 +5,11 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed class OptionsScene : IScene
 {
-    private readonly Game1 _game;
+    private readonly ColorBlocksGame _game;
 
     // Display settings
     private ResolutionDropdown _resolutionDropdown = new();
@@ -59,7 +59,7 @@ public sealed class OptionsScene : IScene
 
     public int ControlWidth { get; private set; }
 
-    public OptionsScene(Game1 game)
+    public OptionsScene(ColorBlocksGame game)
     {
         _game = game;
 

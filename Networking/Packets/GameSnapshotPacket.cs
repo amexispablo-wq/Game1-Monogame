@@ -1,4 +1,4 @@
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed record GameSnapshotPacket(GameSnapshot Snapshot) : INetworkPacket
 {

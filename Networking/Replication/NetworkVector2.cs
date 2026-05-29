@@ -1,6 +1,6 @@
 using Microsoft.Xna.Framework;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public readonly record struct NetworkVector2(float X, float Y)
 {

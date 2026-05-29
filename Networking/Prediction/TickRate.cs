@@ -1,6 +1,6 @@
 using System;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public readonly record struct TickRate(int TicksPerSecond)
 {

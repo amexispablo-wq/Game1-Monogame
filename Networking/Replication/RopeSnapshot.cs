@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed class RopeSnapshot
 {

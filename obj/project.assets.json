@@ -113,6 +113,41 @@
           }
         }
       },
+      "Steamworks.NET/2024.8.0": {
+        "type": "package",
+        "compile": {
+          "ref/netstandard2.1/Steamworks.NET.dll": {}
+        },
+        "runtime": {
+          "lib/netstandard2.1/Steamworks.NET.dll": {}
+        },
+        "runtimeTargets": {
+          "runtimes/linux-x64/lib/netstandard2.1/Steamworks.NET.dll": {
+            "assetType": "runtime",
+            "rid": "linux-x64"
+          },
+          "runtimes/linux-x86/lib/netstandard2.1/Steamworks.NET.dll": {
+            "assetType": "runtime",
+            "rid": "linux-x86"
+          },
+          "runtimes/osx-x64/lib/netstandard2.1/Steamworks.NET.dll": {
+            "assetType": "runtime",
+            "rid": "osx-x64"
+          },
+          "runtimes/osx-x86/lib/netstandard2.1/Steamworks.NET.dll": {
+            "assetType": "runtime",
+            "rid": "osx-x86"
+          },
+          "runtimes/win-x64/lib/netstandard2.1/Steamworks.NET.dll": {
+            "assetType": "runtime",
+            "rid": "win-x64"
+          },
+          "runtimes/win-x86/lib/netstandard2.1/Steamworks.NET.dll": {
+            "assetType": "runtime",
+            "rid": "win-x86"
+          }
+        }
+      },
       "System.Memory/4.5.3": {
         "type": "package",
         "compile": {
@@ -222,6 +257,26 @@
         "nvorbis.nuspec"
       ]
     },
+    "Steamworks.NET/2024.8.0": {
+      "sha512": "FHTj80ZyT09d0XwSnhE8+e6r/hwpp1+PmQ3RZbUqlyEQCVNrWDVmdA1ElIgQgx72XGIkF947kXL53z51puGD2g==",
+      "type": "package",
+      "path": "steamworks.net/2024.8.0",
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "lib/netstandard2.1/Steamworks.NET.dll",
+        "readme.md",
+        "ref/netstandard2.1/Steamworks.NET.dll",
+        "runtimes/linux-x64/lib/netstandard2.1/Steamworks.NET.dll",
+        "runtimes/linux-x86/lib/netstandard2.1/Steamworks.NET.dll",
+        "runtimes/osx-x64/lib/netstandard2.1/Steamworks.NET.dll",
+        "runtimes/osx-x86/lib/netstandard2.1/Steamworks.NET.dll",
+        "runtimes/win-x64/lib/netstandard2.1/Steamworks.NET.dll",
+        "runtimes/win-x86/lib/netstandard2.1/Steamworks.NET.dll",
+        "steamworks.net.2024.8.0.nupkg.sha512",
+        "steamworks.net.nuspec"
+      ]
+    },
     "System.Memory/4.5.3": {
       "sha512": "3oDzvc/zzetpTKWMShs1AADwZjQ/36HnsufHRPcOjyRAAMLDlu2iD33MBI2opxnezcVUtXyqDXXjoFMOU9c7SA==",
       "type": "package",
@@ -291,7 +346,8 @@
   "projectFileDependencyGroups": {
     "net9.0": [
       "MonoGame.Content.Builder.Task >= 3.8.*",
-      "MonoGame.Framework.DesktopGL >= 3.8.*"
+      "MonoGame.Framework.DesktopGL >= 3.8.*",
+      "Steamworks.NET >= 2024.8.0"
     ]
   },
   "packageFolders": {
@@ -300,9 +356,9 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\Game1 Monogame.csproj",
-      "projectName": "Game1 Monogame",
-      "projectPath": "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\Game1 Monogame.csproj",
+      "projectUniqueName": "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\Color Blocks.csproj",
+      "projectName": "Color Blocks",
+      "projectPath": "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\Color Blocks.csproj",
       "packagesPath": "C:\\Users\\amexi\\.nuget\\packages\\",
       "outputPath": "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\obj\\",
       "projectStyle": "PackageReference",
@@ -346,6 +402,10 @@
           "MonoGame.Framework.DesktopGL": {
             "target": "Package",
             "version": "[3.8.*, )"
+          },
+          "Steamworks.NET": {
+            "target": "Package",
+            "version": "[2024.8.0, )"
           }
         },
         "imports": [

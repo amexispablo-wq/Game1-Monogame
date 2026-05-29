@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
-namespace Game1_Monogame;
+namespace ColorBlocks;
 
 public sealed class LevelData
 {
