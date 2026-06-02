@@ -14,6 +14,12 @@ public sealed class LevelData
     [JsonPropertyName("goals")]
     public List<GoalData> Goals { get; set; } = new();
 
+    [JsonPropertyName("checkpointFlags")]
+    public List<CheckpointFlagData> CheckpointFlags { get; set; } = new();
+
+    [JsonPropertyName("launchPads")]
+    public List<LaunchPadData> LaunchPads { get; set; } = new();
+
     [JsonPropertyName("playerSpawn")]
     public Vector2Data PlayerSpawn { get; set; } = new() { X = 100f, Y = 300f };
 }
@@ -43,6 +49,36 @@ public sealed class GoalData
 
     [JsonPropertyName("y")]
     public int Y { get; set; }
+}
+
+public sealed class CheckpointFlagData
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("x")]
+    public int X { get; set; }
+
+    [JsonPropertyName("y")]
+    public int Y { get; set; }
+}
+
+public sealed class LaunchPadData
+{
+    [JsonPropertyName("x")]
+    public int X { get; set; }
+
+    [JsonPropertyName("y")]
+    public int Y { get; set; }
+
+    [JsonPropertyName("width")]
+    public int Width { get; set; } = LaunchPad.DefaultWidth;
+
+    [JsonPropertyName("height")]
+    public int Height { get; set; } = LaunchPad.DefaultHeight;
+
+    [JsonPropertyName("rotation")]
+    public float RotationDegrees { get; set; }
 }
 
 public sealed class Vector2Data

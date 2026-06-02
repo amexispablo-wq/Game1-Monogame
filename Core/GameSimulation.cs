@@ -107,7 +107,10 @@ public sealed class GameSimulation
 
         if (!IsLevelComplete)
         {
-            PhysicsWorld.UpdatePhysics(TickRate.FixedDeltaSeconds, _inputBuffer.GetInputs(tick));
+            IReadOnlyDictionary<int, PlayerInputState> inputs = _inputBuffer.GetInputs(tick);
+            HandleRespawnInputs(inputs);
+            PhysicsWorld.UpdatePhysics(TickRate.FixedDeltaSeconds, inputs);
+            UpdateCheckpointActivation();
 
             if (TimerRunning)
             {
@@ -179,6 +182,43 @@ public sealed class GameSimulation
         }
     }
 
+    private void HandleRespawnInputs(IReadOnlyDictionary<int, PlayerInputState> inputs)
+    {
+        foreach (Player player in Players)
+        {
+            if (!player.IsLocal && !player.IsHostControlled)
+            {
+                continue;
+            }
+
+            if (!inputs.TryGetValue(player.NetworkId, out PlayerInputState input) || !input.RespawnPressed)
+            {
+                continue;
+            }
+
+            PlayerManager.RespawnPlayer(player);
+            PhysicsWorld.ResetRopesForPlayer(player);
+        }
+    }
+
+    private void UpdateCheckpointActivation()
+    {
+        foreach (Player player in Players)
+        {
+            Rectangle playerBounds = player.Bounds;
+            foreach (CheckpointFlag checkpoint in Level.CheckpointFlags)
+            {
+                if (!playerBounds.Intersects(checkpoint.TriggerBounds))
+                {
+                    continue;
+                }
+
+                PlayerManager.ActivateCheckpoint(checkpoint);
+                return;
+            }
+        }
+    }
+
     private GameSnapshot CreateSnapshot(SimulationTick tick)
     {
         GameSnapshot snapshot = new()
@@ -232,6 +272,25 @@ public sealed class GameSimulation
         foreach (Goal goal in Level.Goals)
         {
             snapshot.Goals.Add(new GoalSnapshot(goal.Position.X, goal.Position.Y));
+        }
+
+        foreach (CheckpointFlag checkpoint in Level.CheckpointFlags)
+        {
+            snapshot.CheckpointFlags.Add(new CheckpointFlagSnapshot(
+                checkpoint.Id,
+                checkpoint.Position.X,
+                checkpoint.Position.Y,
+                checkpoint.IsActive));
+        }
+
+        foreach (LaunchPad launchPad in Level.LaunchPads)
+        {
+            snapshot.LaunchPads.Add(new LaunchPadSnapshot(
+                launchPad.Bounds.X,
+                launchPad.Bounds.Y,
+                launchPad.Bounds.Width,
+                launchPad.Bounds.Height,
+                LaunchPad.NormalizeRotation(launchPad.RotationDegrees)));
         }
 
         return snapshot;

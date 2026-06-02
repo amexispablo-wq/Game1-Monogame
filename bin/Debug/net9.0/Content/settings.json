@@ -2,7 +2,7 @@
   "displayMode": "Windowed",
   "resolutionWidth": 1600,
   "resolutionHeight": 1200,
-  "musicVolume": 0.6012862,
+  "musicVolume": 0.30508474,
   "Keybindings": {
     "MoveLeft": "A",
     "MoveRight": "D",
@@ -11,6 +11,7 @@
     "Red": "J",
     "Blue": "K",
     "Green": "L",
-    "PullRope": "Space"
+    "PullRope": "Space",
+    "Respawn": "R"
   }
 }

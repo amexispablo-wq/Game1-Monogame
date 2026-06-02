@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\Color Blocks.csproj": {}
+    "C:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj": {}
   },
   "projects": {
-    "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\Color Blocks.csproj": {
+    "C:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\Color Blocks.csproj",
+        "projectUniqueName": "C:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj",
         "projectName": "Color Blocks",
-        "projectPath": "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\Color Blocks.csproj",
+        "projectPath": "C:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj",
         "packagesPath": "C:\\Users\\amexi\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\amexi\\Desktop\\Game1 Monogame\\obj\\",
+        "outputPath": "C:\\Users\\amexi\\Desktop\\Color Blocks\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\amexi\\AppData\\Roaming\\NuGet\\NuGet.Config",

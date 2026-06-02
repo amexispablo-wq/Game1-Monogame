@@ -9,6 +9,8 @@ public sealed class Level
 {
     private readonly List<Platform> _platforms = new();
     private readonly List<Goal> _goals = new();
+    private readonly List<CheckpointFlag> _checkpointFlags = new();
+    private readonly List<LaunchPad> _launchPads = new();
 
     public Level()
     {
@@ -17,12 +19,29 @@ public sealed class Level
         Name = string.Empty;
     }
 
-    public Level(Vector2 playerStart, IEnumerable<Platform> platforms, IEnumerable<Goal> goals, string name = "")
+    public Level(
+        Vector2 playerStart,
+        IEnumerable<Platform> platforms,
+        IEnumerable<Goal> goals,
+        IEnumerable<CheckpointFlag> checkpointFlags = null,
+        IEnumerable<LaunchPad> launchPads = null,
+        string name = "")
     {
         PlayerStart = playerStart;
         Name = name;
         _platforms.AddRange(platforms);
         _goals.AddRange(goals);
+        if (checkpointFlags is not null)
+        {
+            _checkpointFlags.AddRange(checkpointFlags);
+            EnsureCheckpointIds();
+        }
+
+        if (launchPads is not null)
+        {
+            _launchPads.AddRange(launchPads);
+        }
+
         RecalculateWorldSize();
     }
 
@@ -31,6 +50,8 @@ public sealed class Level
     public Point WorldSize { get; private set; }
     public IReadOnlyList<Platform> Platforms => _platforms;
     public IReadOnlyList<Goal> Goals => _goals;
+    public IReadOnlyList<CheckpointFlag> CheckpointFlags => _checkpointFlags;
+    public IReadOnlyList<LaunchPad> LaunchPads => _launchPads;
 
     public static Level CreateDefault()
     {
@@ -53,6 +74,8 @@ public sealed class Level
     {
         List<Platform> platforms = new();
         List<Goal> goals = new();
+        List<CheckpointFlag> checkpointFlags = new();
+        List<LaunchPad> launchPads = new();
 
         foreach (PlatformData platform in data.Platforms)
         {
@@ -71,7 +94,30 @@ public sealed class Level
             goals.Add(new Goal(new Point(goal.X, goal.Y)));
         }
 
-        return new Level(new Vector2(data.PlayerSpawn.X, data.PlayerSpawn.Y), platforms, goals, data.Name);
+        foreach (CheckpointFlagData checkpoint in data.CheckpointFlags)
+        {
+            checkpointFlags.Add(new CheckpointFlag(new Point(checkpoint.X, checkpoint.Y), checkpoint.Id));
+        }
+
+        foreach (LaunchPadData launchPad in data.LaunchPads)
+        {
+            if (launchPad.Width <= 0 || launchPad.Height <= 0)
+            {
+                continue;
+            }
+
+            launchPads.Add(new LaunchPad(
+                new Rectangle(launchPad.X, launchPad.Y, launchPad.Width, launchPad.Height),
+                launchPad.RotationDegrees));
+        }
+
+        return new Level(
+            new Vector2(data.PlayerSpawn.X, data.PlayerSpawn.Y),
+            platforms,
+            goals,
+            checkpointFlags,
+            launchPads,
+            data.Name);
     }
 
     public LevelData ToData()
@@ -103,6 +149,28 @@ public sealed class Level
             });
         }
 
+        foreach (CheckpointFlag checkpoint in _checkpointFlags)
+        {
+            data.CheckpointFlags.Add(new CheckpointFlagData
+            {
+                Id = checkpoint.Id,
+                X = checkpoint.Position.X,
+                Y = checkpoint.Position.Y
+            });
+        }
+
+        foreach (LaunchPad launchPad in _launchPads)
+        {
+            data.LaunchPads.Add(new LaunchPadData
+            {
+                X = launchPad.Bounds.X,
+                Y = launchPad.Bounds.Y,
+                Width = launchPad.Bounds.Width,
+                Height = launchPad.Bounds.Height,
+                RotationDegrees = LaunchPad.NormalizeRotation(launchPad.RotationDegrees)
+            });
+        }
+
         return data;
     }
 
@@ -130,6 +198,35 @@ public sealed class Level
         RecalculateWorldSize();
     }
 
+    public void AddCheckpointFlag(CheckpointFlag checkpoint)
+    {
+        if (checkpoint.Id <= 0 || _checkpointFlags.Exists(existing => existing.Id == checkpoint.Id))
+        {
+            checkpoint.Id = GetNextCheckpointId();
+        }
+
+        _checkpointFlags.Add(checkpoint);
+        RecalculateWorldSize();
+    }
+
+    public void RemoveCheckpointFlag(CheckpointFlag checkpoint)
+    {
+        _checkpointFlags.Remove(checkpoint);
+        RecalculateWorldSize();
+    }
+
+    public void AddLaunchPad(LaunchPad launchPad)
+    {
+        _launchPads.Add(launchPad);
+        RecalculateWorldSize();
+    }
+
+    public void RemoveLaunchPad(LaunchPad launchPad)
+    {
+        _launchPads.Remove(launchPad);
+        RecalculateWorldSize();
+    }
+
     public void RecalculateWorldSize()
     {
         int width = 1280;
@@ -147,6 +244,18 @@ public sealed class Level
             height = System.Math.Max(height, goal.Bounds.Bottom + 200);
         }
 
+        foreach (CheckpointFlag checkpoint in _checkpointFlags)
+        {
+            width = System.Math.Max(width, checkpoint.Bounds.Right + 200);
+            height = System.Math.Max(height, checkpoint.Bounds.Bottom + 200);
+        }
+
+        foreach (LaunchPad launchPad in _launchPads)
+        {
+            width = System.Math.Max(width, launchPad.Bounds.Right + 200);
+            height = System.Math.Max(height, launchPad.Bounds.Bottom + 200);
+        }
+
         WorldSize = new Point(width, height);
     }
 
@@ -161,11 +270,13 @@ public sealed class Level
         }
     }
 
-    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw)
+    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, float animationSeconds = 0f, bool isEditorMode = false)
     {
         DrawBackground(spriteBatch, pixel);
         DrawPlatforms(spriteBatch, pixel, debugDraw);
         DrawGoals(spriteBatch, pixel, debugDraw);
+        DrawCheckpointFlags(spriteBatch, pixel, debugDraw);
+        DrawLaunchPads(spriteBatch, pixel, debugDraw, animationSeconds, isEditorMode);
     }
 
     public void DrawPlatforms(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw)
@@ -190,6 +301,58 @@ public sealed class Level
         {
             goal.Draw(spriteBatch, pixel, debugDraw);
         }
+    }
+
+    public void DrawCheckpointFlags(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw)
+    {
+        foreach (CheckpointFlag checkpoint in _checkpointFlags)
+        {
+            checkpoint.Draw(spriteBatch, pixel, debugDraw);
+        }
+    }
+
+    public void DrawLaunchPads(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, float animationSeconds = 0f, bool isEditorMode = false)
+    {
+        foreach (LaunchPad launchPad in _launchPads)
+        {
+            launchPad.Draw(spriteBatch, pixel, debugDraw, animationSeconds, isEditorMode: isEditorMode);
+        }
+    }
+
+    public int GetNextCheckpointId()
+    {
+        int maxId = 0;
+        foreach (CheckpointFlag checkpoint in _checkpointFlags)
+        {
+            maxId = System.Math.Max(maxId, checkpoint.Id);
+        }
+
+        return maxId + 1;
+    }
+
+    private void EnsureCheckpointIds()
+    {
+        HashSet<int> usedIds = new();
+        foreach (CheckpointFlag checkpoint in _checkpointFlags)
+        {
+            if (checkpoint.Id <= 0 || usedIds.Contains(checkpoint.Id))
+            {
+                checkpoint.Id = GetNextUnusedCheckpointId(usedIds);
+            }
+
+            usedIds.Add(checkpoint.Id);
+        }
+    }
+
+    private static int GetNextUnusedCheckpointId(HashSet<int> usedIds)
+    {
+        int id = 1;
+        while (usedIds.Contains(id))
+        {
+            id++;
+        }
+
+        return id;
     }
 
     private void DrawMixedPlatformIntersections(SpriteBatch spriteBatch, Texture2D pixel)

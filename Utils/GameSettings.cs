@@ -24,6 +24,7 @@ public sealed class GameSettings
         { "MoveLeft", "A" },
         { "MoveRight", "D" },
         { "Jump", "W" },
+        { "Respawn", "R" },
         { "FastFall", "S" },
         { "Red", "J" },
         { "Blue", "K" },

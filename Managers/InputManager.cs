@@ -63,6 +63,7 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public float HorizontalMovement { get; private set; }
     public bool JumpPressed { get; private set; }
+    public bool RespawnPressed { get; private set; }
     public bool FastFallHeld { get; private set; }
     public bool PullRopeHeld { get; private set; }
     public bool ExitPressed { get; private set; }
@@ -97,6 +98,7 @@ public sealed class InputManager : ILocalPlayerInputSource
 
         HorizontalMovement = _keyboardInputState.HorizontalMovement;
         JumpPressed = _keyboardInputState.JumpPressed;
+        RespawnPressed = _keyboardInputState.RespawnPressed;
         FastFallHeld = _keyboardInputState.FastFallHeld;
         PullRopeHeld = _keyboardInputState.PullRopeHeld;
         ExitPressed = IsNewKeyPress(Keys.Escape);
@@ -249,6 +251,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         return new PlayerInputState(
             horizontalMovement,
             IsNewKeyPress(_keyboardBindings.Jump),
+            IsNewKeyPress(_keyboardBindings.Respawn),
             _currentKeyboard.IsKeyDown(_keyboardBindings.FastFall),
             _currentKeyboard.IsKeyDown(_keyboardBindings.PullRope),
             requestedColor);
@@ -304,6 +307,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         Keys MoveLeft,
         Keys MoveRight,
         Keys Jump,
+        Keys Respawn,
         Keys FastFall,
         Keys PullRope,
         Keys Red,
@@ -316,6 +320,7 @@ public sealed class InputManager : ILocalPlayerInputSource
                 GetSettingKey(settings, "MoveLeft", Keys.A),
                 GetSettingKey(settings, "MoveRight", Keys.D),
                 GetSettingKey(settings, "Jump", Keys.W),
+                GetSettingKey(settings, "Respawn", Keys.R),
                 GetSettingKey(settings, "FastFall", Keys.S),
                 GetSettingKey(settings, "PullRope", Keys.Space),
                 GetSettingKey(settings, "Red", Keys.J),

@@ -157,20 +157,42 @@ public sealed class Player : INetworkEntity
         }
     }
 
+    public void RespawnAt(Vector2 position)
+    {
+        Position = position;
+        Velocity = Vector2.Zero;
+        Acceleration = Vector2.Zero;
+        IsGrounded = false;
+        LastCollisionNormal = Vector2.Zero;
+        LastCollisionCorrection = Vector2.Zero;
+        _forceAccumulator = Vector2.Zero;
+        _debugEscapeVectorTimeRemaining = 0f;
+        _debugEscapeVectorStart = Vector2.Zero;
+        _debugEscapeVector = Vector2.Zero;
+        ClearTransientMotionState();
+    }
+
+    public void LaunchFromPad(Vector2 launchVelocity)
+    {
+        if (IsFrozen)
+        {
+            return;
+        }
+
+        ClearTransientMotionState();
+        Velocity = launchVelocity;
+        IsGrounded = false;
+        _justLaunched = true;
+        _launchControlRemaining = LaunchControlSeconds;
+    }
+
     public void Freeze()
     {
         IsFrozen = true;
         Velocity = Vector2.Zero;
         Acceleration = Vector2.Zero;
         _forceAccumulator = Vector2.Zero;
-        State = PlayerState.Normal;
-        _ejectionPlatform = null;
-        _ejectionBaseDirection = Vector2.Zero;
-        _ejectionForceDirection = Vector2.Zero;
-        _ejectionForce = 0f;
-        _ejectionRampAmount = 0f;
-        _justLaunched = false;
-        _launchControlRemaining = 0f;
+        ClearTransientMotionState();
     }
 
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, bool drawIndicator = true)
@@ -593,6 +615,23 @@ public sealed class Player : INetworkEntity
         }
 
         OnEjectionEnd?.Invoke(this);
+    }
+
+    private void ClearTransientMotionState()
+    {
+        State = PlayerState.Normal;
+        _ejectionPlatform = null;
+        _ejectionBaseDirection = Vector2.Zero;
+        _ejectionForceDirection = Vector2.Zero;
+        _ejectionPlatformCenter = Vector2.Zero;
+        _ejectionTimer = 0f;
+        _ejectionRampAmount = 0f;
+        _ejectionForce = 0f;
+        _ejectionPenetrationDepth = 0f;
+        _ejectionCenterInfluence = 0f;
+        _ejectionPeakRaised = false;
+        _justLaunched = false;
+        _launchControlRemaining = 0f;
     }
 
     private bool HasGroundBelow(Level level)

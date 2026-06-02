@@ -110,7 +110,7 @@ public sealed class GameScene : IScene
             samplerState: SamplerState.PointClamp,
             transformMatrix: _camera.GetTransform(viewport));
 
-        _level.Draw(spriteBatch, _game.Pixel, _debugDraw);
+        _level.Draw(spriteBatch, _game.Pixel, _debugDraw, _simulation.ElapsedTime, isEditorMode: false);
         foreach (Rope rope in Ropes)
         {
             rope.Draw(spriteBatch, _game.Pixel, _debugDraw);
@@ -380,6 +380,9 @@ public sealed class GameScene : IScene
             $"ROPE MODE {_ropeGameplayMode.ToDebugName()}",
             $"TICK {_simulation.CurrentTick.Value} RATE {_simulation.TickRate.TicksPerSecond}",
             $"SNAPS {_simulation.SnapshotCount} INPUT {_simulation.InputBuffer.FrameCount} DROPPED {_simulation.InputBuffer.DroppedFrameCount}",
+            $"ACTIVE CHECKPOINT {FormatCheckpointDebugText()}",
+            $"RESPAWN POS {FormatVector(_playerManager.RespawnPosition)}",
+            $"LAUNCH PADS {_level.LaunchPads.Count} LAST FORCE {FormatVector(_simulation.PhysicsWorld.LastLaunchForce)}",
             $"SESSION {_session.Role} OWNER {_session.LocalOwnerId} HOST {_session.HostOwnerId}",
             $"STEAM INITIALIZED: {FormatDebugBool(steam.IsInitialized)}",
             $"STEAM USERNAME: {steam.Username}",
@@ -421,6 +424,16 @@ public sealed class GameScene : IScene
     private static string FormatDebugBool(bool value)
     {
         return value ? "true" : "false";
+    }
+
+    private string FormatCheckpointDebugText()
+    {
+        return _playerManager.CurrentCheckpointId is { } id ? $"#{id}" : "NONE";
+    }
+
+    private static string FormatVector(Vector2 value)
+    {
+        return $"{value.X:0},{value.Y:0}";
     }
 
     private static string GetAuthorityText(INetworkEntity entity)

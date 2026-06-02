@@ -148,6 +148,18 @@ public sealed class Rope : INetworkEntity
         LastPulledNodeCount = snapshot.PulledNodeCount;
     }
 
+    public void ResetBetweenPlayers()
+    {
+        int nodeCount = Math.Max(2, Nodes.Count);
+        GenerateNodes(nodeCount);
+        _startPinnedCorrection = Vector2.Zero;
+        _endPinnedCorrection = Vector2.Zero;
+        LastTension = 0f;
+        LastCollisionCount = 0;
+        LastPullIntensity = 0f;
+        LastPulledNodeCount = 0;
+    }
+
     public void Simulate(
         float dt,
         float gravity,

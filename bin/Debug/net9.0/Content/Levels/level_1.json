@@ -25,8 +25,8 @@
     {
       "x": -672,
       "y": 768,
-      "width": 4672,
-      "height": 1216,
+      "width": 4608,
+      "height": 1184,
       "color": "Red"
     },
     {
@@ -238,12 +238,56 @@
       "width": 64,
       "height": 64,
       "color": "Green"
+    },
+    {
+      "x": 128,
+      "y": 576,
+      "width": 192,
+      "height": 32,
+      "color": "Red"
     }
   ],
   "goals": [
     {
-      "x": 1568,
+      "x": 1504,
       "y": -96
+    }
+  ],
+  "checkpointFlags": [
+    {
+      "id": 1,
+      "x": 736,
+      "y": 608
+    }
+  ],
+  "launchPads": [
+    {
+      "x": -224,
+      "y": 736,
+      "width": 128,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": 416,
+      "y": 576,
+      "width": 160,
+      "height": 64,
+      "rotation": 75
+    },
+    {
+      "x": 192,
+      "y": 608,
+      "width": 96,
+      "height": 32,
+      "rotation": 180
+    },
+    {
+      "x": -64,
+      "y": 608,
+      "width": 96,
+      "height": 32,
+      "rotation": 180
     }
   ],
   "playerSpawn": {

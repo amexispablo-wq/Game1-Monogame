@@ -7,6 +7,8 @@ namespace ColorBlocks;
 public sealed class Goal
 {
     public static readonly Point FixedSize = new(48, 64);
+    private static readonly Color GoalFlagColor = new(255, 207, 72);
+    private static readonly Color GoalFlagShadow = new(209, 79, 66);
 
     public Goal(Point position)
     {
@@ -19,7 +21,7 @@ public sealed class Goal
 
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, float alpha = 1f)
     {
-        DrawFlag(spriteBatch, pixel, Bounds, alpha);
+        DrawFlag(spriteBatch, pixel, Bounds, GoalFlagColor, GoalFlagShadow, alpha);
 
         if (debugDraw)
         {
@@ -29,10 +31,17 @@ public sealed class Goal
 
     public static void DrawIcon(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, float alpha = 1f)
     {
-        DrawFlag(spriteBatch, pixel, bounds, alpha);
+        DrawFlag(spriteBatch, pixel, bounds, GoalFlagColor, GoalFlagShadow, alpha);
     }
 
-    private static void DrawFlag(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, float alpha)
+    internal static void DrawFlag(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        Rectangle bounds,
+        Color flagColor,
+        Color flagShadow,
+        float alpha,
+        bool glow = false)
     {
         if (bounds.Width <= 0 || bounds.Height <= 0)
         {
@@ -41,14 +50,21 @@ public sealed class Goal
 
         alpha = MathHelper.Clamp(alpha, 0f, 1f);
 
+        if (glow)
+        {
+            Rectangle glowBounds = bounds;
+            glowBounds.Inflate(Math.Max(3, bounds.Width / 10), Math.Max(3, bounds.Height / 12));
+            spriteBatch.Draw(pixel, glowBounds, flagColor * (0.16f * alpha));
+        }
+
         int poleWidth = Math.Max(3, bounds.Width / 10);
         int poleX = bounds.Left + Math.Max(4, bounds.Width / 4);
         Rectangle pole = new(poleX, bounds.Top, poleWidth, bounds.Height);
 
         Color poleColor = new Color(232, 235, 242) * alpha;
         Color poleShadow = new Color(94, 105, 125) * alpha;
-        Color flagColor = new Color(255, 207, 72) * alpha;
-        Color flagShadow = new Color(209, 79, 66) * alpha;
+        flagColor *= alpha;
+        flagShadow *= alpha;
         Color borderColor = Color.Black * alpha;
 
         spriteBatch.Draw(pixel, pole, poleColor);

@@ -20,7 +20,6 @@ public sealed class OptionsScene : IScene
 
     // Buttons
     private Button _applyButton = new("Apply");
-    private Button _cancelButton = new("Cancel");
     private Button _backButton = new("Back");
 
     // Control bindings
@@ -79,7 +78,6 @@ public sealed class OptionsScene : IScene
 
         _backButton.TextScale = 3;
         _applyButton.TextScale = 3;
-        _cancelButton.TextScale = 3;
         _applyButton.FillColor = new Color(74, 111, 93);
         _applyButton.HoverFillColor = new Color(94, 140, 116);
         _applyButton.BorderColor = new Color(154, 213, 181);
@@ -100,7 +98,7 @@ public sealed class OptionsScene : IScene
 
     private void InitializeControlBindings()
     {
-        var actions = new[] { "MoveLeft", "MoveRight", "Jump", "PullRope", "FastFall", "Red", "Blue", "Green" };
+        var actions = new[] { "MoveLeft", "MoveRight", "Jump", "Respawn", "PullRope", "FastFall", "Red", "Blue", "Green" };
         _controlBindings.Clear();
 
         foreach (string action in actions)
@@ -154,13 +152,6 @@ public sealed class OptionsScene : IScene
             return;
         }
 
-        if (_cancelButton.Update(_game.Input))
-        {
-            SettingsManager.RevertPendingChanges();
-            _game.ChangeScene(new MenuScene(_game));
-            return;
-        }
-
         if (_applyButton.Update(_game.Input))
         {
             SyncPendingSettings();
@@ -204,7 +195,6 @@ public sealed class OptionsScene : IScene
         DrawButtonTray(spriteBatch, pixel, layout);
         _backButton.Draw(spriteBatch, pixel);
         _applyButton.Draw(spriteBatch, pixel);
-        _cancelButton.Draw(spriteBatch, pixel);
 
         if (_resolutionDropdown.IsExpanded)
         {
@@ -318,7 +308,7 @@ public sealed class OptionsScene : IScene
         Rectangle trayBounds = new(
             layout.BackButtonBounds.X - trayPaddingX,
             layout.BackButtonBounds.Y - trayPaddingY,
-            layout.CancelButtonBounds.Right - layout.BackButtonBounds.X + (trayPaddingX * 2),
+            layout.ApplyButtonBounds.Right - layout.BackButtonBounds.X + (trayPaddingX * 2),
             layout.BackButtonBounds.Height + (trayPaddingY * 2));
 
         spriteBatch.Draw(pixel, trayBounds, new Color(22, 29, 42, 205));
@@ -405,7 +395,6 @@ public sealed class OptionsScene : IScene
 
         _backButton.Bounds = layout.BackButtonBounds;
         _applyButton.Bounds = layout.ApplyButtonBounds;
-        _cancelButton.Bounds = layout.CancelButtonBounds;
     }
 
     private LayoutMetrics GetLayoutMetrics(Viewport viewport)
@@ -449,13 +438,12 @@ public sealed class OptionsScene : IScene
         Rectangle displaySectionBounds = new(contentBounds.X, topSectionY, topSectionWidth, topSectionHeight);
         Rectangle audioSectionBounds = new(displaySectionBounds.Right + TopSectionGap, topSectionY, topSectionWidth, topSectionHeight);
 
-        int buttonWidth = Math.Clamp(contentBounds.Width / 7, 128, 150);
-        int buttonTotalWidth = (buttonWidth * 3) + (ButtonGap * 2);
+        int buttonWidth = Math.Clamp(contentBounds.Width / 5, 128, 150);
+        int buttonTotalWidth = (buttonWidth * 2) + ButtonGap;
         int buttonY = contentBounds.Bottom - ButtonHeight;
         int buttonX = panelBounds.Center.X - (buttonTotalWidth / 2);
         Rectangle backButtonBounds = new(buttonX, buttonY, buttonWidth, ButtonHeight);
         Rectangle applyButtonBounds = new(backButtonBounds.Right + ButtonGap, buttonY, buttonWidth, ButtonHeight);
-        Rectangle cancelButtonBounds = new(applyButtonBounds.Right + ButtonGap, buttonY, buttonWidth, ButtonHeight);
 
         int controlSectionY = displaySectionBounds.Bottom + sectionGap;
         int controlSectionBottom = buttonY - sectionGap;
@@ -510,8 +498,7 @@ public sealed class OptionsScene : IScene
             keyRowGap,
             keyBoxWidth,
             backButtonBounds,
-            applyButtonBounds,
-            cancelButtonBounds);
+            applyButtonBounds);
     }
 
     private static void CreateSettingColumnLayout(Rectangle sectionBounds, int sectionPadding, out Rectangle labelBounds, out Rectangle controlBounds)
@@ -592,6 +579,7 @@ public sealed class OptionsScene : IScene
         "MoveLeft" => "MOVE LEFT",
         "MoveRight" => "MOVE RIGHT",
         "Jump" => "JUMP",
+        "Respawn" => "RESPAWN",
         "PullRope" => "PULL ROPE",
         "FastFall" => "FAST FALL",
         "Red" => "RED",
@@ -669,6 +657,5 @@ public sealed class OptionsScene : IScene
         int KeyRowGap,
         int KeyBoxWidth,
         Rectangle BackButtonBounds,
-        Rectangle ApplyButtonBounds,
-        Rectangle CancelButtonBounds);
+        Rectangle ApplyButtonBounds);
 }

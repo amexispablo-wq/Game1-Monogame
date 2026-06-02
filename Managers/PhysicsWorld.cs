@@ -10,6 +10,7 @@ public sealed class PhysicsWorld
     public const float Gravity = 1600f;
 
     private readonly Level _level;
+    private readonly Dictionary<int, float> _launchPadCooldowns = new();
 
     public PhysicsWorld(
         Level level,
@@ -35,6 +36,7 @@ public sealed class PhysicsWorld
     public List<Player> Players { get; }
     public List<Rope> Ropes { get; } = new();
     public RopeGameplayMode RopeGameplayMode { get; }
+    public Vector2 LastLaunchForce { get; private set; }
 
     public void UpdatePhysics(float dt, IReadOnlyDictionary<int, PlayerInputState> inputStates)
     {
@@ -42,6 +44,8 @@ public sealed class PhysicsWorld
         {
             return;
         }
+
+        UpdateLaunchPadCooldowns(dt);
 
         foreach (Player player in Players)
         {
@@ -58,6 +62,7 @@ public sealed class PhysicsWorld
         foreach (Player player in Players)
         {
             MoveAndSolveCollisions(player, dt);
+            ApplyLaunchPads(player);
         }
 
         foreach (Rope rope in Ropes)
@@ -73,6 +78,19 @@ public sealed class PhysicsWorld
         foreach (Player player in Players)
         {
             player.ClampVelocity();
+        }
+    }
+
+    public void ResetRopesForPlayer(Player player)
+    {
+        _launchPadCooldowns.Remove(player.NetworkId);
+
+        foreach (Rope rope in Ropes)
+        {
+            if (ReferenceEquals(rope.StartPlayer, player) || ReferenceEquals(rope.EndPlayer, player))
+            {
+                rope.ResetBetweenPlayers();
+            }
         }
     }
 
@@ -124,6 +142,69 @@ public sealed class PhysicsWorld
         ResolveVerticalCollisions(player);
 
         player.FinishPhysicsStep(_level);
+    }
+
+    private void ApplyLaunchPads(Player player)
+    {
+        if (!ShouldSimulate(player) || player.IsFrozen || IsLaunchPadCoolingDown(player))
+        {
+            return;
+        }
+
+        foreach (LaunchPad launchPad in _level.LaunchPads)
+        {
+            if (!CollisionHelper.Intersects(player.Position, player.Size, launchPad.TriggerBounds))
+            {
+                continue;
+            }
+
+            Vector2 direction = launchPad.LaunchDirection;
+            Vector2 lateralVelocity = player.Velocity - (direction * Vector2.Dot(player.Velocity, direction));
+            float maxLateralSpeed = MathF.Max(60f, LaunchPad.LaunchPadForce * 0.18f);
+            if (lateralVelocity.LengthSquared() > maxLateralSpeed * maxLateralSpeed)
+            {
+                lateralVelocity = Vector2.Normalize(lateralVelocity) * maxLateralSpeed;
+            }
+
+            Vector2 launchVelocity = (direction * LaunchPad.LaunchPadForce) + (lateralVelocity * 0.25f);
+            player.LaunchFromPad(launchVelocity);
+            _launchPadCooldowns[player.NetworkId] = MathF.Max(0.01f, LaunchPad.LaunchPadCooldown);
+            LastLaunchForce = direction * LaunchPad.LaunchPadForce;
+            return;
+        }
+    }
+
+    private bool IsLaunchPadCoolingDown(Player player)
+    {
+        return _launchPadCooldowns.TryGetValue(player.NetworkId, out float cooldown) && cooldown > 0f;
+    }
+
+    private void UpdateLaunchPadCooldowns(float dt)
+    {
+        if (_launchPadCooldowns.Count == 0)
+        {
+            return;
+        }
+
+        List<int> players = new(_launchPadCooldowns.Keys);
+        List<int> expiredPlayers = new();
+        foreach (int playerId in players)
+        {
+            float nextCooldown = _launchPadCooldowns[playerId] - dt;
+            if (nextCooldown <= 0f)
+            {
+                expiredPlayers.Add(playerId);
+            }
+            else
+            {
+                _launchPadCooldowns[playerId] = nextCooldown;
+            }
+        }
+
+        foreach (int playerId in expiredPlayers)
+        {
+            _launchPadCooldowns.Remove(playerId);
+        }
     }
 
     private void ResolveHorizontalCollisions(Player player)
