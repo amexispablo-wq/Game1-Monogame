@@ -1,5 +1,5 @@
 {
-  "name": "New Leveladada",
+  "name": "New Level 22",
   "platforms": [
     {
       "x": 192,
@@ -59,8 +59,19 @@
     }
   ],
   "goals": [],
+  "checkpointFlags": [],
+  "launchPads": [],
   "playerSpawn": {
     "x": 0,
     "y": 0
-  }
+  },
+  "musicId": "default_track_02",
+  "allPlayers": false,
+  "player1": false,
+  "player2": false,
+  "player3": false,
+  "player4": false,
+  "coloredRope": true,
+  "regularRope": true,
+  "lavaRise": true
 }

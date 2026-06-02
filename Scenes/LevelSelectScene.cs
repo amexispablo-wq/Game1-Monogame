@@ -29,10 +29,15 @@ public sealed class LevelSelectScene : IScene
     private Button? _primaryButton;
     private Button? _secondaryButton;
     private Button? _tertiaryButton;
+    private Button? _quaternaryButton;
     private CycleSelector<RopeGameplayMode>? _ropeModeSelector;
     private Rectangle _ropeModePanelBounds;
     private Rectangle _ropeModeLabelBounds;
     private Rectangle _ropeModeDescriptionBounds;
+    private Rectangle _detailsPanelBounds;
+    private Level? _selectedLevel;
+    private Texture2D? _selectedLevelPreview;
+    private string? _selectedLevelId;
 
     // Constants
     private const int CellWidth = 200;
@@ -58,6 +63,11 @@ public sealed class LevelSelectScene : IScene
             _levels = LevelManager.GetAllLevels();
         }
 
+        _selectedIndex = null;
+        _selectedLevel = null;
+        _selectedLevelPreview = null;
+        _selectedLevelId = null;
+
         _gridLayout = GridLayout.Create(_levels.Count, _game.Viewport.Width, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap);
     }
 
@@ -66,18 +76,19 @@ public sealed class LevelSelectScene : IScene
         _primaryButton = _mode switch
         {
             LevelSelectMode.PlayMode => new Button("Play"),
-            LevelSelectMode.EditMode => new Button("Edit"),
+            LevelSelectMode.EditMode => new Button("Edit Level"),
             _ => new Button("OK")
         };
 
         _secondaryButton = _mode switch
         {
             LevelSelectMode.PlayMode => new Button("Delete Highscore"),
-            LevelSelectMode.EditMode => new Button("Delete"),
+            LevelSelectMode.EditMode => new Button("Level Info"),
             _ => new Button("Cancel")
         };
 
-        _tertiaryButton = _mode == LevelSelectMode.EditMode ? new Button("Create New") : null;
+        _tertiaryButton = _mode == LevelSelectMode.EditMode ? new Button("Delete") : null;
+        _quaternaryButton = _mode == LevelSelectMode.EditMode ? new Button("Create New") : null;
 
         if (_mode == LevelSelectMode.PlayMode)
         {
@@ -139,7 +150,7 @@ public sealed class LevelSelectScene : IScene
             }
         }
 
-        // Handle primary button (Play / Edit)
+        // Handle primary button (Play / Edit Level)
         if (_primaryButton != null && _primaryButton.Update(_game.Input))
         {
             if (_selectedIndex.HasValue)
@@ -148,7 +159,7 @@ public sealed class LevelSelectScene : IScene
             }
         }
 
-        // Handle secondary button (Delete Highscore / Delete)
+        // Handle secondary button (Delete Highscore / Level Info)
         if (_secondaryButton != null && _secondaryButton.Update(_game.Input))
         {
             if (_selectedIndex.HasValue)
@@ -157,10 +168,32 @@ public sealed class LevelSelectScene : IScene
             }
         }
 
-        // Handle tertiary button (Create New - Edit Mode only)
+        // Handle tertiary button (Delete - Edit Mode only)
         if (_tertiaryButton != null && _tertiaryButton.Update(_game.Input))
         {
+            if (_selectedIndex.HasValue)
+            {
+                HandleDeleteLevel();
+            }
+        }
+
+        // Handle quaternary button (Create New - Edit Mode only)
+        if (_quaternaryButton != null && _quaternaryButton.Update(_game.Input))
+        {
             HandleCreateNew();
+        }
+
+        if (_selectedIndex.HasValue)
+        {
+            int selectedIndex = _selectedIndex.Value;
+            if (selectedIndex >= 0 && selectedIndex < _levels.Count)
+            {
+                string levelId = _levels[selectedIndex].Id;
+                if (_selectedLevelId != levelId)
+                {
+                    UpdateSelectedLevelDetails();
+                }
+            }
         }
     }
 
@@ -186,12 +219,18 @@ public sealed class LevelSelectScene : IScene
         DrawLevelGrid(spriteBatch, pixel);
         DrawRopeModeSelector(spriteBatch, pixel, viewport);
 
+        if (_mode == LevelSelectMode.PlayMode && _selectedLevel != null)
+        {
+            DrawLevelDetailsPanel(spriteBatch, pixel, viewport);
+        }
+
         // Draw buttons
         spriteBatch.Draw(pixel, new Rectangle(0, viewport.Height - 100, viewport.Width, 100), new Color(22, 26, 34));
         _backButton.Draw(spriteBatch, pixel);
         _primaryButton?.Draw(spriteBatch, pixel);
         _secondaryButton?.Draw(spriteBatch, pixel);
         _tertiaryButton?.Draw(spriteBatch, pixel);
+        _quaternaryButton?.Draw(spriteBatch, pixel);
 
         spriteBatch.End();
 
@@ -287,24 +326,32 @@ public sealed class LevelSelectScene : IScene
         }
         else
         {
-            // Edit | Delete | Create New (centered)
+            // Edit Level | Level Info | Delete | Create New (centered)
             var layout = ButtonRowLayout.Create(
-                new[] { "Edit", "Delete", "Create New" },
+                new[] { "Edit Level", "Level Info", "Delete", "Create New" },
                 viewport.Width, viewport.Height,
                 buttonHeight, horizontalPadding, 12, buttonGap, bottomMargin);
 
-            if (layout.ButtonBounds.Length >= 3)
+            if (layout.ButtonBounds.Length >= 4)
             {
                 _primaryButton!.Bounds = layout.ButtonBounds[0];
                 _secondaryButton!.Bounds = layout.ButtonBounds[1];
                 _tertiaryButton!.Bounds = layout.ButtonBounds[2];
+                _quaternaryButton!.Bounds = layout.ButtonBounds[3];
             }
         }
     }
 
     private void RefreshGridLayout()
     {
-        _gridLayout = GridLayout.Create(_levels.Count, _game.Viewport.Width, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap);
+        int availableWidth = _game.Viewport.Width;
+        if (_mode == LevelSelectMode.PlayMode && _selectedLevel != null)
+        {
+            int panelWidth = Math.Min(420, Math.Max(320, _game.Viewport.Width / 4));
+            availableWidth = Math.Max(1, _game.Viewport.Width - panelWidth - 40);
+        }
+
+        _gridLayout = GridLayout.Create(_levels.Count, availableWidth, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap);
     }
 
     private bool IsMouseOverButtons()
@@ -317,9 +364,13 @@ public sealed class LevelSelectScene : IScene
             return true;
         if (_tertiaryButton?.Bounds.Contains(_game.Input.MousePosition) ?? false)
             return true;
+        if (_quaternaryButton?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+            return true;
         if (_ropeModePanelBounds.Contains(_game.Input.MousePosition))
             return true;
         if (_ropeModeSelector?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+            return true;
+        if (_detailsPanelBounds.Contains(_game.Input.MousePosition))
             return true;
 
         return false;
@@ -357,15 +408,39 @@ public sealed class LevelSelectScene : IScene
         }
         else
         {
-            // Show delete level confirmation
-            _popup = new Popup("Delete Level", $"Delete '{level.Name}' permanently?");
+            _game.ChangeScene(new LevelInfoScene(_game, level.Id));
         }
+    }
+
+    private void HandleDeleteLevel()
+    {
+        if (!_selectedIndex.HasValue || _selectedIndex.Value >= _levels.Count)
+            return;
+
+        LevelMetadata level = _levels[_selectedIndex.Value];
+        _popup = new Popup("Delete Level", $"Delete '{level.Name}' permanently?");
     }
 
     private void HandleCreateNew()
     {
         // Show create new level dialog with text input
         _popup = new Popup("Create New Level", "Enter level name:", "New Level");
+    }
+
+    private void UpdateSelectedLevelDetails()
+    {
+        if (!_selectedIndex.HasValue || _selectedIndex.Value >= _levels.Count)
+        {
+            _selectedLevel = null;
+            _selectedLevelPreview = null;
+            _selectedLevelId = null;
+            return;
+        }
+
+        LevelMetadata metadata = _levels[_selectedIndex.Value];
+        _selectedLevelId = metadata.Id;
+        _selectedLevel = LevelManager.LoadLevel(metadata.Id);
+        _selectedLevelPreview = LevelPreviewManager.GetPreview(_game.GraphicsDevice, _game.Pixel, _selectedLevel, metadata.Id);
     }
 
     private void HandlePopupConfirmed()
@@ -447,5 +522,93 @@ public sealed class LevelSelectScene : IScene
 
         string description = _ropeModeSelector.CurrentOption.ToDescription();
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, description, _ropeModeDescriptionBounds, 1, new Color(180, 200, 220));
+    }
+
+    private void DrawLevelDetailsPanel(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
+    {
+        int panelWidth = Math.Min(420, Math.Max(320, viewport.Width / 4));
+        int panelX = viewport.Width - panelWidth - 20;
+        int panelY = 90;
+        int panelHeight = Math.Max(320, viewport.Height - 170);
+        _detailsPanelBounds = new Rectangle(panelX, panelY, panelWidth, panelHeight);
+
+        spriteBatch.Draw(pixel, _detailsPanelBounds, new Color(25, 30, 40, 240));
+        DrawHelper.DrawBorder(spriteBatch, pixel, _detailsPanelBounds, new Color(95, 110, 135), 2);
+
+        var headerBounds = new Rectangle(panelX + 16, panelY + 16, panelWidth - 32, 36);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "LEVEL DETAILS", headerBounds, 2, Color.White);
+
+        var nameBounds = new Rectangle(panelX + 16, panelY + 56, panelWidth - 32, 24);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, _selectedLevel.Name, nameBounds, 2, new Color(210, 220, 235));
+
+        var previewBounds = new Rectangle(panelX + 15, panelY + 86, panelWidth - 30, Math.Min(180, panelHeight / 4));
+        spriteBatch.Draw(pixel, previewBounds, new Color(20, 26, 36));
+        DrawHelper.DrawBorder(spriteBatch, pixel, previewBounds, new Color(85, 100, 120), 2);
+
+        if (_selectedLevelPreview != null)
+        {
+            spriteBatch.Draw(_selectedLevelPreview, previewBounds, Color.White);
+        }
+        else
+        {
+            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "No Preview Available", previewBounds, 1, new Color(180, 190, 210));
+        }
+
+        int textX = panelX + 20;
+        int textWidth = panelWidth - 40;
+        int y = previewBounds.Bottom + 16;
+        int rowHeight = 28;
+
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Players:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+        y += rowHeight;
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, GetPlayerCompatibilityText(_selectedLevel!), new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        y += rowHeight + 4;
+
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Rope:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+        y += rowHeight;
+        string ropeText = GetRopeText(_selectedLevel!);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, string.IsNullOrEmpty(ropeText) ? "None" : ropeText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        y += rowHeight + 4;
+
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Features:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+        y += rowHeight;
+        string featureText = GetFeatureText(_selectedLevel!);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, string.IsNullOrEmpty(featureText) ? "None" : featureText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        y += rowHeight + 4;
+
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Best Time:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+        y += rowHeight;
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, GetBestTimeText(_selectedLevelId ?? string.Empty), new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+    }
+
+    private string GetPlayerCompatibilityText(Level level)
+    {
+        if (level.AllPlayers)
+        {
+            return "All Players";
+        }
+
+        var supported = new System.Collections.Generic.List<string>();
+        if (level.Player1) supported.Add("1P");
+        if (level.Player2) supported.Add("2P");
+        if (level.Player3) supported.Add("3P");
+        if (level.Player4) supported.Add("4P");
+
+        return supported.Count > 0 ? string.Join(", ", supported) : "None";
+    }
+
+    private string GetRopeText(Level level)
+    {
+        var ropeTags = new System.Collections.Generic.List<string>();
+        if (level.ColoredRope) ropeTags.Add("Colored Rope");
+        if (level.RegularRope) ropeTags.Add("Regular Rope");
+        return string.Join(", ", ropeTags);
+    }
+
+    private string GetFeatureText(Level level)
+    {
+        var features = new System.Collections.Generic.List<string>();
+        if (level.LavaRise) features.Add("Lava Rise");
+        return string.Join(", ", features);
     }
 }

@@ -22,6 +22,33 @@ public sealed class LevelData
 
     [JsonPropertyName("playerSpawn")]
     public Vector2Data PlayerSpawn { get; set; } = new() { X = 100f, Y = 300f };
+
+    [JsonPropertyName("musicId")]
+    public string MusicId { get; set; } = LevelMusicLibrary.DefaultMusicId;
+
+    [JsonPropertyName("allPlayers")]
+    public bool AllPlayers { get; set; } = true;
+
+    [JsonPropertyName("player1")]
+    public bool Player1 { get; set; }
+
+    [JsonPropertyName("player2")]
+    public bool Player2 { get; set; }
+
+    [JsonPropertyName("player3")]
+    public bool Player3 { get; set; }
+
+    [JsonPropertyName("player4")]
+    public bool Player4 { get; set; }
+
+    [JsonPropertyName("coloredRope")]
+    public bool ColoredRope { get; set; }
+
+    [JsonPropertyName("regularRope")]
+    public bool RegularRope { get; set; }
+
+    [JsonPropertyName("lavaRise")]
+    public bool LavaRise { get; set; }
 }
 
 public sealed class PlatformData

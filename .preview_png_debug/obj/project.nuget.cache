@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "tOdBK3l+dcg=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\amexi\\Desktop\\Color Blocks\\.preview_png_debug\\PreviewDebug.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\amexi\\.nuget\\packages\\microsoft.win32.systemevents\\8.0.0\\microsoft.win32.systemevents.8.0.0.nupkg.sha512",
+    "C:\\Users\\amexi\\.nuget\\packages\\system.drawing.common\\8.0.0\\system.drawing.common.8.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

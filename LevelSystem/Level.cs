@@ -48,6 +48,15 @@ public sealed class Level
     public string Name { get; set; }
     public Vector2 PlayerStart { get; set; }
     public Point WorldSize { get; private set; }
+    public string MusicId { get; set; } = LevelMusicLibrary.DefaultMusicId;
+    public bool AllPlayers { get; set; } = true;
+    public bool Player1 { get; set; }
+    public bool Player2 { get; set; }
+    public bool Player3 { get; set; }
+    public bool Player4 { get; set; }
+    public bool ColoredRope { get; set; }
+    public bool RegularRope { get; set; }
+    public bool LavaRise { get; set; }
     public IReadOnlyList<Platform> Platforms => _platforms;
     public IReadOnlyList<Goal> Goals => _goals;
     public IReadOnlyList<CheckpointFlag> CheckpointFlags => _checkpointFlags;
@@ -111,13 +120,26 @@ public sealed class Level
                 launchPad.RotationDegrees));
         }
 
-        return new Level(
+        Level level = new Level(
             new Vector2(data.PlayerSpawn.X, data.PlayerSpawn.Y),
             platforms,
             goals,
             checkpointFlags,
             launchPads,
-            data.Name);
+            data.Name)
+        {
+            MusicId = string.IsNullOrWhiteSpace(data.MusicId) ? LevelMusicLibrary.DefaultMusicId : data.MusicId,
+            AllPlayers = data.AllPlayers,
+            Player1 = data.Player1,
+            Player2 = data.Player2,
+            Player3 = data.Player3,
+            Player4 = data.Player4,
+            ColoredRope = data.ColoredRope,
+            RegularRope = data.RegularRope,
+            LavaRise = data.LavaRise
+        };
+
+        return level;
     }
 
     public LevelData ToData()
@@ -125,7 +147,16 @@ public sealed class Level
         LevelData data = new()
         {
             Name = Name,
-            PlayerSpawn = new Vector2Data { X = PlayerStart.X, Y = PlayerStart.Y }
+            PlayerSpawn = new Vector2Data { X = PlayerStart.X, Y = PlayerStart.Y },
+            MusicId = MusicId,
+            AllPlayers = AllPlayers,
+            Player1 = Player1,
+            Player2 = Player2,
+            Player3 = Player3,
+            Player4 = Player4,
+            ColoredRope = ColoredRope,
+            RegularRope = RegularRope,
+            LavaRise = LavaRise
         };
 
         foreach (Platform platform in _platforms)

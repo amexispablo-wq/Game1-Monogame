@@ -293,5 +293,14 @@
   "playerSpawn": {
     "x": 0,
     "y": 0
-  }
+  },
+  "musicId": "default_track_02",
+  "allPlayers": false,
+  "player1": false,
+  "player2": true,
+  "player3": false,
+  "player4": false,
+  "coloredRope": false,
+  "regularRope": true,
+  "lavaRise": true
 }

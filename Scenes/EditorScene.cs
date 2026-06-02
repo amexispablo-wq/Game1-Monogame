@@ -1757,6 +1757,7 @@ public sealed class EditorScene : IScene
         }
 
         LevelManager.SaveLevel(_level, _levelId);
+        LevelPreviewManager.GenerateAndSavePreview(_game.GraphicsDevice, _game.Pixel, _level, _levelId);
         _isDirty = false;
     }
 
