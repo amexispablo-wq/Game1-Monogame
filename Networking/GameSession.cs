@@ -18,6 +18,7 @@ public enum GameSessionState
     Loading,
     Playing,
     Completed,
+    Dead,
     Disconnected
 }
 
@@ -51,6 +52,7 @@ public sealed class GameSession
     public List<PlayerSessionInfo> Players { get; } = new();
     public string SelectedLevelId { get; set; }
     public RopeGameplayMode RopeGameplayMode { get; set; }
+    public bool LavaRiseEnabled { get; set; }
     public GameSessionSettings Settings { get; set; } = GameSessionSettings.Default;
 
     public static GameSession CreateLocalTest(string selectedLevelId, RopeGameplayMode ropeGameplayMode)

@@ -24,19 +24,24 @@ public sealed class GameScene : IScene
     private bool _newRecord;
     private float _completionReturnDelay;
     private float _completionUiElapsed;
+    private Rectangle _deathRespawnStartBounds;
+    private Rectangle _deathCheckpointBounds;
+    private Rectangle _deathQuitBounds;
 
     public GameScene(
         ColorBlocksGame game,
         string levelId = "level_1",
-        RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics)
+        RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics,
+        bool lavaRiseEnabled = false)
     {
         _game = game;
         _ropeGameplayMode = ropeGameplayMode;
         _session = GameSession.CreateLocalTest(levelId, ropeGameplayMode);
+        _session.LavaRiseEnabled = lavaRiseEnabled;
         _level = LevelManager.LoadLevel(levelId);
         _playerManager = new PlayerManager(_session, _level);
         _playerManager.SpawnLocalPlayers(_game.Input.ActiveProfiles);
-        _simulation = new GameSimulation(_session, _level, _playerManager);
+        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled);
         _camera = new Camera(GetPlayersCenter());
     }
 
@@ -48,6 +53,13 @@ public sealed class GameScene : IScene
         LayoutBackButton();
 
         float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, MaxSceneFrameTime);
+
+        if (_simulation.IsPlayerDead)
+        {
+            UpdateDeathUi();
+            UpdateCamera(gameTime);
+            return;
+        }
 
         if (_simulation.IsLevelComplete)
         {
@@ -121,6 +133,21 @@ public sealed class GameScene : IScene
             player.Draw(spriteBatch, _game.Pixel, _debugDraw);
         }
 
+        if (_simulation.LavaActive)
+        {
+            // Drawn after players so anyone who sinks is covered by the molten body.
+            // Clipped to a padded view of the visible world (no need to fill the
+            // entire infinite plane), which keeps it cheap regardless of map size.
+            Rectangle lavaView = _camera.GetVisibleWorldRectangle(viewport, 96);
+            LavaLine.Draw(
+                spriteBatch,
+                _game.Pixel,
+                lavaView,
+                _simulation.LavaSurfaceY,
+                (float)gameTime.TotalGameTime.TotalSeconds,
+                drawParticles: true);
+        }
+
         spriteBatch.End();
 
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
@@ -136,7 +163,12 @@ public sealed class GameScene : IScene
             DrawCompletionUi(spriteBatch, _game.Pixel, viewport);
         }
 
-        if (CanReturnToMenu())
+        if (_simulation.IsPlayerDead)
+        {
+            DrawDeathUi(spriteBatch, _game.Pixel, viewport);
+        }
+
+        if (!_simulation.IsPlayerDead && CanReturnToMenu())
         {
             _backButton.Draw(spriteBatch, _game.Pixel);
         }
@@ -482,6 +514,89 @@ public sealed class GameScene : IScene
                 recordScale,
                 new Color(255, 220, 80) * fade);
         }
+    }
+
+    private void UpdateDeathUi()
+    {
+        LayoutDeathUi();
+
+        InputManager input = _game.Input;
+        if (input.LeftMousePressed)
+        {
+            if (_deathRespawnStartBounds.Contains(input.MousePosition))
+            {
+                _simulation.RespawnFromStart();
+                return;
+            }
+
+            if (_simulation.HasCheckpoint && _deathCheckpointBounds.Contains(input.MousePosition))
+            {
+                _simulation.RespawnFromCheckpoint();
+                return;
+            }
+
+            if (_deathQuitBounds.Contains(input.MousePosition))
+            {
+                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+                return;
+            }
+        }
+
+        if (input.ExitPressed)
+        {
+            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+        }
+    }
+
+    private void LayoutDeathUi()
+    {
+        Viewport viewport = _game.Viewport;
+        int buttonWidth = Math.Min(440, Math.Max(220, (int)(viewport.Width * 0.34f)));
+        int buttonHeight = Math.Clamp((int)(viewport.Height * 0.085f), 44, 64);
+        int gap = Math.Max(12, buttonHeight / 4);
+        int totalHeight = (buttonHeight * 3) + (gap * 2);
+        int x = (viewport.Width - buttonWidth) / 2;
+        int firstY = (viewport.Height / 2) - (totalHeight / 2) + (int)(viewport.Height * 0.06f);
+
+        _deathRespawnStartBounds = new Rectangle(x, firstY, buttonWidth, buttonHeight);
+        _deathCheckpointBounds = new Rectangle(x, firstY + buttonHeight + gap, buttonWidth, buttonHeight);
+        _deathQuitBounds = new Rectangle(x, firstY + (buttonHeight + gap) * 2, buttonWidth, buttonHeight);
+    }
+
+    private void DrawDeathUi(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
+    {
+        LayoutDeathUi();
+
+        spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(12, 4, 2) * 0.78f);
+
+        string title = "YOU DIED";
+        int titleScale = FitTextScale(title, GetResponsiveTextScale(viewport, 90, 4, 10), viewport.Width - 80);
+        int titleY = (viewport.Height / 2) - (int)(viewport.Height * 0.22f);
+        DrawCenteredText(spriteBatch, pixel, title, (viewport.Width / 2) + 3, titleY + 3, titleScale, new Color(60, 8, 0));
+        DrawCenteredText(spriteBatch, pixel, title, viewport.Width / 2, titleY, titleScale, new Color(255, 96, 40));
+
+        bool hasCheckpoint = _simulation.HasCheckpoint;
+        DrawDeathButton(spriteBatch, pixel, _deathRespawnStartBounds, "RESPAWN START", enabled: true);
+        DrawDeathButton(spriteBatch, pixel, _deathCheckpointBounds, "RESPAWN CHECKPOINT", enabled: hasCheckpoint);
+        DrawDeathButton(spriteBatch, pixel, _deathQuitBounds, "QUIT", enabled: true);
+    }
+
+    private void DrawDeathButton(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, string label, bool enabled)
+    {
+        bool hovered = enabled && bounds.Contains(_game.Input.MousePosition);
+        Color fill = enabled
+            ? (hovered ? new Color(70, 30, 14) : new Color(44, 20, 12))
+            : new Color(26, 24, 28);
+        Color border = enabled
+            ? (hovered ? new Color(255, 170, 70) : new Color(210, 96, 40))
+            : new Color(70, 66, 74);
+        Color textColor = enabled ? new Color(255, 226, 196) : new Color(120, 116, 126);
+
+        spriteBatch.Draw(pixel, bounds, fill);
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, border, hovered ? 4 : 3);
+
+        int scale = FitTextScale(label, GetResponsiveTextScale(_game.Viewport, 220, 2, 4), bounds.Width - 24);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, label, bounds, scale, textColor);
     }
 
     private void LayoutBackButton()

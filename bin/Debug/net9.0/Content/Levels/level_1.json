@@ -4,8 +4,8 @@
     {
       "x": -672,
       "y": 768,
-      "width": 4672,
-      "height": 1216,
+      "width": 4608,
+      "height": 1184,
       "color": "Green"
     },
     {
@@ -18,8 +18,8 @@
     {
       "x": -672,
       "y": 768,
-      "width": 4672,
-      "height": 1216,
+      "width": 4608,
+      "height": 1184,
       "color": "Blue"
     },
     {
@@ -304,13 +304,6 @@
       "rotation": 180
     },
     {
-      "x": 960,
-      "y": 1248,
-      "width": 96,
-      "height": 32,
-      "rotation": 0
-    },
-    {
       "x": 1216,
       "y": 384,
       "width": 64,
@@ -344,5 +337,9 @@
   "player4": false,
   "coloredRope": false,
   "regularRope": true,
-  "lavaRise": true
+  "lavaRise": true,
+  "lavaLine": {
+    "surfaceY": 1088,
+    "riseSpeed": 10
+  }
 }

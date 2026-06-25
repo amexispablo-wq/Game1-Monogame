@@ -1,3 +1,4 @@
+#nullable enable
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
@@ -49,6 +50,18 @@ public sealed class LevelData
 
     [JsonPropertyName("lavaRise")]
     public bool LavaRise { get; set; }
+
+    [JsonPropertyName("lavaLine")]
+    public LavaLineData? LavaLine { get; set; }
+}
+
+public sealed class LavaLineData
+{
+    [JsonPropertyName("surfaceY")]
+    public int SurfaceY { get; set; }
+
+    [JsonPropertyName("riseSpeed")]
+    public float RiseSpeed { get; set; } = ColorBlocks.LavaLine.DefaultRiseSpeed;
 }
 
 public sealed class PlatformData

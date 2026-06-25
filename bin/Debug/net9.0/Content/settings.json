@@ -2,8 +2,8 @@
   "displayMode": "Windowed",
   "resolutionWidth": 1600,
   "resolutionHeight": 1200,
-  "musicVolume": 0.30508474,
-  "fpsLimit": 144,
+  "musicVolume": 0.30932203,
+  "fpsLimit": 120,
   "Keybindings": {
     "MoveLeft": "A",
     "MoveRight": "D",

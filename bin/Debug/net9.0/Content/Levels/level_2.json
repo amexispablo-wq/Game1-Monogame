@@ -80,5 +80,9 @@
   "player4": false,
   "coloredRope": true,
   "regularRope": true,
-  "lavaRise": true
+  "lavaRise": true,
+  "lavaLine": {
+    "surfaceY": 1136,
+    "riseSpeed": 70
+  }
 }

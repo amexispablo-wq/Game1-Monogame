@@ -13,9 +13,11 @@ public sealed class GameSimulation
 
     private readonly GameSession _session;
     private readonly NetworkInputBuffer _inputBuffer = new();
+    private readonly Dictionary<int, PlayerInputState> _latchedLocalInput = new();
     private float _fixedTimeAccumulator;
+    private readonly float _lavaStartSurfaceY;
 
-    public GameSimulation(GameSession session, Level level, PlayerManager playerManager)
+    public GameSimulation(GameSession session, Level level, PlayerManager playerManager, bool lavaRiseEnabled = false)
     {
         _session = session;
         Level = level;
@@ -24,6 +26,16 @@ public sealed class GameSimulation
         PhysicsWorld = new PhysicsWorld(level, playerManager.Players, session, session.RopeGameplayMode);
         TimerRunning = true;
         _session.State = GameSessionState.Playing;
+
+        LavaActive = level.Lava is not null;
+        if (level.Lava is not null)
+        {
+            _lavaStartSurfaceY = level.Lava.SurfaceY;
+            LavaSurfaceY = level.Lava.SurfaceY;
+            LavaRiseSpeed = level.Lava.RiseSpeed;
+            LavaRiseEnabled = lavaRiseEnabled;
+        }
+
         LastSnapshot = CreateSnapshot(SimulationTick.Zero);
     }
 
@@ -40,11 +52,22 @@ public sealed class GameSimulation
     public bool IsLevelComplete { get; private set; }
     public float FinalTime { get; private set; }
     public bool NewRecord { get; private set; }
+    public bool LavaActive { get; }
+    public bool LavaRiseEnabled { get; }
+    public float LavaRiseSpeed { get; }
+    public float LavaSurfaceY { get; private set; }
+    public bool IsPlayerDead { get; private set; }
+    public bool HasCheckpoint => PlayerManager.HasCheckpoint;
     public int SnapshotCount { get; private set; }
     public GameSnapshot LastSnapshot { get; private set; }
 
     public int Advance(float frameSeconds, ILocalPlayerInputSource localInputSource)
     {
+        // Latch edge-triggered inputs every render frame so presses survive until a
+        // fixed tick consumes them. Without this, at high/unlocked FPS most render
+        // frames run no tick and one-frame edges (jump, color, respawn) get dropped.
+        AccumulateLocalInput(localInputSource);
+
         if (frameSeconds <= 0f)
         {
             return 0;
@@ -57,10 +80,10 @@ public sealed class GameSimulation
         while (_fixedTimeAccumulator >= fixedDelta && steps < MaxTicksPerFrame)
         {
             _fixedTimeAccumulator -= fixedDelta;
-            StepFixedTick(localInputSource);
+            StepFixedTick();
             steps++;
 
-            if (IsLevelComplete)
+            if (IsLevelComplete || IsPlayerDead)
             {
                 _fixedTimeAccumulator = 0f;
                 break;
@@ -99,25 +122,30 @@ public sealed class GameSimulation
         CurrentTick = new SimulationTick(Math.Max(CurrentTick.Value, snapshot.Tick));
     }
 
-    private void StepFixedTick(ILocalPlayerInputSource localInputSource)
+    private void StepFixedTick()
     {
         SimulationTick tick = CurrentTick;
-        InputFrame localFrame = CaptureLocalInputFrame(tick, localInputSource);
+        InputFrame localFrame = CaptureLocalInputFrame(tick);
         _inputBuffer.StoreFrame(localFrame);
 
-        if (!IsLevelComplete)
+        if (!IsLevelComplete && !IsPlayerDead)
         {
             IReadOnlyDictionary<int, PlayerInputState> inputs = _inputBuffer.GetInputs(tick);
             HandleRespawnInputs(inputs);
             PhysicsWorld.UpdatePhysics(TickRate.FixedDeltaSeconds, inputs);
             UpdateCheckpointActivation();
+            UpdateLava();
 
             if (TimerRunning)
             {
                 ElapsedTime += TickRate.FixedDeltaSeconds;
             }
 
-            if (IsAnyPlayerTouchingGoal())
+            if (CheckLavaDeath())
+            {
+                // Player died this tick; skip goal evaluation.
+            }
+            else if (IsAnyPlayerTouchingGoal())
             {
                 CompleteLevel();
             }
@@ -129,7 +157,36 @@ public sealed class GameSimulation
         _inputBuffer.TrimBefore(CurrentTick, InputBufferRetentionTicks);
     }
 
-    private InputFrame CaptureLocalInputFrame(SimulationTick tick, ILocalPlayerInputSource localInputSource)
+    private void AccumulateLocalInput(ILocalPlayerInputSource localInputSource)
+    {
+        foreach (Player player in Players)
+        {
+            if (!player.IsLocal)
+            {
+                continue;
+            }
+
+            PlayerInputState current = localInputSource.GetPlayerInput(player.PlayerId);
+            if (_latchedLocalInput.TryGetValue(player.NetworkId, out PlayerInputState latched))
+            {
+                // Level-triggered axes use the freshest value; edge-triggered flags
+                // accumulate (OR) until the next tick consumes them.
+                _latchedLocalInput[player.NetworkId] = new PlayerInputState(
+                    current.HorizontalMovement,
+                    latched.JumpPressed || current.JumpPressed,
+                    latched.RespawnPressed || current.RespawnPressed,
+                    current.FastFallHeld,
+                    current.PullRopeHeld,
+                    current.RequestedColor ?? latched.RequestedColor);
+            }
+            else
+            {
+                _latchedLocalInput[player.NetworkId] = current;
+            }
+        }
+    }
+
+    private InputFrame CaptureLocalInputFrame(SimulationTick tick)
     {
         InputFrame frame = new(tick, _session.LocalOwnerId);
         foreach (Player player in Players)
@@ -139,7 +196,19 @@ public sealed class GameSimulation
                 continue;
             }
 
-            frame.AddPlayerInput(player.NetworkId, localInputSource.GetPlayerInput(player.PlayerId));
+            PlayerInputState input = _latchedLocalInput.TryGetValue(player.NetworkId, out PlayerInputState latched)
+                ? latched
+                : PlayerInputState.Empty;
+            frame.AddPlayerInput(player.NetworkId, input);
+
+            // Clear edge-triggered flags now that they are consumed; keep level axes.
+            _latchedLocalInput[player.NetworkId] = new PlayerInputState(
+                input.HorizontalMovement,
+                false,
+                false,
+                input.FastFallHeld,
+                input.PullRopeHeld,
+                null);
         }
 
         return frame;
@@ -179,6 +248,80 @@ public sealed class GameSimulation
         foreach (Player player in Players)
         {
             player.Freeze();
+        }
+    }
+
+    private void UpdateLava()
+    {
+        if (!LavaActive || !LavaRiseEnabled)
+        {
+            return;
+        }
+
+        // Smooth, sub-pixel rise so the surface never jumps in block-sized steps.
+        LavaSurfaceY -= LavaRiseSpeed * TickRate.FixedDeltaSeconds;
+    }
+
+    private bool CheckLavaDeath()
+    {
+        if (!LavaActive || IsPlayerDead)
+        {
+            return false;
+        }
+
+        foreach (Player player in Players)
+        {
+            if (LavaLine.IsLethal(player.Bounds, LavaSurfaceY))
+            {
+                TriggerDeath();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void TriggerDeath()
+    {
+        IsPlayerDead = true;
+        TimerRunning = false;
+        _session.State = GameSessionState.Dead;
+
+        foreach (Player player in Players)
+        {
+            player.Freeze();
+        }
+    }
+
+    public void RespawnFromStart()
+    {
+        PlayerManager.ClearCheckpoint();
+        PlayerManager.ReviveAllAtStart();
+        ElapsedTime = 0f;
+        ResetAfterRespawn();
+    }
+
+    public void RespawnFromCheckpoint()
+    {
+        if (!HasCheckpoint)
+        {
+            return;
+        }
+
+        PlayerManager.ReviveAllAtCheckpoint();
+        ResetAfterRespawn();
+    }
+
+    private void ResetAfterRespawn()
+    {
+        IsPlayerDead = false;
+        TimerRunning = true;
+        LavaSurfaceY = _lavaStartSurfaceY;
+        _session.State = GameSessionState.Playing;
+
+        foreach (Player player in Players)
+        {
+            PhysicsWorld.ResetRopesForPlayer(player);
         }
     }
 

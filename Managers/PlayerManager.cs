@@ -19,6 +19,7 @@ public sealed class PlayerManager
     public List<Player> Players { get; } = new();
     public CheckpointFlag CurrentCheckpoint { get; private set; }
     public int? CurrentCheckpointId => CurrentCheckpoint?.Id;
+    public bool HasCheckpoint => CurrentCheckpoint is not null;
     public Vector2 RespawnPosition => CurrentCheckpoint?.RespawnPosition ?? _level.PlayerStart;
 
     public IReadOnlyList<Player> SpawnLocalPlayers(IEnumerable<InputProfile> activeProfiles)
@@ -78,6 +79,32 @@ public sealed class PlayerManager
     public void RespawnPlayer(Player player)
     {
         player.RespawnAt(RespawnPosition);
+    }
+
+    public void ReviveAllAtStart()
+    {
+        for (int i = 0; i < Players.Count; i++)
+        {
+            Players[i].Revive(GetSpawnPosition(i));
+        }
+    }
+
+    public void ReviveAllAtCheckpoint()
+    {
+        Vector2 position = RespawnPosition;
+        foreach (Player player in Players)
+        {
+            player.Revive(position);
+        }
+    }
+
+    public void ClearCheckpoint()
+    {
+        if (CurrentCheckpoint is not null)
+        {
+            CurrentCheckpoint.IsActive = false;
+            CurrentCheckpoint = null;
+        }
     }
 
     public Player SpawnRemotePlayer(

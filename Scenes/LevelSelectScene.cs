@@ -16,6 +16,7 @@ public enum LevelSelectMode
 public sealed class LevelSelectScene : IScene
 {
     private static RopeGameplayMode s_selectedRopeMode = RopeGameplayMode.ColoredPhysics;
+    private static bool s_lavaRiseEnabled;
 
     private readonly ColorBlocksGame _game;
     private readonly LevelSelectMode _mode;
@@ -31,6 +32,7 @@ public sealed class LevelSelectScene : IScene
     private Button? _tertiaryButton;
     private Button? _quaternaryButton;
     private CycleSelector<RopeGameplayMode>? _ropeModeSelector;
+    private Checkbox? _lavaRiseCheckbox;
     private Rectangle _ropeModePanelBounds;
     private Rectangle _ropeModeLabelBounds;
     private Rectangle _ropeModeDescriptionBounds;
@@ -102,6 +104,12 @@ public sealed class LevelSelectScene : IScene
             {
                 CurrentOption = s_selectedRopeMode
             };
+
+            _lavaRiseCheckbox = new Checkbox
+            {
+                Label = "Lava Rise",
+                IsChecked = s_lavaRiseEnabled
+            };
         }
     }
 
@@ -138,6 +146,12 @@ public sealed class LevelSelectScene : IScene
         {
             _ropeModeSelector.Update(_game.Input);
             s_selectedRopeMode = _ropeModeSelector.CurrentOption;
+        }
+
+        if (_lavaRiseCheckbox != null)
+        {
+            _lavaRiseCheckbox.Update(_game.Input);
+            s_lavaRiseEnabled = _lavaRiseCheckbox.IsChecked;
         }
 
         // Handle level grid clicks
@@ -308,6 +322,13 @@ public sealed class LevelSelectScene : IScene
             _ropeModeLabelBounds = new Rectangle(20, selectorY - 22, Math.Max(1, viewport.Width - 40), 18);
             _ropeModeSelector.Bounds = new Rectangle((viewport.Width - selectorWidth) / 2, selectorY, selectorWidth, selectorHeight);
             _ropeModeDescriptionBounds = new Rectangle(20, selectorY + selectorHeight + 8, Math.Max(1, viewport.Width - 40), 18);
+
+            if (_lavaRiseCheckbox != null)
+            {
+                int checkboxX = Math.Min(viewport.Width - 200, _ropeModeSelector.Bounds.Right + 28);
+                int checkboxY = _ropeModeSelector.Bounds.Y + ((selectorHeight - 24) / 2);
+                _lavaRiseCheckbox.Bounds = new Rectangle(checkboxX, checkboxY, 180, 24);
+            }
         }
 
         if (_mode == LevelSelectMode.PlayMode)
@@ -370,6 +391,8 @@ public sealed class LevelSelectScene : IScene
             return true;
         if (_ropeModeSelector?.Bounds.Contains(_game.Input.MousePosition) ?? false)
             return true;
+        if (_lavaRiseCheckbox?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+            return true;
         if (_detailsPanelBounds.Contains(_game.Input.MousePosition))
             return true;
 
@@ -386,7 +409,8 @@ public sealed class LevelSelectScene : IScene
         if (_mode == LevelSelectMode.PlayMode)
         {
             s_selectedRopeMode = _ropeModeSelector?.CurrentOption ?? s_selectedRopeMode;
-            _game.ChangeScene(new GameScene(_game, levelId, s_selectedRopeMode));
+            s_lavaRiseEnabled = _lavaRiseCheckbox?.IsChecked ?? s_lavaRiseEnabled;
+            _game.ChangeScene(new GameScene(_game, levelId, s_selectedRopeMode, s_lavaRiseEnabled));
         }
         else
         {
@@ -522,6 +546,8 @@ public sealed class LevelSelectScene : IScene
 
         string description = _ropeModeSelector.CurrentOption.ToDescription();
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, description, _ropeModeDescriptionBounds, 1, new Color(180, 200, 220));
+
+        _lavaRiseCheckbox?.Draw(spriteBatch, pixel);
     }
 
     private void DrawLevelDetailsPanel(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)

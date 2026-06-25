@@ -67,6 +67,14 @@ public sealed class EditorScene : IScene
     private bool _launchPadSlotHovered;
     private bool _isDraggingGoalFromToolbar;
     private bool _isDirty;
+    private bool _isDraggingLavaLine;
+    private bool _lavaSelected;
+    private bool _lavaHovered;
+    private Point _lavaDragStartMouse;
+    private int _lavaDragStartY;
+    private Rectangle _lavaSpeedPanelBounds;
+    private Rectangle _lavaSpeedMinusBounds;
+    private Rectangle _lavaSpeedPlusBounds;
 
     private bool IsDraggingToolbarObject => _toolbarDragKind != EditorObjectKind.None;
     private bool HasSelection => _selectedPlatforms.Count > 0
@@ -79,6 +87,14 @@ public sealed class EditorScene : IScene
         _game = game;
         _levelId = levelId;
         _level = LevelManager.LoadLevel(levelId);
+        if (_level.Lava is null)
+        {
+            // Every level gets a lava line so it can be positioned per level.
+            // Persist it so the level keeps the line even if the designer only views it.
+            _level.EnsureLava();
+            _isDirty = true;
+        }
+
         _camera = new Camera(new Vector2(game.Viewport.Width * 0.5f, game.Viewport.Height * 0.5f));
     }
 
@@ -101,6 +117,23 @@ public sealed class EditorScene : IScene
         }
 
         HandleKeyboard();
+        LayoutLavaSpeedPanel();
+
+        if (_lavaSelected && _level.Lava is not null && _game.Input.LeftMousePressed)
+        {
+            if (_lavaSpeedMinusBounds.Contains(_game.Input.MousePosition))
+            {
+                AdjustLavaRiseSpeed(-10f);
+                return;
+            }
+
+            if (_lavaSpeedPlusBounds.Contains(_game.Input.MousePosition))
+            {
+                AdjustLavaRiseSpeed(10f);
+                return;
+            }
+        }
+
         bool mouseOverToolbar = IsMouseOverToolbar();
         bool cameraBlockedByUi = _backButton.IsHovered || (mouseOverToolbar && !IsDraggingToolbarObject);
         HandleCameraInput(cameraBlockedByUi);
@@ -131,7 +164,8 @@ public sealed class EditorScene : IScene
             || _isResizing
             || _isDraggingGoal
             || _isDraggingCheckpoint
-            || _isDraggingLaunchPad;
+            || _isDraggingLaunchPad
+            || _isDraggingLavaLine;
         if (!canUseWorldMouse)
         {
             return;
@@ -172,6 +206,35 @@ public sealed class EditorScene : IScene
         _level.DrawLaunchPads(spriteBatch, pixel, debugDraw: false, isEditorMode: true);
         _level.DrawGoals(spriteBatch, pixel, debugDraw: false);
         _level.DrawCheckpointFlags(spriteBatch, pixel, debugDraw: false);
+
+        if (_level.Lava is not null)
+        {
+            int surfaceY = _level.Lava.SurfaceY;
+            LavaLine.DrawEditorLine(spriteBatch, pixel, visibleWorldBounds, surfaceY);
+
+            if (_lavaSelected || _lavaHovered)
+            {
+                Color highlight = _lavaSelected ? new Color(255, 220, 80) : Color.White;
+                DrawHelper.DrawBorder(
+                    spriteBatch,
+                    pixel,
+                    new Rectangle(visibleWorldBounds.Left, surfaceY - 3, visibleWorldBounds.Width, 8),
+                    highlight,
+                    GetWorldLineThickness(2));
+            }
+
+            if (_lavaSelected)
+            {
+                string hint = $"LAVA  rise {_level.Lava.RiseSpeed:0} px/s   [ , / . ]   drag = move up/down";
+                SimpleTextRenderer.DrawCentered(
+                    spriteBatch,
+                    pixel,
+                    hint,
+                    new Rectangle((int)_camera.Position.X - 260, surfaceY - 30, 520, 20),
+                    1,
+                    new Color(255, 220, 80));
+            }
+        }
 
         if (_hoveredPlatform is not null && !_selectedPlatforms.Contains(_hoveredPlatform))
         {
@@ -242,6 +305,7 @@ public sealed class EditorScene : IScene
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         DrawEditorUi(spriteBatch, pixel);
         DrawToolbar(spriteBatch, pixel);
+        DrawLavaSpeedPanel(spriteBatch, pixel);
         _backButton.Draw(spriteBatch, pixel);
         spriteBatch.End();
     }
@@ -300,6 +364,21 @@ public sealed class EditorScene : IScene
             return;
         }
 
+        if (_lavaSelected && _level.Lava is not null)
+        {
+            if (_game.Input.IsNewKeyPress(Keys.OemComma) || _game.Input.IsNewKeyPress(Keys.OemMinus))
+            {
+                _level.Lava.RiseSpeed = Math.Max(LavaLine.MinRiseSpeed, _level.Lava.RiseSpeed - 10f);
+                _isDirty = true;
+            }
+
+            if (_game.Input.IsNewKeyPress(Keys.OemPeriod) || _game.Input.IsNewKeyPress(Keys.OemPlus))
+            {
+                _level.Lava.RiseSpeed = Math.Min(LavaLine.MaxRiseSpeed, _level.Lava.RiseSpeed + 10f);
+                _isDirty = true;
+            }
+        }
+
         if (!_game.Input.ControlHeld && _game.Input.RequestedColor is { } requestedColor)
         {
             _selectedColor = requestedColor;
@@ -314,6 +393,7 @@ public sealed class EditorScene : IScene
             && !_isDraggingGoal
             && !_isDraggingCheckpoint
             && !_isDraggingLaunchPad
+            && !_isDraggingLavaLine
             && !_isResizing
             && !mouseOverUi;
         if (canStartPanning && (_game.Input.MiddleMousePressed || _game.Input.RightMousePressed))
@@ -464,6 +544,12 @@ public sealed class EditorScene : IScene
             return;
         }
 
+        if (_level.Lava is not null && _level.Lava.HitTest(mouse))
+        {
+            StartLavaDrag(mouse);
+            return;
+        }
+
         ClearSelection();
         _isCreating = true;
         _isDragging = false;
@@ -505,6 +591,12 @@ public sealed class EditorScene : IScene
             return;
         }
 
+        if (_isDraggingLavaLine)
+        {
+            MoveLavaLine(mouse);
+            return;
+        }
+
         if (_isResizing && _selectedPlatform is not null && _activeHandle != ResizeHandle.None)
         {
             ResizeSelectedPlatform(mouse);
@@ -533,8 +625,48 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
         _isDraggingLaunchPad = false;
+        _isDraggingLavaLine = false;
         _isResizing = false;
         _activeHandle = ResizeHandle.None;
+    }
+
+    private void StartLavaDrag(Point mouse)
+    {
+        ClearSelection();
+        _lavaSelected = true;
+        _isDraggingLavaLine = true;
+        _isCreating = false;
+        _isDragging = false;
+        _isDraggingGoal = false;
+        _isDraggingCheckpoint = false;
+        _isDraggingLaunchPad = false;
+        _isResizing = false;
+        _activeHandle = ResizeHandle.None;
+        _lavaDragStartMouse = mouse;
+        _lavaDragStartY = _level.Lava!.SurfaceY;
+    }
+
+    private void MoveLavaLine(Point mouse)
+    {
+        if (_level.Lava is null)
+        {
+            return;
+        }
+
+        // Vertical-only: horizontal mouse movement is ignored.
+        int nextY = _lavaDragStartY + (mouse.Y - _lavaDragStartMouse.Y);
+        if (_snapToGrid)
+        {
+            nextY = SnapToGrid(nextY);
+        }
+
+        if (_level.Lava.SurfaceY == nextY)
+        {
+            return;
+        }
+
+        _level.Lava.SurfaceY = nextY;
+        _isDirty = true;
     }
 
     private void StartDrag(Platform platform, Point mouse)
@@ -1018,6 +1150,7 @@ public sealed class EditorScene : IScene
         _selectedCheckpoint = null;
         _selectedLaunchPads.Clear();
         _selectedLaunchPad = null;
+        _lavaSelected = false;
     }
 
     private void DeleteSelectedObjects()
@@ -1335,13 +1468,14 @@ public sealed class EditorScene : IScene
 
     private void UpdateHoverState(Point mouse)
     {
-        bool objectActionActive = _isCreating || _isDragging || _isDraggingGoal || _isDraggingCheckpoint || _isDraggingLaunchPad || _isResizing || IsDraggingToolbarObject;
+        bool objectActionActive = _isCreating || _isDragging || _isDraggingGoal || _isDraggingCheckpoint || _isDraggingLaunchPad || _isDraggingLavaLine || _isResizing || IsDraggingToolbarObject;
         if (objectActionActive)
         {
             _hoveredPlatform = (_isCreating || _isDragging || _isResizing) ? _selectedPlatform : null;
             _hoveredGoal = _isDraggingGoal ? _selectedGoal : null;
             _hoveredCheckpoint = _isDraggingCheckpoint && _selectedCheckpoints.Count > 0 ? _selectedCheckpoints[0] : null;
             _hoveredLaunchPad = _isDraggingLaunchPad && _selectedLaunchPads.Count > 0 ? _selectedLaunchPads[0] : null;
+            _lavaHovered = _isDraggingLavaLine;
             return;
         }
 
@@ -1349,6 +1483,8 @@ public sealed class EditorScene : IScene
         _hoveredCheckpoint = _hoveredGoal is null ? FindCheckpointAt(mouse) : null;
         _hoveredLaunchPad = _hoveredGoal is null && _hoveredCheckpoint is null ? FindLaunchPadAt(mouse) : null;
         _hoveredPlatform = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null ? FindPlatformAt(mouse) : null;
+        _lavaHovered = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null && _hoveredPlatform is null
+            && _level.Lava is not null && _level.Lava.HitTest(mouse);
     }
 
     private bool IsMouseOverToolbar()
@@ -1358,7 +1494,78 @@ public sealed class EditorScene : IScene
 
     private bool IsMouseOverUi()
     {
-        return _backButton.Bounds.Contains(_game.Input.MousePosition) || IsMouseOverToolbar();
+        return _backButton.Bounds.Contains(_game.Input.MousePosition)
+            || IsMouseOverToolbar()
+            || (_lavaSelected && _lavaSpeedPanelBounds.Contains(_game.Input.MousePosition));
+    }
+
+    private void LayoutLavaSpeedPanel()
+    {
+        const int panelWidth = 330;
+        const int panelHeight = 78;
+        const int margin = 20;
+        int top = 70;
+        _lavaSpeedPanelBounds = new Rectangle(margin, top, panelWidth, panelHeight);
+
+        int button = 42;
+        int buttonY = top + panelHeight - button - 12;
+        _lavaSpeedMinusBounds = new Rectangle(margin + 12, buttonY, button, button);
+        _lavaSpeedPlusBounds = new Rectangle(margin + panelWidth - button - 12, buttonY, button, button);
+    }
+
+    private void AdjustLavaRiseSpeed(float delta)
+    {
+        if (_level.Lava is null)
+        {
+            return;
+        }
+
+        _level.Lava.RiseSpeed = MathHelper.Clamp(
+            _level.Lava.RiseSpeed + delta,
+            LavaLine.MinRiseSpeed,
+            LavaLine.MaxRiseSpeed);
+        _isDirty = true;
+    }
+
+    private void DrawLavaSpeedPanel(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        if (!_lavaSelected || _level.Lava is null)
+        {
+            return;
+        }
+
+        LayoutLavaSpeedPanel();
+        Rectangle panel = _lavaSpeedPanelBounds;
+        spriteBatch.Draw(pixel, panel, new Color(28, 22, 16));
+        DrawHelper.DrawBorder(spriteBatch, pixel, panel, new Color(255, 150, 40), 2);
+
+        SimpleTextRenderer.DrawString(
+            spriteBatch,
+            pixel,
+            "LAVA RISE SPEED",
+            new Vector2(panel.X + 14, panel.Y + 10),
+            1,
+            new Color(255, 210, 150));
+
+        string value = $"{_level.Lava.RiseSpeed:0} px/s";
+        SimpleTextRenderer.DrawCentered(
+            spriteBatch,
+            pixel,
+            value,
+            new Rectangle(panel.X, _lavaSpeedMinusBounds.Y, panel.Width, _lavaSpeedMinusBounds.Height),
+            2,
+            Color.White);
+
+        DrawLavaSpeedButton(spriteBatch, pixel, _lavaSpeedMinusBounds, "-");
+        DrawLavaSpeedButton(spriteBatch, pixel, _lavaSpeedPlusBounds, "+");
+    }
+
+    private void DrawLavaSpeedButton(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, string label)
+    {
+        bool hovered = bounds.Contains(_game.Input.MousePosition);
+        spriteBatch.Draw(pixel, bounds, hovered ? new Color(72, 40, 22) : new Color(48, 28, 18));
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, hovered ? new Color(255, 180, 70) : new Color(210, 120, 50), 2);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, label, bounds, 3, Color.White);
     }
 
     private static Rectangle BuildRectangle(Point start, Point end)

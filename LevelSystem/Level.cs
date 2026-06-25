@@ -57,6 +57,7 @@ public sealed class Level
     public bool ColoredRope { get; set; }
     public bool RegularRope { get; set; }
     public bool LavaRise { get; set; }
+    public LavaLine Lava { get; set; }
     public IReadOnlyList<Platform> Platforms => _platforms;
     public IReadOnlyList<Goal> Goals => _goals;
     public IReadOnlyList<CheckpointFlag> CheckpointFlags => _checkpointFlags;
@@ -139,6 +140,11 @@ public sealed class Level
             LavaRise = data.LavaRise
         };
 
+        if (data.LavaLine is not null)
+        {
+            level.Lava = new LavaLine(data.LavaLine.SurfaceY, data.LavaLine.RiseSpeed);
+        }
+
         return level;
     }
 
@@ -156,7 +162,8 @@ public sealed class Level
             Player4 = Player4,
             ColoredRope = ColoredRope,
             RegularRope = RegularRope,
-            LavaRise = LavaRise
+            LavaRise = LavaRise,
+            LavaLine = Lava is null ? null : new LavaLineData { SurfaceY = Lava.SurfaceY, RiseSpeed = Lava.RiseSpeed }
         };
 
         foreach (Platform platform in _platforms)
@@ -288,6 +295,28 @@ public sealed class Level
         }
 
         WorldSize = new Point(width, height);
+    }
+
+    /// <summary>Creates a lava line below the level content if one does not exist yet (editor use).</summary>
+    public void EnsureLava()
+    {
+        if (Lava is not null)
+        {
+            return;
+        }
+
+        int maxBottom = int.MinValue;
+        foreach (Platform platform in _platforms) maxBottom = System.Math.Max(maxBottom, platform.Bounds.Bottom);
+        foreach (Goal goal in _goals) maxBottom = System.Math.Max(maxBottom, goal.Bounds.Bottom);
+        foreach (CheckpointFlag checkpoint in _checkpointFlags) maxBottom = System.Math.Max(maxBottom, checkpoint.Bounds.Bottom);
+        foreach (LaunchPad launchPad in _launchPads) maxBottom = System.Math.Max(maxBottom, launchPad.Bounds.Bottom);
+
+        if (maxBottom == int.MinValue)
+        {
+            maxBottom = (int)PlayerStart.Y + 400;
+        }
+
+        Lava = new LavaLine(maxBottom + 240);
     }
 
     public IEnumerable<Platform> GetCollidablePlatforms(GameColor playerColor)

@@ -195,6 +195,12 @@ public sealed class Player : INetworkEntity
         ClearTransientMotionState();
     }
 
+    public void Revive(Vector2 position)
+    {
+        IsFrozen = false;
+        RespawnAt(position);
+    }
+
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, bool drawIndicator = true)
     {
         Rectangle bounds = Bounds;
