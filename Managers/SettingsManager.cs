@@ -25,6 +25,7 @@ public static class SettingsManager
             ResolutionWidth = _currentSettings.ResolutionWidth,
             ResolutionHeight = _currentSettings.ResolutionHeight,
             MusicVolume = _currentSettings.MusicVolume,
+            FpsLimit = _currentSettings.FpsLimit,
             Keybindings = new Dictionary<string, string>(_currentSettings.Keybindings)
         };
     }
@@ -63,6 +64,7 @@ public static class SettingsManager
             ResolutionWidth = settings.ResolutionWidth,
             ResolutionHeight = settings.ResolutionHeight,
             MusicVolume = settings.MusicVolume,
+            FpsLimit = settings.FpsLimit,
             Keybindings = new Dictionary<string, string>(settings.Keybindings)
         });
 
@@ -89,6 +91,7 @@ public static class SettingsManager
             ResolutionWidth = _currentSettings.ResolutionWidth,
             ResolutionHeight = _currentSettings.ResolutionHeight,
             MusicVolume = _currentSettings.MusicVolume,
+            FpsLimit = _currentSettings.FpsLimit,
             Keybindings = new Dictionary<string, string>(_currentSettings.Keybindings)
         };
     }

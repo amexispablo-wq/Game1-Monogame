@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -18,43 +17,17 @@ public static class LevelPreviewManager
 
     public static Texture2D GetPreview(GraphicsDevice graphicsDevice, Texture2D pixel, Level level, string levelId)
     {
-        if (PreviewCache.TryGetValue(levelId, out Texture2D? cached))
+        if (PreviewCache.TryGetValue(levelId, out Texture2D? cached) && cached is { IsDisposed: false })
         {
             return cached;
         }
 
-        string previewsDir = GetPreviewDirectory();
-        Directory.CreateDirectory(previewsDir);
-        string previewPath = GetPreviewPath(levelId, level.Name);
-
-        Texture2D? loaded = LoadExistingPreview(graphicsDevice, previewPath);
-        if (loaded != null)
-        {
-            PreviewCache[levelId] = loaded;
-            return loaded;
-        }
-
-        foreach (string fallbackPath in Directory.EnumerateFiles(previewsDir, $"*_{levelId}.png"))
-        {
-            loaded = LoadExistingPreview(graphicsDevice, fallbackPath);
-            if (loaded != null)
-            {
-                if (!string.Equals(fallbackPath, previewPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    TryMoveFile(fallbackPath, previewPath);
-                }
-
-                PreviewCache[levelId] = loaded;
-                return loaded;
-            }
-        }
-
-        Texture2D placeholder = CreatePlaceholderPreview(graphicsDevice, pixel);
-        PreviewCache[levelId] = placeholder;
-        return placeholder;
+        // Always regenerate from the in-memory level. On-disk PNGs are only a
+        // side artifact and may be stale (older builds saved blank previews).
+        return GenerateAndSavePreview(graphicsDevice, pixel, level, levelId);
     }
 
-    public static void GenerateAndSavePreview(GraphicsDevice graphicsDevice, Texture2D pixel, Level level, string levelId)
+    public static Texture2D GenerateAndSavePreview(GraphicsDevice graphicsDevice, Texture2D pixel, Level level, string levelId)
     {
         string previewsDir = GetPreviewDirectory();
         Directory.CreateDirectory(previewsDir);
@@ -75,19 +48,7 @@ public static class LevelPreviewManager
         }
 
         PreviewCache[levelId] = preview;
-    }
-
-    private static Texture2D? LoadExistingPreview(GraphicsDevice graphicsDevice, string previewPath)
-    {
-        try
-        {
-            using FileStream stream = File.OpenRead(previewPath);
-            return Texture2D.FromStream(graphicsDevice, stream);
-        }
-        catch
-        {
-            return null;
-        }
+        return preview;
     }
 
     private static void RenamePreviousPreviewFiles(string previewsDir, string levelId, string previewPath)
@@ -195,14 +156,9 @@ public static class LevelPreviewManager
         int width = PreviewWidth;
         int height = PreviewHeight;
 
-        using var renderTarget = new RenderTarget2D(graphicsDevice, width, height, false, SurfaceFormat.Color, DepthFormat.None);
-        graphicsDevice.SetRenderTarget(renderTarget);
-        graphicsDevice.Clear(Color.Transparent);
-
         Rectangle bounds = GetPreviewBounds(level);
         if (bounds.Width <= 0 || bounds.Height <= 0)
         {
-            graphicsDevice.SetRenderTarget(null);
             return CreatePlaceholderPreview(graphicsDevice, pixel);
         }
 
@@ -222,6 +178,16 @@ public static class LevelPreviewManager
         float worldOffsetX = padding + extraX - bounds.X * scale;
         float worldOffsetY = padding + extraY - bounds.Y * scale;
 
+        // PreserveContents is required: with the default DiscardContents, GL
+        // backends drop the pixels once the target is unbound, so GetData and
+        // drawing both read back a black/empty texture.
+        using var renderTarget = new RenderTarget2D(
+            graphicsDevice, width, height, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+
+        RenderTargetBinding[] previousTargets = graphicsDevice.GetRenderTargets();
+        graphicsDevice.SetRenderTarget(renderTarget);
+        graphicsDevice.Clear(new Color(28, 33, 43));
+
         using (var spriteBatch = new SpriteBatch(graphicsDevice))
         {
             var transform = Matrix.CreateScale(scale) * Matrix.CreateTranslation(worldOffsetX, worldOffsetY, 0f);
@@ -230,8 +196,17 @@ public static class LevelPreviewManager
             spriteBatch.End();
         }
 
-        graphicsDevice.SetRenderTarget(null);
-        return renderTarget;
+        // Copy into a plain Texture2D. A RenderTarget2D loses its contents on
+        // device reset (e.g. changing resolution), which would turn cached
+        // previews black; a regular texture survives.
+        var data = new Color[width * height];
+        renderTarget.GetData(data);
+
+        graphicsDevice.SetRenderTargets(previousTargets);
+
+        var texture = new Texture2D(graphicsDevice, width, height);
+        texture.SetData(data);
+        return texture;
     }
 
     private static Rectangle GetPreviewBounds(Level level)
@@ -268,7 +243,8 @@ public static class LevelPreviewManager
 
     private static Texture2D CreatePlaceholderPreview(GraphicsDevice graphicsDevice, Texture2D pixel)
     {
-        var placeholder = new RenderTarget2D(graphicsDevice, PreviewWidth, PreviewHeight, false, SurfaceFormat.Color, DepthFormat.None);
+        var placeholder = new RenderTarget2D(
+            graphicsDevice, PreviewWidth, PreviewHeight, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
         graphicsDevice.SetRenderTarget(placeholder);
         graphicsDevice.Clear(new Color(22, 26, 34));
 

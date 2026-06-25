@@ -1,5 +1,5 @@
 {
-  "name": "New Level 22",
+  "name": "Level 2",
   "platforms": [
     {
       "x": 192,
@@ -56,6 +56,13 @@
       "width": 384,
       "height": 224,
       "color": "Green"
+    },
+    {
+      "x": 672,
+      "y": 224,
+      "width": 320,
+      "height": 288,
+      "color": "Red"
     }
   ],
   "goals": [],

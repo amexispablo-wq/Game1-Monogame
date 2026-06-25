@@ -1,4 +1,5 @@
 #nullable enable
+using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -30,6 +31,7 @@ public class ColorBlocksGame : Game
         var settings = SettingsManager.CurrentSettings;
         _graphics.PreferredBackBufferWidth = settings.ResolutionWidth;
         _graphics.PreferredBackBufferHeight = settings.ResolutionHeight;
+        ApplyFrameSettings(settings.FpsLimit, applyChanges: false);
     }
 
     public InputManager Input => _input;
@@ -62,6 +64,32 @@ public class ColorBlocksGame : Game
         }
 
         _graphics.ApplyChanges();
+    }
+
+    // fpsLimit: -1 = VSync, 0 = Unlimited, >0 = hard cap.
+    public void ApplyFrameSettings(int fpsLimit, bool applyChanges = true)
+    {
+        if (fpsLimit < 0)
+        {
+            _graphics.SynchronizeWithVerticalRetrace = true;
+            IsFixedTimeStep = false;
+        }
+        else if (fpsLimit == 0)
+        {
+            _graphics.SynchronizeWithVerticalRetrace = false;
+            IsFixedTimeStep = false;
+        }
+        else
+        {
+            _graphics.SynchronizeWithVerticalRetrace = false;
+            IsFixedTimeStep = true;
+            TargetElapsedTime = TimeSpan.FromTicks(TimeSpan.TicksPerSecond / fpsLimit);
+        }
+
+        if (applyChanges)
+        {
+            _graphics.ApplyChanges();
+        }
     }
 
     public void ChangeScene(IScene scene)

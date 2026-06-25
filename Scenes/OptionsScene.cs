@@ -14,6 +14,7 @@ public sealed class OptionsScene : IScene
     // Display settings
     private ResolutionDropdown _resolutionDropdown = new();
     private CycleSelector<DisplayMode> _displayModeSelector;
+    private CycleSelector<int> _fpsLimitSelector;
 
     // Audio settings
     private Slider _volumeSlider = new("Music Volume", 0.75f, 0f, 1f);
@@ -31,8 +32,8 @@ public sealed class OptionsScene : IScene
     private const int MaxPanelWidth = 1180;
     private const int MaxPanelHeight = 820;
     private const int TitleHeight = 44;
-    private const int TopSectionHeight = 184;
-    private const int CompactTopSectionHeight = 176;
+    private const int TopSectionHeight = 246;
+    private const int CompactTopSectionHeight = 232;
     private const int RowHeight = 46;
     private const int CompactRowHeight = 44;
     private const int KeyRowHeight = 42;
@@ -70,6 +71,9 @@ public sealed class OptionsScene : IScene
         };
         _displayModeSelector = new CycleSelector<DisplayMode>(displayModes, FormatDisplayMode);
 
+        var fpsOptions = new List<int> { -1, 0, 30, 60, 120, 144, 240 };
+        _fpsLimitSelector = new CycleSelector<int>(fpsOptions, FormatFpsLimit);
+
         var pending = SettingsManager.PendingSettings;
         _resolutionDropdown.SelectedResolution = new Resolution(pending.ResolutionWidth, pending.ResolutionHeight);
         _resolutionDropdown.Label = string.Empty;
@@ -92,6 +96,7 @@ public sealed class OptionsScene : IScene
             _ => DisplayMode.BorderlessWindowed
         };
         _displayModeSelector.CurrentOption = initialMode;
+        _fpsLimitSelector.CurrentOption = pending.FpsLimit;
 
         InitializeControlBindings();
     }
@@ -135,6 +140,7 @@ public sealed class OptionsScene : IScene
         }
 
         _displayModeSelector.Update(_game.Input);
+        _fpsLimitSelector.Update(_game.Input);
 
         _resolutionDropdown.Update(_game.Input);
         if (_resolutionDropdown.IsExpanded)
@@ -242,8 +248,10 @@ public sealed class OptionsScene : IScene
 
         DrawSettingLabel(spriteBatch, pixel, "MODE", layout.DisplayLabelBounds, layout.DisplayModeBounds);
         DrawSettingLabel(spriteBatch, pixel, "RESOLUTION", layout.DisplayLabelBounds, layout.ResolutionBounds);
+        DrawSettingLabel(spriteBatch, pixel, "FPS LIMIT", layout.DisplayLabelBounds, layout.FpsLimitBounds);
 
         _displayModeSelector.Draw(spriteBatch, pixel);
+        _fpsLimitSelector.Draw(spriteBatch, pixel);
 
         if (!_resolutionDropdown.IsExpanded)
         {
@@ -389,6 +397,7 @@ public sealed class OptionsScene : IScene
         _displayModeSelector.Bounds = layout.DisplayModeBounds;
         _resolutionDropdown.Bounds = layout.ResolutionBounds;
         _resolutionDropdown.OpenUpwards = false;
+        _fpsLimitSelector.Bounds = layout.FpsLimitBounds;
         _volumeSlider.Bounds = layout.VolumeBounds;
 
         ControlWidth = layout.ControlSectionBounds.Width;
@@ -459,6 +468,7 @@ public sealed class OptionsScene : IScene
         int rowStartY = displaySectionBounds.Y + sectionPadding + sectionTitleHeight + sectionTitleSpacing;
         Rectangle displayModeBounds = new(displayControlBounds.X, rowStartY, displayControlBounds.Width, rowHeight);
         Rectangle resolutionBounds = new(displayControlBounds.X, rowStartY + rowHeight + 10, displayControlBounds.Width, rowHeight);
+        Rectangle fpsLimitBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 2), displayControlBounds.Width, rowHeight);
         Rectangle volumeBounds = new(audioControlBounds.X, rowStartY, audioControlBounds.Width, rowHeight);
 
         int controlRowsY = controlSectionBounds.Y + sectionPadding + sectionTitleHeight + sectionTitleSpacing;
@@ -488,6 +498,7 @@ public sealed class OptionsScene : IScene
             audioControlBounds,
             displayModeBounds,
             resolutionBounds,
+            fpsLimitBounds,
             volumeBounds,
             controlRowsArea,
             controlColumns,
@@ -525,6 +536,7 @@ public sealed class OptionsScene : IScene
     private void SyncPendingSettings()
     {
         SettingsManager.PendingSettings.MusicVolume = _volumeSlider.Value;
+        SettingsManager.PendingSettings.FpsLimit = _fpsLimitSelector.CurrentOption;
         SettingsManager.PendingSettings.DisplayMode = _displayModeSelector.CurrentOption.ToString();
         if (_resolutionDropdown.SelectedResolution != null)
         {
@@ -565,6 +577,13 @@ public sealed class OptionsScene : IScene
 
         return scale;
     }
+
+    private static string FormatFpsLimit(int fpsLimit) => fpsLimit switch
+    {
+        < 0 => "VSync",
+        0 => "Unlimited",
+        _ => $"{fpsLimit} FPS"
+    };
 
     private static string FormatDisplayMode(DisplayMode mode) => mode switch
     {
@@ -624,6 +643,7 @@ public sealed class OptionsScene : IScene
 
         var settings = SettingsManager.CurrentSettings;
         _game.ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);
+        _game.ApplyFrameSettings(settings.FpsLimit);
     }
 
     public void OnExit()
@@ -647,6 +667,7 @@ public sealed class OptionsScene : IScene
         Rectangle AudioControlBounds,
         Rectangle DisplayModeBounds,
         Rectangle ResolutionBounds,
+        Rectangle FpsLimitBounds,
         Rectangle VolumeBounds,
         Rectangle ControlRowsArea,
         int ControlColumns,

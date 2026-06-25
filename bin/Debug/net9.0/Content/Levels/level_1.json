@@ -245,6 +245,20 @@
       "width": 192,
       "height": 32,
       "color": "Red"
+    },
+    {
+      "x": 832,
+      "y": 512,
+      "width": 128,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 416,
+      "y": -128,
+      "width": 128,
+      "height": 128,
+      "color": "Red"
     }
   ],
   "goals": [
@@ -288,6 +302,34 @@
       "width": 96,
       "height": 32,
       "rotation": 180
+    },
+    {
+      "x": 960,
+      "y": 1248,
+      "width": 96,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": 1216,
+      "y": 384,
+      "width": 64,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": 1280,
+      "y": 288,
+      "width": 96,
+      "height": 64,
+      "rotation": 0
+    },
+    {
+      "x": 1344,
+      "y": 128,
+      "width": 96,
+      "height": 96,
+      "rotation": 0
     }
   ],
   "playerSpawn": {
@@ -295,7 +337,7 @@
     "y": 0
   },
   "musicId": "default_track_02",
-  "allPlayers": false,
+  "allPlayers": true,
   "player1": false,
   "player2": true,
   "player3": false,
