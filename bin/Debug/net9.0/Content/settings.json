@@ -3,7 +3,7 @@
   "resolutionWidth": 1600,
   "resolutionHeight": 1200,
   "musicVolume": 0.30932203,
-  "fpsLimit": 120,
+  "fpsLimit": 144,
   "Keybindings": {
     "MoveLeft": "A",
     "MoveRight": "D",

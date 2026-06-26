@@ -28,20 +28,17 @@ public sealed class Player : INetworkEntity
     private bool _ejectionPeakRaised;
     private float _mass = 1f;
 
-    public Player(PlayerId playerId, int playerIndex, Vector2 startPosition, InputDevice assignedInput)
-        : this(playerId, playerIndex, startPosition, assignedInput, NetworkEntityOwnership.LocalHost(0))
-    {
-    }
-
     public Player(
         PlayerId playerId,
         int playerIndex,
+        PartyMemberId partyMemberId,
         Vector2 startPosition,
         InputDevice assignedInput,
         NetworkEntityOwnership ownership)
     {
         PlayerId = playerId;
         PlayerIndex = playerIndex;
+        PartyMemberId = partyMemberId;
         Position = startPosition;
         AssignedInput = assignedInput;
         CurrentColor = GameColor.Red;
@@ -55,6 +52,7 @@ public sealed class Player : INetworkEntity
     public bool IsHostControlled { get; private set; }
     public PlayerId PlayerId { get; }
     public int PlayerIndex { get; }
+    public PartyMemberId PartyMemberId { get; }
     public InputDevice AssignedInput { get; set; }
     public Vector2 Position { get; set; }
     public Vector2 Velocity { get; set; }

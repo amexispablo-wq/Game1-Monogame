@@ -65,9 +65,26 @@ public sealed class GameSession
             ropeGameplayMode);
     }
 
+    public static GameSession CreateOnline(
+        GameSessionRole role,
+        string selectedLevelId,
+        RopeGameplayMode ropeGameplayMode,
+        int localOwnerId,
+        string localDisplayName)
+    {
+        SessionPeer localPeer = new(localOwnerId, localDisplayName, localOwnerId.ToString());
+        GameSessionRole resolvedRole = role == GameSessionRole.Client ? GameSessionRole.Client : GameSessionRole.Host;
+        return new GameSession(resolvedRole, localOwnerId, localPeer, selectedLevelId, ropeGameplayMode);
+    }
+
     public int AllocateNetworkId()
     {
         return _networkIds.Allocate();
+    }
+
+    public void ReserveNetworkId(int networkId)
+    {
+        _networkIds.Reserve(networkId);
     }
 
     public void ClearPlayers()
@@ -118,7 +135,8 @@ public sealed class PlayerSessionInfo
         bool isLocal,
         bool isHostControlled,
         InputDevice assignedInput,
-        string displayName)
+        string displayName,
+        PartyMemberId partyMemberId)
     {
         NetworkId = networkId;
         PlayerId = playerId;
@@ -128,6 +146,7 @@ public sealed class PlayerSessionInfo
         IsHostControlled = isHostControlled;
         AssignedInput = assignedInput;
         DisplayName = displayName;
+        PartyMemberId = partyMemberId;
     }
 
     public int NetworkId { get; }
@@ -139,4 +158,5 @@ public sealed class PlayerSessionInfo
     public bool IsHostControlled { get; }
     public InputDevice AssignedInput { get; }
     public string DisplayName { get; }
+    public PartyMemberId PartyMemberId { get; }
 }

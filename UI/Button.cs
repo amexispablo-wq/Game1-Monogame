@@ -23,10 +23,11 @@ public sealed class Button
     public Color TextColor { get; set; } = Color.White;
     public Color HoverTextColor { get; set; } = Color.White;
 
-    public bool Update(InputManager input)
+    public bool Update(InputManager input, InputNavigationService navigation)
     {
-        IsHovered = Bounds.Contains(input.MousePosition);
-        WasClicked = IsHovered && input.LeftMousePressed;
+        bool pointerOver = Bounds.Contains(input.UiPointerPosition);
+        IsHovered = navigation.AllowPointerHoverVisual && pointerOver;
+        WasClicked = pointerOver && input.UiPointerPressed;
         return WasClicked;
     }
 

@@ -9,6 +9,10 @@ public class ColorBlocksGame : Game
 {
     private readonly GraphicsDeviceManager _graphics;
     private readonly SteamManager _steam = new();
+    private readonly SteamCallbackManager _steamCallbacks = new();
+    private readonly SteamLobbyService _steamLobby;
+    private readonly SteamPartyService _steamParty;
+    private readonly PartyHudOverlay _partyHud = new();
     private SpriteBatch _spriteBatch = null!;
     private Texture2D _pixel = null!;
     private InputManager _input = null!;
@@ -32,11 +36,16 @@ public class ColorBlocksGame : Game
         _graphics.PreferredBackBufferWidth = settings.ResolutionWidth;
         _graphics.PreferredBackBufferHeight = settings.ResolutionHeight;
         ApplyFrameSettings(settings.FpsLimit, applyChanges: false);
+        _steamLobby = new SteamLobbyService(_steam, _steamCallbacks);
+        _steamParty = new SteamPartyService(_steamLobby);
     }
 
     public InputManager Input => _input;
+    public PartyManager Party { get; } = new();
     public Texture2D Pixel => _pixel;
     public SteamManager Steam => _steam;
+    public SteamLobbyService SteamLobby => _steamLobby;
+    public SteamPartyService SteamParty => _steamParty;
     public Viewport Viewport => GraphicsDevice.Viewport;
 
     public void ApplyGraphicsSettings(int width, int height, string? displayMode = null)
@@ -101,13 +110,21 @@ public class ColorBlocksGame : Game
     public void ExitGame()
     {
         _currentScene?.OnExit();
+        Party.LeaveParty();
         Exit();
     }
 
     protected override void Initialize()
     {
         _steam.Initialize();
+        if (_steam.IsInitialized)
+        {
+            _steamCallbacks.Register();
+            Party.BindSteamServices(_steamLobby, _steamParty);
+        }
+
         _input = new InputManager();
+        Party.EnsureDefaultParty();
         base.Initialize();
     }
 
@@ -134,6 +151,10 @@ public class ColorBlocksGame : Game
         GraphicsDevice.Clear(new Color(23, 27, 34));
         _currentScene.Draw(gameTime, _spriteBatch);
 
+        _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+        _partyHud.Draw(_spriteBatch, _pixel, Viewport, Party);
+        _spriteBatch.End();
+
         base.Draw(gameTime);
     }
 
@@ -147,6 +168,7 @@ public class ColorBlocksGame : Game
     {
         if (disposing)
         {
+            _steamCallbacks.Dispose();
             _steam.Shutdown();
         }
 

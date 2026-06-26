@@ -22,40 +22,53 @@ public sealed class PlayerManager
     public bool HasCheckpoint => CurrentCheckpoint is not null;
     public Vector2 RespawnPosition => CurrentCheckpoint?.RespawnPosition ?? _level.PlayerStart;
 
-    public IReadOnlyList<Player> SpawnLocalPlayers(IEnumerable<InputProfile> activeProfiles)
+    public IReadOnlyList<Player> SpawnFromParty(IReadOnlyList<PartyMember> members, InputManager input)
     {
         Players.Clear();
         _session.ClearPlayers();
 
+        Dictionary<int, PartyMember> bindings = new();
         int spawnIndex = 0;
-        foreach (InputProfile profile in activeProfiles)
+        for (int i = 0; i < members.Count; i++)
         {
-            Vector2 spawnPosition = GetSpawnPosition(spawnIndex);
-            SpawnPlayer(
-                profile.PlayerId,
-                profile.PlayerIndex,
+            PartyMember member = members[i];
+            Vector2 spawnPosition = GetSpawnPosition(spawnIndex++);
+            InputDevice assignedInput = ToInputDevice(member);
+            bool isLocal = member.IsLocallyOwned;
+            int ownerId = member.OwnerId != 0 ? member.OwnerId : _session.LocalOwnerId;
+            bool isHostControlled = isLocal && _session.IsHost;
+
+            int networkId = member.NetworkPlayerId > 0
+                ? member.NetworkPlayerId
+                : _session.AllocateNetworkId();
+            if (member.NetworkPlayerId > 0)
+            {
+                _session.ReserveNetworkId(networkId);
+            }
+            NetworkEntityOwnership ownership = new(networkId, ownerId, isLocal, isHostControlled);
+            Player player = new(
+                GetPlayerId(i),
+                i,
+                member.Id,
                 spawnPosition,
-                profile.AssignedInput,
-                _session.LocalOwnerId,
-                isLocal: true,
-                isHostControlled: _session.IsHost,
-                profile.DisplayName);
-            spawnIndex++;
+                assignedInput,
+                ownership);
+            Players.Add(player);
+            bindings[networkId] = member;
+
+            _session.RegisterPlayer(new PlayerSessionInfo(
+                networkId,
+                player.PlayerId,
+                i,
+                ownerId,
+                isLocal,
+                isHostControlled,
+                assignedInput,
+                member.DisplayName,
+                member.Id));
         }
 
-        if (Players.Count == 0)
-        {
-            SpawnPlayer(
-                PlayerId.Player1,
-                0,
-                _level.PlayerStart,
-                InputDevice.Keyboard,
-                _session.LocalOwnerId,
-                isLocal: true,
-                isHostControlled: _session.IsHost,
-                "Player 1");
-        }
-
+        input.SetGameplayBindings(bindings);
         return Players;
     }
 
@@ -110,6 +123,7 @@ public sealed class PlayerManager
     public Player SpawnRemotePlayer(
         PlayerId playerId,
         int playerIndex,
+        PartyMemberId partyMemberId,
         int ownerId,
         string displayName)
     {
@@ -117,6 +131,7 @@ public sealed class PlayerManager
         return SpawnPlayer(
             playerId,
             playerIndex,
+            partyMemberId,
             spawnPosition,
             InputDevice.None,
             ownerId,
@@ -128,6 +143,7 @@ public sealed class PlayerManager
     private Player SpawnPlayer(
         PlayerId playerId,
         int playerIndex,
+        PartyMemberId partyMemberId,
         Vector2 spawnPosition,
         InputDevice assignedInput,
         int ownerId,
@@ -137,7 +153,7 @@ public sealed class PlayerManager
     {
         int networkId = _session.AllocateNetworkId();
         NetworkEntityOwnership ownership = new(networkId, ownerId, isLocal, isHostControlled);
-        Player player = new(playerId, playerIndex, spawnPosition, assignedInput, ownership);
+        Player player = new(playerId, playerIndex, partyMemberId, spawnPosition, assignedInput, ownership);
         Players.Add(player);
 
         _session.RegisterPlayer(new PlayerSessionInfo(
@@ -148,9 +164,32 @@ public sealed class PlayerManager
             isLocal,
             isHostControlled,
             assignedInput,
-            displayName));
+            displayName,
+            partyMemberId));
 
         return player;
+    }
+
+    private static PlayerId GetPlayerId(int index)
+    {
+        return index switch
+        {
+            0 => PlayerId.Player1,
+            1 => PlayerId.Player2,
+            2 => PlayerId.Player3,
+            3 => PlayerId.Player4,
+            _ => PlayerId.Player1
+        };
+    }
+
+    private static InputDevice ToInputDevice(PartyMember member)
+    {
+        return member.InputSource switch
+        {
+            PartyInputSource.Keyboard => InputDevice.Keyboard,
+            PartyInputSource.Gamepad => InputDevice.Gamepad(member.ControllerId),
+            _ => InputDevice.None
+        };
     }
 
     private Vector2 GetSpawnPosition(int spawnIndex)

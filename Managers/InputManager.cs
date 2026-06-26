@@ -9,67 +9,55 @@ namespace ColorBlocks;
 public sealed class InputManager : ILocalPlayerInputSource
 {
     public const int MaxLocalPlayers = 4;
+    private const float GamepadMoveDeadZone = GamepadDefaults.MoveDeadZone;
 
-    private readonly Dictionary<PlayerId, PlayerInputState> _playerInputStates = new();
-    private List<InputProfile> _profiles;
+    private readonly Dictionary<int, PlayerInputState> _gameplayInputByNetworkId = new();
+    private readonly Dictionary<int, PartyMember> _gameplayBindings = new();
     private KeyboardInputBindings _keyboardBindings;
-    private PlayerInputState _keyboardInputState;
-    private PlayerId _keyboardControlledPlayerId = PlayerId.Player1;
     private KeyboardState _currentKeyboard;
     private KeyboardState _previousKeyboard;
     private MouseState _currentMouse;
     private MouseState _previousMouse;
+    private readonly GamePadState[] _currentGamepads = new GamePadState[MaxLocalPlayers];
+    private readonly GamePadState[] _previousGamepads = new GamePadState[MaxLocalPlayers];
 
     public InputManager()
     {
-        _profiles = InputProfile.CreateDefaultProfiles();
         _keyboardBindings = KeyboardInputBindings.FromSettings(SettingsManager.CurrentSettings);
-        InitializeActionStates();
-        SetKeyboardControlledPlayer(PlayerId.Player1);
     }
 
-    public IReadOnlyList<InputProfile> Profiles => _profiles;
-    public PlayerId KeyboardControlledPlayerId => _keyboardControlledPlayerId;
-    public IEnumerable<InputProfile> ActiveProfiles
-    {
-        get
-        {
-            foreach (InputProfile profile in _profiles)
-            {
-                if (profile.IsActive)
-                {
-                    yield return profile;
-                }
-            }
-        }
-    }
-
-    public int ActivePlayerCount
-    {
-        get
-        {
-            int count = 0;
-            foreach (InputProfile profile in _profiles)
-            {
-                if (profile.IsActive)
-                {
-                    count++;
-                }
-            }
-
-            return count;
-        }
-    }
-
-    public float HorizontalMovement { get; private set; }
-    public bool JumpPressed { get; private set; }
-    public bool RespawnPressed { get; private set; }
-    public bool FastFallHeld { get; private set; }
-    public bool PullRopeHeld { get; private set; }
     public bool ExitPressed { get; private set; }
     public bool EnterPressed { get; private set; }
     public bool DebugTogglePressed { get; private set; }
-    public bool LeftMousePressed { get; private set; }
+    public bool GameplayPausePressed { get; private set; }
+    public bool MenuMoveUpPressed { get; private set; }
+    public bool MenuMoveDownPressed { get; private set; }
+    public bool MenuConfirmPressed { get; private set; }
+    public bool MenuConfirmHeld { get; private set; }
+    public bool MenuCancelPressed { get; private set; }
+    public bool MenuStickUpHeld { get; private set; }
+    public bool MenuStickDownHeld { get; private set; }
+    public bool MenuMoveLeftPressed { get; private set; }
+    public bool MenuMoveRightPressed { get; private set; }
+    public bool MenuTabPressed { get; private set; }
+    public bool MenuTabBackwardPressed { get; private set; }
+    public bool MenuStickLeftHeld { get; private set; }
+    public bool MenuStickRightHeld { get; private set; }
+    public bool KeyboardMenuConfirmPressed { get; private set; }
+    public bool KeyboardMenuCancelPressed { get; private set; }
+    public bool GamepadMenuConfirmPressed { get; private set; }
+    public bool GamepadMenuCancelPressed { get; private set; }
+    public bool MouseActivityThisFrame { get; private set; }
+    public bool KeyboardMenuActivityThisFrame { get; private set; }
+    public bool GamepadActivityThisFrame { get; private set; }
+    public InputNavigationService Navigation { get; } = new();
+    public bool UiPointerPressed { get; private set; }
+    public bool UiPointerHeld { get; private set; }
+    public bool UiPointerReleased { get; private set; }
+    public Point UiPointerPosition => _uiPointerOverride ?? MousePosition;
+    public bool IsMouseRecentlyActive => _mouseInactiveFrames < 45;
+    public float EditorLeftTrigger { get; private set; }
+    public float EditorRightTrigger { get; private set; }
     public bool LeftMouseHeld { get; private set; }
     public bool LeftMouseReleased { get; private set; }
     public bool RightMousePressed { get; private set; }
@@ -86,6 +74,14 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool ShiftHeld { get; private set; }
     public GameColor? RequestedColor { get; private set; }
 
+    public bool GameplayInputBlocked { get; set; }
+
+    private Point? _uiPointerOverride;
+    private bool _virtualLeftClickRequested;
+    private int _mouseInactiveFrames;
+
+    public bool LeftMousePressed { get; private set; }
+
     public void Update()
     {
         _previousKeyboard = _currentKeyboard;
@@ -93,19 +89,151 @@ public sealed class InputManager : ILocalPlayerInputSource
         _previousMouse = _currentMouse;
         _currentMouse = Mouse.GetState();
 
-        _keyboardInputState = ReadKeyboardInputState();
-        UpdatePlayerInputStates(_keyboardInputState);
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            _previousGamepads[i] = _currentGamepads[i];
+            _currentGamepads[i] = GamePad.GetState((PlayerIndex)i);
+        }
 
-        HorizontalMovement = _keyboardInputState.HorizontalMovement;
-        JumpPressed = _keyboardInputState.JumpPressed;
-        RespawnPressed = _keyboardInputState.RespawnPressed;
-        FastFallHeld = _keyboardInputState.FastFallHeld;
-        PullRopeHeld = _keyboardInputState.PullRopeHeld;
+        UpdateMenuNavigation();
+        UpdateSystemButtons();
+        UpdateGameplayInputs();
+        Navigation.Update(this);
+        RequestedColor = GetLegacyEditorRequestedColor();
+        _virtualLeftClickRequested = false;
+    }
+
+    public void SetUiPointerOverride(Point? position)
+    {
+        _uiPointerOverride = position;
+    }
+
+    public void RequestVirtualLeftClick()
+    {
+        _virtualLeftClickRequested = true;
+    }
+
+    public bool IsAnyGamepadConnected()
+    {
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            if (_currentGamepads[i].IsConnected)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public Vector2 GetMenuLeftStick()
+    {
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            if (_currentGamepads[i].IsConnected)
+            {
+                return _currentGamepads[i].ThumbSticks.Left;
+            }
+        }
+
+        return Vector2.Zero;
+    }
+
+    public Vector2 GetMenuRightStick()
+    {
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            if (_currentGamepads[i].IsConnected)
+            {
+                return _currentGamepads[i].ThumbSticks.Right;
+            }
+        }
+
+        return Vector2.Zero;
+    }
+
+    public void ReloadKeyboardBindings()
+    {
+        _keyboardBindings = KeyboardInputBindings.FromSettings(SettingsManager.CurrentSettings);
+    }
+
+    public void SetGameplayBindings(IReadOnlyDictionary<int, PartyMember> bindings)
+    {
+        _gameplayBindings.Clear();
+        foreach (KeyValuePair<int, PartyMember> entry in bindings)
+        {
+            _gameplayBindings[entry.Key] = entry.Value;
+        }
+    }
+
+    public void ClearGameplayBindings()
+    {
+        _gameplayBindings.Clear();
+        _gameplayInputByNetworkId.Clear();
+    }
+
+    public PlayerInputState GetPlayerInput(int networkId)
+    {
+        return _gameplayInputByNetworkId.TryGetValue(networkId, out PlayerInputState state)
+            ? state
+            : PlayerInputState.Empty;
+    }
+
+    public bool IsGamepadConnected(int deviceIndex)
+    {
+        return deviceIndex >= 0
+            && deviceIndex < MaxLocalPlayers
+            && _currentGamepads[deviceIndex].IsConnected;
+    }
+
+    public bool WasGamepadPressed(int deviceIndex, Buttons button)
+    {
+        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers)
+        {
+            return false;
+        }
+
+        return IsGamepadPressed(_currentGamepads[deviceIndex], _previousGamepads[deviceIndex], button);
+    }
+
+    public bool IsKeyDown(Keys key) => _currentKeyboard.IsKeyDown(key);
+
+    public bool IsNewKeyPress(Keys key) =>
+        _currentKeyboard.IsKeyDown(key) && !_previousKeyboard.IsKeyDown(key);
+
+    private void UpdateGameplayInputs()
+    {
+        _gameplayInputByNetworkId.Clear();
+        if (GameplayInputBlocked)
+        {
+            return;
+        }
+
+        foreach (KeyValuePair<int, PartyMember> binding in _gameplayBindings)
+        {
+            _gameplayInputByNetworkId[binding.Key] = ReadMemberInput(binding.Value);
+        }
+    }
+
+    private PlayerInputState ReadMemberInput(PartyMember member)
+    {
+        return member.InputSource switch
+        {
+            PartyInputSource.Keyboard => ReadKeyboardInputState(),
+            PartyInputSource.Gamepad => ReadGamepadInputState(member.ControllerId),
+            PartyInputSource.SteamRemote => PlayerInputState.Empty,
+            _ => PlayerInputState.Empty
+        };
+    }
+
+    private void UpdateSystemButtons()
+    {
         ExitPressed = IsNewKeyPress(Keys.Escape);
         EnterPressed = IsNewKeyPress(Keys.Enter);
         DebugTogglePressed = IsNewKeyPress(Keys.F3);
         ControlHeld = _currentKeyboard.IsKeyDown(Keys.LeftControl) || _currentKeyboard.IsKeyDown(Keys.RightControl);
         ShiftHeld = _currentKeyboard.IsKeyDown(Keys.LeftShift) || _currentKeyboard.IsKeyDown(Keys.RightShift);
+
         LeftMousePressed = _currentMouse.LeftButton == ButtonState.Pressed
             && _previousMouse.LeftButton == ButtonState.Released;
         LeftMouseHeld = _currentMouse.LeftButton == ButtonState.Pressed;
@@ -122,103 +250,159 @@ public sealed class InputManager : ILocalPlayerInputSource
         MiddleMouseReleased = _currentMouse.MiddleButton == ButtonState.Released
             && _previousMouse.MiddleButton == ButtonState.Pressed;
         MouseWheelDelta = _currentMouse.ScrollWheelValue - _previousMouse.ScrollWheelValue;
-        RequestedColor = _keyboardInputState.RequestedColor ?? GetLegacyEditorRequestedColor();
+
+        if (MouseDelta != Point.Zero || LeftMousePressed || RightMousePressed || MiddleMousePressed || MouseWheelDelta != 0)
+        {
+            _mouseInactiveFrames = 0;
+            MouseActivityThisFrame = true;
+        }
+        else
+        {
+            _mouseInactiveFrames++;
+            MouseActivityThisFrame = false;
+        }
+
+        UiPointerPressed = LeftMousePressed || _virtualLeftClickRequested;
+        UiPointerHeld = LeftMouseHeld || _virtualLeftClickRequested;
+        UiPointerReleased = LeftMouseReleased;
     }
 
-    public void ReloadProfilesFromSettings()
+    private void UpdateMenuNavigation()
     {
-        bool[] activeProfiles = new bool[MaxLocalPlayers];
-        for (int i = 0; i < _profiles.Count && i < activeProfiles.Length; i++)
+        MouseActivityThisFrame = false;
+        KeyboardMenuActivityThisFrame = false;
+        GamepadActivityThisFrame = false;
+
+        MenuMoveUpPressed = IsNewKeyPress(Keys.Up);
+        MenuMoveDownPressed = IsNewKeyPress(Keys.Down);
+        MenuMoveLeftPressed = IsNewKeyPress(Keys.Left);
+        MenuMoveRightPressed = IsNewKeyPress(Keys.Right);
+        MenuTabBackwardPressed = IsNewKeyPress(Keys.Tab) && ShiftHeld;
+        MenuTabPressed = IsNewKeyPress(Keys.Tab) && !ShiftHeld;
+        KeyboardMenuConfirmPressed = IsNewKeyPress(Keys.Enter);
+        KeyboardMenuCancelPressed = IsNewKeyPress(Keys.Escape);
+        MenuConfirmPressed = KeyboardMenuConfirmPressed;
+        MenuConfirmHeld = _currentKeyboard.IsKeyDown(Keys.Enter);
+        MenuCancelPressed = KeyboardMenuCancelPressed;
+        GamepadMenuConfirmPressed = false;
+        GamepadMenuCancelPressed = false;
+
+        if (MenuMoveUpPressed || MenuMoveDownPressed || MenuMoveLeftPressed || MenuMoveRightPressed
+            || MenuTabPressed || MenuTabBackwardPressed || KeyboardMenuConfirmPressed || KeyboardMenuCancelPressed)
         {
-            activeProfiles[i] = _profiles[i].IsActive;
+            KeyboardMenuActivityThisFrame = true;
         }
 
-        PlayerId previousControlledPlayerId = _keyboardControlledPlayerId;
-        _profiles = InputProfile.CreateDefaultProfiles();
-        for (int i = 0; i < _profiles.Count && i < activeProfiles.Length; i++)
-        {
-            _profiles[i].IsActive = activeProfiles[i];
-        }
+        bool stickUp = false;
+        bool stickDown = false;
+        bool stickLeft = false;
+        bool stickRight = false;
+        bool gamepadPause = false;
+        EditorLeftTrigger = 0f;
+        EditorRightTrigger = 0f;
 
-        _keyboardBindings = KeyboardInputBindings.FromSettings(SettingsManager.CurrentSettings);
-        InitializeActionStates();
-        SetKeyboardControlledPlayer(IsActivePlayer(previousControlledPlayerId)
-            ? previousControlledPlayerId
-            : GetFirstActivePlayerId());
-    }
-
-    public void SetActivePlayerCount(int activePlayerCount)
-    {
-        int clampedCount = Math.Clamp(activePlayerCount, 1, MaxLocalPlayers);
-        for (int i = 0; i < _profiles.Count; i++)
+        for (int i = 0; i < MaxLocalPlayers; i++)
         {
-            _profiles[i].IsActive = i < clampedCount;
-        }
-
-        if (!IsActivePlayer(_keyboardControlledPlayerId))
-        {
-            SetKeyboardControlledPlayer(GetFirstActivePlayerId());
-        }
-    }
-
-    public void SetKeyboardControlledPlayer(PlayerId playerId)
-    {
-        if (!IsActivePlayer(playerId))
-        {
-            return;
-        }
-
-        _keyboardControlledPlayerId = playerId;
-        foreach (InputProfile profile in _profiles)
-        {
-            if (profile.AssignedInput.DeviceType == InputDeviceType.Keyboard)
+            if (!_currentGamepads[i].IsConnected)
             {
-                profile.AssignedInput = InputDevice.None;
+                continue;
             }
 
-            if (profile.PlayerId == playerId)
+            GamePadState current = _currentGamepads[i];
+            GamePadState previous = _previousGamepads[i];
+
+            if (IsGamepadPressed(current, previous, GamepadDefaults.MenuConfirmButton))
             {
-                profile.AssignedInput = InputDevice.Keyboard;
+                GamepadMenuConfirmPressed = true;
+                GamepadActivityThisFrame = true;
             }
+
+            MenuConfirmHeld |= current.IsButtonDown(GamepadDefaults.MenuConfirmButton);
+
+            if (IsGamepadPressed(current, previous, GamepadDefaults.MenuCancelButton))
+            {
+                GamepadMenuCancelPressed = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            gamepadPause |= IsGamepadPressed(current, previous, GamepadDefaults.PauseButton);
+
+            if (current.DPad.Up == ButtonState.Pressed && previous.DPad.Up == ButtonState.Released)
+            {
+                MenuMoveUpPressed = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (current.DPad.Down == ButtonState.Pressed && previous.DPad.Down == ButtonState.Released)
+            {
+                MenuMoveDownPressed = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (current.DPad.Left == ButtonState.Pressed && previous.DPad.Left == ButtonState.Released)
+            {
+                MenuMoveLeftPressed = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (current.DPad.Right == ButtonState.Pressed && previous.DPad.Right == ButtonState.Released)
+            {
+                MenuMoveRightPressed = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (current.ThumbSticks.Left.X < -GamepadMoveDeadZone)
+            {
+                stickLeft = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (current.ThumbSticks.Left.X > GamepadMoveDeadZone)
+            {
+                stickRight = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (current.ThumbSticks.Left.Y > GamepadMoveDeadZone)
+            {
+                stickUp = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (current.ThumbSticks.Left.Y < -GamepadMoveDeadZone)
+            {
+                stickDown = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (HasGamepadButtonActivity(current, previous))
+            {
+                GamepadActivityThisFrame = true;
+            }
+
+            EditorLeftTrigger = MathF.Max(EditorLeftTrigger, current.Triggers.Left);
+            EditorRightTrigger = MathF.Max(EditorRightTrigger, current.Triggers.Right);
         }
 
-        UpdatePlayerInputStates(_keyboardInputState);
+        MenuConfirmPressed |= GamepadMenuConfirmPressed;
+        MenuCancelPressed |= GamepadMenuCancelPressed;
+        GameplayPausePressed = KeyboardMenuCancelPressed || gamepadPause;
+        MenuStickUpHeld = stickUp;
+        MenuStickDownHeld = stickDown;
+        MenuStickLeftHeld = stickLeft;
+        MenuStickRightHeld = stickRight;
     }
 
-    public PlayerInputState GetPlayerInput(PlayerId playerId)
+    private static bool HasGamepadButtonActivity(GamePadState current, GamePadState previous)
     {
-        return _playerInputStates.TryGetValue(playerId, out PlayerInputState state)
-            ? state
-            : PlayerInputState.Empty;
-    }
-
-    public bool IsKeyDown(Keys key)
-    {
-        return _currentKeyboard.IsKeyDown(key);
-    }
-
-    public bool IsNewKeyPress(Keys key)
-    {
-        return _currentKeyboard.IsKeyDown(key) && !_previousKeyboard.IsKeyDown(key);
-    }
-
-    private void InitializeActionStates()
-    {
-        _playerInputStates.Clear();
-        foreach (InputProfile profile in _profiles)
-        {
-            _playerInputStates[profile.PlayerId] = PlayerInputState.Empty;
-        }
-    }
-
-    private void UpdatePlayerInputStates(PlayerInputState keyboardInputState)
-    {
-        foreach (InputProfile profile in _profiles)
-        {
-            _playerInputStates[profile.PlayerId] = profile.IsActive && profile.PlayerId == _keyboardControlledPlayerId
-                ? keyboardInputState
-                : PlayerInputState.Empty;
-        }
+        return current.Buttons != previous.Buttons
+            || current.DPad != previous.DPad
+            || MathF.Abs(current.ThumbSticks.Left.X - previous.ThumbSticks.Left.X) > 0.05f
+            || MathF.Abs(current.ThumbSticks.Left.Y - previous.ThumbSticks.Left.Y) > 0.05f
+            || MathF.Abs(current.ThumbSticks.Right.X - previous.ThumbSticks.Right.X) > 0.05f
+            || MathF.Abs(current.ThumbSticks.Right.Y - previous.ThumbSticks.Right.Y) > 0.05f
+            || MathF.Abs(current.Triggers.Left - previous.Triggers.Left) > 0.05f
+            || MathF.Abs(current.Triggers.Right - previous.Triggers.Right) > 0.05f;
     }
 
     private PlayerInputState ReadKeyboardInputState()
@@ -257,30 +441,63 @@ public sealed class InputManager : ILocalPlayerInputSource
             requestedColor);
     }
 
-    private bool IsActivePlayer(PlayerId playerId)
+    private PlayerInputState ReadGamepadInputState(int deviceIndex)
     {
-        foreach (InputProfile profile in _profiles)
+        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers)
         {
-            if (profile.PlayerId == playerId && profile.IsActive)
-            {
-                return true;
-            }
+            return PlayerInputState.Empty;
         }
 
-        return false;
+        GamePadState current = _currentGamepads[deviceIndex];
+        GamePadState previous = _previousGamepads[deviceIndex];
+        if (!current.IsConnected)
+        {
+            return PlayerInputState.Empty;
+        }
+
+        float horizontal = 0f;
+        if (current.ThumbSticks.Left.X < -GamepadMoveDeadZone || current.DPad.Left == ButtonState.Pressed)
+        {
+            horizontal -= 1f;
+        }
+
+        if (current.ThumbSticks.Left.X > GamepadMoveDeadZone || current.DPad.Right == ButtonState.Pressed)
+        {
+            horizontal += 1f;
+        }
+
+        horizontal = Math.Clamp(horizontal, -1f, 1f);
+
+        bool fastFall = current.ThumbSticks.Left.Y < -GamepadDefaults.FastFallStickThreshold
+            || current.DPad.Down == ButtonState.Pressed;
+        bool pullRope = current.Triggers.Right > GamepadDefaults.PullRopeTriggerThreshold;
+
+        GameColor? requestedColor = null;
+        if (IsGamepadPressed(current, previous, GamepadDefaults.RedButton))
+        {
+            requestedColor = GameColor.Red;
+        }
+        else if (IsGamepadPressed(current, previous, GamepadDefaults.GreenButton))
+        {
+            requestedColor = GameColor.Green;
+        }
+        else if (IsGamepadPressed(current, previous, GamepadDefaults.BlueButton))
+        {
+            requestedColor = GameColor.Blue;
+        }
+
+        return new PlayerInputState(
+            horizontal,
+            IsGamepadPressed(current, previous, GamepadDefaults.JumpButton),
+            IsGamepadPressed(current, previous, GamepadDefaults.RespawnButton),
+            fastFall,
+            pullRope,
+            requestedColor);
     }
 
-    private PlayerId GetFirstActivePlayerId()
+    private static bool IsGamepadPressed(GamePadState current, GamePadState previous, Buttons button)
     {
-        foreach (InputProfile profile in _profiles)
-        {
-            if (profile.IsActive)
-            {
-                return profile.PlayerId;
-            }
-        }
-
-        return PlayerId.Player1;
+        return current.IsButtonDown(button) && previous.IsButtonUp(button);
     }
 
     private GameColor? GetLegacyEditorRequestedColor()

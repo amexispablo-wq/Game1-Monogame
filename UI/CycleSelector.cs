@@ -43,14 +43,15 @@ public sealed class CycleSelector<T> where T : notnull
             DisplayFunc = displayFunc;
     }
 
-    public void Update(InputManager input)
+    public void Update(InputManager input, InputNavigationService navigation)
     {
         CalculateBounds();
 
-        _leftArrowHovered = _leftArrowBounds.Contains(input.MousePosition);
-        _rightArrowHovered = _rightArrowBounds.Contains(input.MousePosition);
+        bool allowHover = navigation.AllowPointerHoverVisual;
+        _leftArrowHovered = allowHover && _leftArrowBounds.Contains(input.UiPointerPosition);
+        _rightArrowHovered = allowHover && _rightArrowBounds.Contains(input.UiPointerPosition);
 
-        if (input.LeftMousePressed)
+        if (input.UiPointerPressed)
         {
             if (_leftArrowHovered)
             {

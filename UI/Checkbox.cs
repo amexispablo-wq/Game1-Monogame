@@ -12,15 +12,15 @@ public sealed class Checkbox
 
     private bool _isHovered;
 
-    public bool Update(InputManager input)
+    public bool Update(InputManager input, InputNavigationService navigation)
     {
-        _isHovered = Bounds.Contains(input.MousePosition);
+        _isHovered = navigation.AllowPointerHoverVisual && Bounds.Contains(input.UiPointerPosition);
         if (!IsEnabled)
         {
             return false;
         }
 
-        if (_isHovered && input.LeftMousePressed)
+        if (_isHovered && input.UiPointerPressed)
         {
             IsChecked = !IsChecked;
             return true;

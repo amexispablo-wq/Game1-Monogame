@@ -94,6 +94,17 @@ public sealed class PhysicsWorld
         }
     }
 
+    public void ClearTransientState()
+    {
+        _launchPadCooldowns.Clear();
+        LastLaunchForce = Vector2.Zero;
+
+        foreach (Rope rope in Ropes)
+        {
+            rope.ResetBetweenPlayers();
+        }
+    }
+
     private void PrepareBody(Player player, PlayerInputState input, float dt)
     {
         if (!ShouldSimulate(player) || player.IsFrozen)

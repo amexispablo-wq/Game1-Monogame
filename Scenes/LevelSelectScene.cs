@@ -24,9 +24,19 @@ public sealed class LevelSelectScene : IScene
     private GridLayout _gridLayout = null!;
     private int? _selectedIndex;
     private Popup? _popup;
+    private bool _subscribedToLevelStart;
 
     // UI
     private readonly Button _backButton = new("Back") { TextScale = 2 };
+    private readonly UIFocusManager _focus = new();
+    private readonly FocusableButton _backFocus;
+    private readonly List<FocusableGridCell> _gridFocusables = new();
+    private FocusableButton? _primaryFocus;
+    private FocusableButton? _secondaryFocus;
+    private FocusableButton? _tertiaryFocus;
+    private FocusableButton? _quaternaryFocus;
+    private FocusableCycleSelector<RopeGameplayMode>? _ropeModeFocus;
+    private FocusableCheckbox? _lavaRiseFocus;
     private Button? _primaryButton;
     private Button? _secondaryButton;
     private Button? _tertiaryButton;
@@ -51,8 +61,14 @@ public sealed class LevelSelectScene : IScene
     {
         _game = game;
         _mode = mode;
+        _backFocus = new FocusableButton(_backButton);
         RefreshLevelList();
         InitializeButtons();
+        if (_mode == LevelSelectMode.PlayMode)
+        {
+            _game.SteamLobby.LevelStartReceived += OnLevelStartReceived;
+            _subscribedToLevelStart = true;
+        }
     }
 
     private void RefreshLevelList()
@@ -92,6 +108,11 @@ public sealed class LevelSelectScene : IScene
         _tertiaryButton = _mode == LevelSelectMode.EditMode ? new Button("Delete") : null;
         _quaternaryButton = _mode == LevelSelectMode.EditMode ? new Button("Create New") : null;
 
+        _primaryFocus = _primaryButton is not null ? new FocusableButton(_primaryButton) : null;
+        _secondaryFocus = _secondaryButton is not null ? new FocusableButton(_secondaryButton) : null;
+        _tertiaryFocus = _tertiaryButton is not null ? new FocusableButton(_tertiaryButton) : null;
+        _quaternaryFocus = _quaternaryButton is not null ? new FocusableButton(_quaternaryButton) : null;
+
         if (_mode == LevelSelectMode.PlayMode)
         {
             _ropeModeSelector = new CycleSelector<RopeGameplayMode>(
@@ -110,14 +131,17 @@ public sealed class LevelSelectScene : IScene
                 Label = "Lava Rise",
                 IsChecked = s_lavaRiseEnabled
             };
+
+            _ropeModeFocus = new FocusableCycleSelector<RopeGameplayMode>(_ropeModeSelector);
+            _lavaRiseFocus = new FocusableCheckbox(_lavaRiseCheckbox);
         }
     }
 
     public void Update(GameTime gameTime)
     {
         LayoutButtons();
+        RefreshGridLayout();
 
-        // Update popup if active
         if (_popup != null)
         {
             _popup.Update(gameTime, _game.Input, _game.Viewport.Width, _game.Viewport.Height);
@@ -135,8 +159,9 @@ public sealed class LevelSelectScene : IScene
             return;
         }
 
-        // Back button
-        if (_backButton.Update(_game.Input) || _game.Input.ExitPressed)
+        UpdateFocus(gameTime);
+
+        if (_backFocus.WasActivated || _game.Input.ExitPressed || _game.Input.MenuCancelPressed)
         {
             _game.ChangeScene(new MenuScene(_game));
             return;
@@ -144,57 +169,36 @@ public sealed class LevelSelectScene : IScene
 
         if (_ropeModeSelector != null)
         {
-            _ropeModeSelector.Update(_game.Input);
             s_selectedRopeMode = _ropeModeSelector.CurrentOption;
         }
 
         if (_lavaRiseCheckbox != null)
         {
-            _lavaRiseCheckbox.Update(_game.Input);
             s_lavaRiseEnabled = _lavaRiseCheckbox.IsChecked;
         }
 
-        // Handle level grid clicks
-        if (_game.Input.LeftMousePressed && !IsMouseOverButtons())
+        if (_primaryFocus?.WasActivated == true && _selectedIndex.HasValue && CanStartPlay())
         {
-            int? cellIndex = _gridLayout.GetCellAtPoint(_game.Input.MousePosition);
-            if (cellIndex.HasValue && cellIndex.Value < _levels.Count)
-            {
-                _selectedIndex = cellIndex.Value;
-            }
+            HandlePrimaryAction();
+            return;
         }
 
-        // Handle primary button (Play / Edit Level)
-        if (_primaryButton != null && _primaryButton.Update(_game.Input))
+        if (_secondaryFocus?.WasActivated == true && _selectedIndex.HasValue)
         {
-            if (_selectedIndex.HasValue)
-            {
-                HandlePrimaryAction();
-            }
+            HandleSecondaryAction();
+            return;
         }
 
-        // Handle secondary button (Delete Highscore / Level Info)
-        if (_secondaryButton != null && _secondaryButton.Update(_game.Input))
+        if (_tertiaryFocus?.WasActivated == true && _selectedIndex.HasValue)
         {
-            if (_selectedIndex.HasValue)
-            {
-                HandleSecondaryAction();
-            }
+            HandleDeleteLevel();
+            return;
         }
 
-        // Handle tertiary button (Delete - Edit Mode only)
-        if (_tertiaryButton != null && _tertiaryButton.Update(_game.Input))
-        {
-            if (_selectedIndex.HasValue)
-            {
-                HandleDeleteLevel();
-            }
-        }
-
-        // Handle quaternary button (Create New - Edit Mode only)
-        if (_quaternaryButton != null && _quaternaryButton.Update(_game.Input))
+        if (_quaternaryFocus?.WasActivated == true)
         {
             HandleCreateNew();
+            return;
         }
 
         if (_selectedIndex.HasValue)
@@ -207,6 +211,65 @@ public sealed class LevelSelectScene : IScene
                 {
                     UpdateSelectedLevelDetails();
                 }
+            }
+        }
+    }
+
+    private void UpdateFocus(GameTime gameTime)
+    {
+        _gridFocusables.Clear();
+        _focus.Clear();
+
+        for (int i = 0; i < _levels.Count && i < _gridLayout.CellBounds.Length; i++)
+        {
+            int captured = i;
+            var cell = new FocusableGridCell(_gridLayout.CellBounds[i], () =>
+            {
+                _selectedIndex = captured;
+                return true;
+            });
+            _gridFocusables.Add(cell);
+            _focus.Add(cell);
+        }
+
+        if (_ropeModeFocus != null)
+        {
+            _focus.Add(_ropeModeFocus);
+        }
+
+        if (_lavaRiseFocus != null)
+        {
+            _focus.Add(_lavaRiseFocus);
+        }
+
+        _focus.Add(_backFocus);
+        if (_primaryFocus != null)
+        {
+            _focus.Add(_primaryFocus);
+        }
+
+        if (_secondaryFocus != null)
+        {
+            _focus.Add(_secondaryFocus);
+        }
+
+        if (_tertiaryFocus != null)
+        {
+            _focus.Add(_tertiaryFocus);
+        }
+
+        if (_quaternaryFocus != null)
+        {
+            _focus.Add(_quaternaryFocus);
+        }
+
+        _focus.Update(gameTime, _game.Input);
+
+        foreach (FocusableGridCell cell in _gridFocusables)
+        {
+            if (cell.WasActivated)
+            {
+                break;
             }
         }
     }
@@ -240,11 +303,18 @@ public sealed class LevelSelectScene : IScene
 
         // Draw buttons
         spriteBatch.Draw(pixel, new Rectangle(0, viewport.Height - 100, viewport.Width, 100), new Color(22, 26, 34));
+        if (_mode == LevelSelectMode.PlayMode && _game.SteamLobby.IsInLobby && !_game.Party.IsLeader)
+        {
+            Rectangle waitBounds = new(20, viewport.Height - 132, viewport.Width - 40, 24);
+            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "Waiting for Party Leader...", waitBounds, 2, new Color(167, 178, 198));
+        }
+
         _backButton.Draw(spriteBatch, pixel);
         _primaryButton?.Draw(spriteBatch, pixel);
         _secondaryButton?.Draw(spriteBatch, pixel);
         _tertiaryButton?.Draw(spriteBatch, pixel);
         _quaternaryButton?.Draw(spriteBatch, pixel);
+        _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
 
         spriteBatch.End();
 
@@ -266,7 +336,8 @@ public sealed class LevelSelectScene : IScene
 
             // Draw cell background
             bool isSelected = _selectedIndex == i;
-            bool isHovered = cellBounds.Contains(_game.Input.MousePosition);
+            bool isHovered = _game.Input.Navigation.AllowPointerHoverVisual
+                && cellBounds.Contains(_game.Input.UiPointerPosition);
             Color cellColor = isSelected ? new Color(74, 120, 180) : (isHovered ? new Color(62, 71, 90) : new Color(52, 61, 80));
             spriteBatch.Draw(pixel, cellBounds, cellColor);
 
@@ -344,6 +415,10 @@ public sealed class LevelSelectScene : IScene
                 _primaryButton!.Bounds = layout.ButtonBounds[0];
                 _secondaryButton!.Bounds = layout.ButtonBounds[1];
             }
+
+            bool leaderCanPlay = CanStartPlay();
+            _primaryButton!.FillColor = leaderCanPlay ? new Color(52, 61, 80) : new Color(40, 46, 58);
+            _primaryButton.TextColor = leaderCanPlay ? Color.White : new Color(167, 178, 198);
         }
         else
         {
@@ -410,12 +485,43 @@ public sealed class LevelSelectScene : IScene
         {
             s_selectedRopeMode = _ropeModeSelector?.CurrentOption ?? s_selectedRopeMode;
             s_lavaRiseEnabled = _lavaRiseCheckbox?.IsChecked ?? s_lavaRiseEnabled;
+
+            if (_game.SteamLobby.IsInLobby)
+            {
+                if (!_game.Party.IsLeader)
+                {
+                    return;
+                }
+
+                _game.SteamLobby.BroadcastLevelStart(levelId, s_selectedRopeMode, s_lavaRiseEnabled);
+            }
+
             _game.ChangeScene(new GameScene(_game, levelId, s_selectedRopeMode, s_lavaRiseEnabled));
         }
         else
         {
             _game.ChangeScene(new EditorScene(_game, levelId));
         }
+    }
+
+    private bool CanStartPlay()
+    {
+        if (_mode != LevelSelectMode.PlayMode)
+        {
+            return true;
+        }
+
+        return !_game.SteamLobby.IsInLobby || _game.Party.IsLeader;
+    }
+
+    private void OnLevelStartReceived(PartyStartMessage message)
+    {
+        if (_mode != LevelSelectMode.PlayMode)
+        {
+            return;
+        }
+
+        _game.ChangeScene(new GameScene(_game, message.LevelId, message.RopeMode, message.LavaRiseEnabled));
     }
 
     private void HandleSecondaryAction()
@@ -520,6 +626,11 @@ public sealed class LevelSelectScene : IScene
 
     public void OnExit()
     {
+        if (_subscribedToLevelStart)
+        {
+            _game.SteamLobby.LevelStartReceived -= OnLevelStartReceived;
+            _subscribedToLevelStart = false;
+        }
     }
 
     private int GetGridLayoutHeight()

@@ -17,6 +17,7 @@ public sealed class EditorScene : IScene
     private readonly Level _level;
     private readonly Camera _camera;
     private readonly Button _backButton = new("Back to Menu") { TextScale = 2 };
+    private readonly Button _applyButton = new("Apply") { TextScale = 2 };
 
     private Platform _selectedPlatform;
     private Platform _hoveredPlatform;
@@ -76,6 +77,23 @@ public sealed class EditorScene : IScene
     private Rectangle _lavaSpeedMinusBounds;
     private Rectangle _lavaSpeedPlusBounds;
 
+    private readonly VirtualCursor _virtualCursor = new();
+    private readonly UIFocusManager _uiFocus = new();
+    private readonly FocusableButton _backFocus;
+    private readonly FocusableButton _applyFocus;
+    private bool _gamepadPrimaryWasHeld;
+
+    private bool IsPrimaryPressed() =>
+        _game.Input.LeftMousePressed || (_virtualCursor.IsActive && _game.Input.MenuConfirmPressed);
+
+    private bool IsPrimaryHeld() =>
+        _game.Input.LeftMouseHeld || (_virtualCursor.IsActive && _game.Input.MenuConfirmHeld);
+
+    private bool IsPrimaryReleased() =>
+        _game.Input.LeftMouseReleased || (_virtualCursor.IsActive && _gamepadPrimaryWasHeld && !_game.Input.MenuConfirmHeld);
+
+    private Point UiPointer => _game.Input.UiPointerPosition;
+
     private bool IsDraggingToolbarObject => _toolbarDragKind != EditorObjectKind.None;
     private bool HasSelection => _selectedPlatforms.Count > 0
         || _selectedGoal is not null
@@ -96,17 +114,26 @@ public sealed class EditorScene : IScene
         }
 
         _camera = new Camera(new Vector2(game.Viewport.Width * 0.5f, game.Viewport.Height * 0.5f));
+        _backFocus = new FocusableButton(_backButton);
+        _applyFocus = new FocusableButton(_applyButton);
     }
 
     public void Update(GameTime gameTime)
     {
+        UpdateGamepadUi(gameTime);
         LayoutBackButton();
         LayoutEditorToolbar();
+        UpdateUiFocus(gameTime);
 
-        if (_backButton.Update(_game.Input))
+        if (_backFocus.WasActivated || _game.Input.MenuCancelPressed)
         {
-            SaveLevel();
             _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
+            return;
+        }
+
+        if (_applyFocus.WasActivated && _isDirty)
+        {
+            ApplyChanges();
             return;
         }
 
@@ -119,23 +146,27 @@ public sealed class EditorScene : IScene
         HandleKeyboard();
         LayoutLavaSpeedPanel();
 
-        if (_lavaSelected && _level.Lava is not null && _game.Input.LeftMousePressed)
+        if (_lavaSelected && _level.Lava is not null && (IsPrimaryPressed() || _game.Input.MenuConfirmPressed))
         {
-            if (_lavaSpeedMinusBounds.Contains(_game.Input.MousePosition))
+            if (_lavaSpeedMinusBounds.Contains(UiPointer))
             {
                 AdjustLavaRiseSpeed(-10f);
+                _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
                 return;
             }
 
-            if (_lavaSpeedPlusBounds.Contains(_game.Input.MousePosition))
+            if (_lavaSpeedPlusBounds.Contains(UiPointer))
             {
                 AdjustLavaRiseSpeed(10f);
+                _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
                 return;
             }
         }
 
         bool mouseOverToolbar = IsMouseOverToolbar();
-        bool cameraBlockedByUi = _backButton.IsHovered || (mouseOverToolbar && !IsDraggingToolbarObject);
+        bool cameraBlockedByUi = _backButton.IsHovered
+            || _applyButton.IsHovered
+            || (mouseOverToolbar && !IsDraggingToolbarObject);
         HandleCameraInput(cameraBlockedByUi);
 
         Point mouse = GetMouseWorldPosition();
@@ -144,17 +175,19 @@ public sealed class EditorScene : IScene
         if (IsDraggingToolbarObject)
         {
             ContinueToolbarObjectDrag(mouse);
-            if (_game.Input.LeftMouseReleased)
+            if (IsPrimaryReleased())
             {
                 EndToolbarObjectDrag(mouse, IsMouseOverUi());
             }
 
+            _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
             return;
         }
 
-        if (_game.Input.LeftMousePressed && _hoveredToolbarKind != EditorObjectKind.None)
+        if (IsPrimaryPressed() && _hoveredToolbarKind != EditorObjectKind.None)
         {
             BeginToolbarObjectDrag(_hoveredToolbarKind, mouse);
+            _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
             return;
         }
 
@@ -168,23 +201,81 @@ public sealed class EditorScene : IScene
             || _isDraggingLavaLine;
         if (!canUseWorldMouse)
         {
+            _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
             return;
         }
 
-        if (_game.Input.LeftMousePressed)
+        if (IsPrimaryPressed())
         {
             BeginMouseAction(mouse);
         }
 
-        if (_game.Input.LeftMouseHeld)
+        if (IsPrimaryHeld())
         {
             ContinueMouseAction(mouse);
         }
 
-        if (_game.Input.LeftMouseReleased)
+        if (IsPrimaryReleased())
         {
             EndMouseAction();
         }
+
+        _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
+    }
+
+    private void UpdateGamepadUi(GameTime gameTime)
+    {
+        _virtualCursor.BeginFrame(_game.Viewport, _game.Input);
+        _virtualCursor.Update(gameTime, _game.Input, _game.Viewport);
+        _game.Input.SetUiPointerOverride(_virtualCursor.IsActive ? _virtualCursor.Position : null);
+        TrySnapVirtualCursorToUi();
+    }
+
+    private void TrySnapVirtualCursorToUi()
+    {
+        if (!_virtualCursor.IsActive)
+        {
+            return;
+        }
+
+        Rectangle[] snapTargets =
+        {
+            _backButton.Bounds,
+            _applyButton.Bounds,
+            _toolbarPanelBounds,
+            _lavaSpeedPanelBounds
+        };
+
+        foreach (Rectangle target in snapTargets)
+        {
+            if (target.Width > 0 && target.Height > 0 && target.Contains(_virtualCursor.Position))
+            {
+                _virtualCursor.SnapTo(target);
+                return;
+            }
+        }
+    }
+
+    private void UpdateUiFocus(GameTime gameTime)
+    {
+        _uiFocus.Clear();
+        _uiFocus.Add(_backFocus);
+        _uiFocus.Add(_applyFocus);
+        if (_lavaSelected)
+        {
+            _uiFocus.Add(new FocusableAction(_lavaSpeedMinusBounds, () =>
+            {
+                AdjustLavaRiseSpeed(-10f);
+                return true;
+            }));
+            _uiFocus.Add(new FocusableAction(_lavaSpeedPlusBounds, () =>
+            {
+                AdjustLavaRiseSpeed(10f);
+                return true;
+            }));
+        }
+
+        _uiFocus.Update(gameTime, _game.Input);
     }
 
     public void Draw(GameTime gameTime, SpriteBatch spriteBatch)
@@ -306,13 +397,21 @@ public sealed class EditorScene : IScene
         DrawEditorUi(spriteBatch, pixel);
         DrawToolbar(spriteBatch, pixel);
         DrawLavaSpeedPanel(spriteBatch, pixel);
+        DrawApplyButton(spriteBatch, pixel);
         _backButton.Draw(spriteBatch, pixel);
+        _uiFocus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
+        if (_virtualCursor.IsActive)
+        {
+            Rectangle cursor = new(UiPointer.X - 6, UiPointer.Y - 6, 12, 12);
+            spriteBatch.Draw(pixel, cursor, new Color(255, 220, 80));
+            DrawHelper.DrawBorder(spriteBatch, pixel, cursor, Color.White, 1);
+        }
+
         spriteBatch.End();
     }
 
     public void OnExit()
     {
-        SaveLevel();
     }
 
     private void HandleKeyboard()
@@ -339,7 +438,10 @@ public sealed class EditorScene : IScene
 
         if (_game.Input.IsNewKeyPress(Keys.S))
         {
-            SaveLevel(force: true);
+            if (_isDirty)
+            {
+                ApplyChanges();
+            }
         }
 
         if (_game.Input.IsNewKeyPress(Keys.Q))
@@ -416,7 +518,29 @@ public sealed class EditorScene : IScene
         if (!mouseOverUi && _game.Input.MouseWheelDelta != 0)
         {
             float zoomFactor = MathF.Pow(1.0015f, _game.Input.MouseWheelDelta);
-            _camera.ZoomAt(zoomFactor, _game.Input.MousePosition, _game.Viewport);
+            _camera.ZoomAt(zoomFactor, UiPointer, _game.Viewport);
+        }
+
+        if (!mouseOverUi && _game.Input.IsAnyGamepadConnected())
+        {
+            Vector2 stick = _game.Input.GetMenuLeftStick();
+            if (stick.LengthSquared() > 0.04f)
+            {
+                Vector2 pan = stick * 14f;
+                _camera.PanByScreenDelta(new Point((int)MathF.Round(pan.X), (int)MathF.Round(-pan.Y)));
+            }
+
+            if (_game.Input.EditorLeftTrigger > 0.1f)
+            {
+                float zoomFactor = MathF.Pow(1.02f, _game.Input.EditorLeftTrigger * 4f);
+                _camera.ZoomAt(zoomFactor, UiPointer, _game.Viewport);
+            }
+
+            if (_game.Input.EditorRightTrigger > 0.1f)
+            {
+                float zoomFactor = MathF.Pow(0.98f, _game.Input.EditorRightTrigger * 4f);
+                _camera.ZoomAt(zoomFactor, UiPointer, _game.Viewport);
+            }
         }
     }
 
@@ -1367,7 +1491,7 @@ public sealed class EditorScene : IScene
 
     private Point GetMouseWorldPosition()
     {
-        Vector2 worldPosition = _camera.ScreenToWorld(_game.Input.MousePosition, _game.Viewport);
+        Vector2 worldPosition = _camera.ScreenToWorld(UiPointer, _game.Viewport);
         return new Point((int)MathF.Round(worldPosition.X), (int)MathF.Round(worldPosition.Y));
     }
 
@@ -1489,14 +1613,15 @@ public sealed class EditorScene : IScene
 
     private bool IsMouseOverToolbar()
     {
-        return _toolbarPanelBounds.Contains(_game.Input.MousePosition);
+        return _toolbarPanelBounds.Contains(UiPointer);
     }
 
     private bool IsMouseOverUi()
     {
-        return _backButton.Bounds.Contains(_game.Input.MousePosition)
+        return _backButton.Bounds.Contains(UiPointer)
+            || _applyButton.Bounds.Contains(UiPointer)
             || IsMouseOverToolbar()
-            || (_lavaSelected && _lavaSpeedPanelBounds.Contains(_game.Input.MousePosition));
+            || (_lavaSelected && _lavaSpeedPanelBounds.Contains(UiPointer));
     }
 
     private void LayoutLavaSpeedPanel()
@@ -1562,7 +1687,7 @@ public sealed class EditorScene : IScene
 
     private void DrawLavaSpeedButton(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, string label)
     {
-        bool hovered = bounds.Contains(_game.Input.MousePosition);
+        bool hovered = bounds.Contains(UiPointer);
         spriteBatch.Draw(pixel, bounds, hovered ? new Color(72, 40, 22) : new Color(48, 28, 18));
         DrawHelper.DrawBorder(spriteBatch, pixel, bounds, hovered ? new Color(255, 180, 70) : new Color(210, 120, 50), 2);
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, label, bounds, 3, Color.White);
@@ -1710,8 +1835,12 @@ public sealed class EditorScene : IScene
 
     private void DrawGrid(SpriteBatch spriteBatch, Texture2D pixel, Rectangle visibleWorldBounds)
     {
-        Color gridColor = _snapToGrid ? new Color(255, 255, 255, 36) : new Color(255, 255, 255, 16);
-        int lineThickness = GetWorldLineThickness(1);
+        // Fixed 1 world-pixel lines; fade alpha when zoomed out so dense grid doesn't wash white.
+        float zoomFade = MathHelper.Clamp(_camera.Zoom, 0.15f, 1f);
+        int baseAlpha = _snapToGrid ? 20 : 10;
+        byte alpha = (byte)MathHelper.Clamp((int)(baseAlpha * zoomFade), 4, 24);
+        Color gridColor = new Color((byte)255, (byte)255, (byte)255, alpha);
+        const int lineThickness = 1;
 
         int startX = FloorToGrid(visibleWorldBounds.Left);
         int endX = visibleWorldBounds.Right + GridSize;
@@ -1911,9 +2040,9 @@ public sealed class EditorScene : IScene
             slotSize,
             slotSize);
 
-        _goalSlotHovered = _goalSlotBounds.Contains(_game.Input.MousePosition);
-        _checkpointSlotHovered = _checkpointSlotBounds.Contains(_game.Input.MousePosition);
-        _launchPadSlotHovered = _launchPadSlotBounds.Contains(_game.Input.MousePosition);
+        _goalSlotHovered = _goalSlotBounds.Contains(UiPointer);
+        _checkpointSlotHovered = _checkpointSlotBounds.Contains(UiPointer);
+        _launchPadSlotHovered = _launchPadSlotBounds.Contains(UiPointer);
 
         // Update hovered toolbar kind
         if (_goalSlotHovered)
@@ -1939,10 +2068,42 @@ public sealed class EditorScene : IScene
         Viewport viewport = _game.Viewport;
         int minDimension = Math.Min(viewport.Width, viewport.Height);
         int margin = Math.Max(8, (int)(minDimension * 0.022f));
-        int width = Math.Min(180, Math.Max(1, viewport.Width - (margin * 2)));
         int height = Math.Clamp((int)(viewport.Height * 0.058f), 36, 44);
+        int gap = 10;
+        int backWidth = Math.Min(180, Math.Max(1, viewport.Width - (margin * 2)));
+        int applyWidth = Math.Min(120, Math.Max(90, backWidth - 40));
 
-        _backButton.Bounds = new Rectangle(viewport.Width - width - margin, margin, width, height);
+        _backButton.Bounds = new Rectangle(viewport.Width - backWidth - margin, margin, backWidth, height);
+        _applyButton.Bounds = new Rectangle(_backButton.Bounds.X - gap - applyWidth, margin, applyWidth, height);
+    }
+
+    private void DrawApplyButton(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        if (_isDirty)
+        {
+            _applyButton.FillColor = new Color(52, 61, 80);
+            _applyButton.HoverFillColor = new Color(74, 86, 110);
+            _applyButton.BorderColor = new Color(255, 220, 80);
+            _applyButton.HoverBorderColor = new Color(255, 235, 140);
+            _applyButton.TextColor = Color.White;
+            _applyButton.HoverTextColor = Color.White;
+        }
+        else
+        {
+            _applyButton.FillColor = new Color(34, 38, 48);
+            _applyButton.HoverFillColor = new Color(34, 38, 48);
+            _applyButton.BorderColor = new Color(70, 78, 92);
+            _applyButton.HoverBorderColor = new Color(70, 78, 92);
+            _applyButton.TextColor = new Color(110, 118, 132);
+            _applyButton.HoverTextColor = new Color(110, 118, 132);
+        }
+
+        _applyButton.Draw(spriteBatch, pixel);
+    }
+
+    private void ApplyChanges()
+    {
+        SaveLevel(force: true);
     }
 
     private static int FitTextScale(string text, int preferredScale, int maxWidth)

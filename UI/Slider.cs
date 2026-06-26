@@ -24,15 +24,16 @@ public sealed class Slider
         MaxValue = maxValue;
     }
 
-    public void Update(InputManager input)
+    public void Update(InputManager input, InputNavigationService navigation)
     {
         CalculateBounds();
 
-        IsHovered = Bounds.Contains(input.MousePosition)
-            || SliderTrackBounds.Contains(input.MousePosition)
-            || SliderThumbBounds.Contains(input.MousePosition);
+        bool pointerOver = Bounds.Contains(input.UiPointerPosition)
+            || SliderTrackBounds.Contains(input.UiPointerPosition)
+            || SliderThumbBounds.Contains(input.UiPointerPosition);
+        IsHovered = navigation.AllowPointerHoverVisual && pointerOver;
 
-        if (input.LeftMousePressed && IsHovered)
+        if (input.UiPointerPressed && IsHovered)
         {
             IsActive = true;
             UpdateValueFromMouse(input.MousePosition.X);
@@ -43,9 +44,9 @@ public sealed class Slider
             IsActive = false;
         }
 
-        if (IsActive && input.LeftMouseHeld)
+        if (IsActive && input.UiPointerHeld)
         {
-            UpdateValueFromMouse(input.MousePosition.X);
+            UpdateValueFromMouse(input.UiPointerPosition.X);
         }
     }
 

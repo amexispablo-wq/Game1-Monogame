@@ -254,10 +254,17 @@
       "color": "Red"
     },
     {
-      "x": 416,
-      "y": -128,
-      "width": 128,
-      "height": 128,
+      "x": 448,
+      "y": -32,
+      "width": 96,
+      "height": 224,
+      "color": "Red"
+    },
+    {
+      "x": 544,
+      "y": 64,
+      "width": 96,
+      "height": 32,
       "color": "Red"
     }
   ],

@@ -22,9 +22,16 @@ public sealed class OptionsScene : IScene
     // Buttons
     private Button _applyButton = new("Apply");
     private Button _backButton = new("Back");
+    private readonly UIFocusManager _focus = new();
+    private readonly FocusableCycleSelector<DisplayMode> _displayModeFocus;
+    private readonly FocusableCycleSelector<int> _fpsLimitFocus;
+    private readonly FocusableSlider _volumeFocus;
+    private readonly FocusableResolutionDropdown _resolutionFocus;
+    private readonly FocusableButton _applyFocus;
+    private readonly FocusableButton _backFocus;
 
     // Control bindings
-    private List<(string action, string keyName)> _controlBindings = new();
+    private List<(string action, string keyName, string gamepadName)> _controlBindings = new();
     private int? _rebindingIndex;
     private double _rebindingWaitTime;
 
@@ -98,6 +105,13 @@ public sealed class OptionsScene : IScene
         _displayModeSelector.CurrentOption = initialMode;
         _fpsLimitSelector.CurrentOption = pending.FpsLimit;
 
+        _displayModeFocus = new FocusableCycleSelector<DisplayMode>(_displayModeSelector);
+        _fpsLimitFocus = new FocusableCycleSelector<int>(_fpsLimitSelector);
+        _volumeFocus = new FocusableSlider(_volumeSlider);
+        _resolutionFocus = new FocusableResolutionDropdown(_resolutionDropdown);
+        _applyFocus = new FocusableButton(_applyButton);
+        _backFocus = new FocusableButton(_backButton);
+
         InitializeControlBindings();
     }
 
@@ -111,7 +125,10 @@ public sealed class OptionsScene : IScene
             string keyName = SettingsManager.PendingSettings.Keybindings.ContainsKey(action)
                 ? SettingsManager.PendingSettings.Keybindings[action]
                 : "Unknown";
-            _controlBindings.Add((action, keyName));
+            string gamepadName = Enum.TryParse(action, out GameplayInputAction gameplayAction)
+                ? GamepadDefaults.GetDisplayName(gameplayAction)
+                : "—";
+            _controlBindings.Add((action, keyName, gamepadName));
         }
     }
 
@@ -125,7 +142,7 @@ public sealed class OptionsScene : IScene
             return;
         }
 
-        if (_game.Input.ExitPressed)
+        if (_game.Input.ExitPressed || _game.Input.MenuCancelPressed)
         {
             SettingsManager.RevertPendingChanges();
             _game.ChangeScene(new MenuScene(_game));
@@ -139,8 +156,14 @@ public sealed class OptionsScene : IScene
             return;
         }
 
-        _displayModeSelector.Update(_game.Input);
-        _fpsLimitSelector.Update(_game.Input);
+        _focus.Clear();
+        _focus.Add(_resolutionFocus);
+        _focus.Add(_displayModeFocus);
+        _focus.Add(_fpsLimitFocus);
+        _focus.Add(_volumeFocus);
+        _focus.Add(_applyFocus);
+        _focus.Add(_backFocus);
+        _focus.Update(gameTime, _game.Input);
 
         _resolutionDropdown.Update(_game.Input);
         if (_resolutionDropdown.IsExpanded)
@@ -149,16 +172,14 @@ public sealed class OptionsScene : IScene
             return;
         }
 
-        _volumeSlider.Update(_game.Input);
-
-        if (_backButton.Update(_game.Input))
+        if (_backFocus.WasActivated)
         {
             SettingsManager.RevertPendingChanges();
             _game.ChangeScene(new MenuScene(_game));
             return;
         }
 
-        if (_applyButton.Update(_game.Input))
+        if (_applyFocus.WasActivated)
         {
             SyncPendingSettings();
             ApplySettings();
@@ -201,6 +222,7 @@ public sealed class OptionsScene : IScene
         DrawButtonTray(spriteBatch, pixel, layout);
         _backButton.Draw(spriteBatch, pixel);
         _applyButton.Draw(spriteBatch, pixel);
+        _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
 
         if (_resolutionDropdown.IsExpanded)
         {
@@ -288,12 +310,18 @@ public sealed class OptionsScene : IScene
             DrawHelper.DrawBorder(spriteBatch, pixel, rowBounds, rowBorder, isHovered || isRebinding ? 2 : 1);
 
             Rectangle keyBounds = new(
+                rowBounds.Right - (layout.KeyBoxWidth * 2) - 14,
+                rowBounds.Y + 5,
+                layout.KeyBoxWidth,
+                rowBounds.Height - 10);
+            Rectangle padBounds = new(
                 rowBounds.Right - layout.KeyBoxWidth - 8,
                 rowBounds.Y + 5,
                 layout.KeyBoxWidth,
                 rowBounds.Height - 10);
-            spriteBatch.Draw(pixel, keyBounds, isRebinding ? new Color(121, 76, 78) : new Color(25, 32, 47));
-            DrawHelper.DrawBorder(spriteBatch, pixel, keyBounds, isRebinding ? Accent : new Color(106, 122, 154), 2);
+
+            DrawBindingBox(spriteBatch, pixel, keyBounds, isRebinding, "KB", isRebinding ? "PRESS" : FormatKeyName(_controlBindings[i].keyName));
+            DrawBindingBox(spriteBatch, pixel, padBounds, false, "PAD", _controlBindings[i].gamepadName);
 
             Rectangle labelBounds = new(
                 rowBounds.X + 14,
@@ -302,11 +330,25 @@ public sealed class OptionsScene : IScene
                 rowBounds.Height);
 
             string displayAction = FormatActionName(_controlBindings[i].action);
-            string keyText = isRebinding ? "PRESS" : FormatKeyName(_controlBindings[i].keyName);
-
             DrawFittedLeft(spriteBatch, pixel, displayAction, labelBounds, 2, LabelColor);
-            DrawFittedCentered(spriteBatch, pixel, keyText, keyBounds, 2, isRebinding ? Accent : Color.White);
         }
+    }
+
+    private static void DrawBindingBox(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        Rectangle bounds,
+        bool highlighted,
+        string tag,
+        string value)
+    {
+        spriteBatch.Draw(pixel, bounds, highlighted ? new Color(121, 76, 78) : new Color(25, 32, 47));
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, highlighted ? Accent : new Color(106, 122, 154), 2);
+
+        Rectangle tagBounds = new(bounds.X + 4, bounds.Y + 3, bounds.Width - 8, Math.Max(10, bounds.Height / 3));
+        DrawFittedCentered(spriteBatch, pixel, tag, tagBounds, 1, MutedLabelColor);
+        Rectangle valueBounds = new(bounds.X + 4, tagBounds.Bottom, bounds.Width - 8, bounds.Bottom - tagBounds.Bottom - 2);
+        DrawFittedCentered(spriteBatch, pixel, value, valueBounds, 1, highlighted ? Accent : Color.White);
     }
 
     private void DrawButtonTray(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
@@ -379,8 +421,8 @@ public sealed class OptionsScene : IScene
             Keys newKey = pressedKeys[0];
             if (_rebindingIndex.HasValue && _rebindingIndex.Value < _controlBindings.Count)
             {
-                var (action, _) = _controlBindings[_rebindingIndex.Value];
-                _controlBindings[_rebindingIndex.Value] = (action, newKey.ToString());
+                var (action, _, gamepadName) = _controlBindings[_rebindingIndex.Value];
+                _controlBindings[_rebindingIndex.Value] = (action, newKey.ToString(), gamepadName);
 
                 SettingsManager.PendingSettings.Keybindings[action] = newKey.ToString();
             }
@@ -478,7 +520,7 @@ public sealed class OptionsScene : IScene
         int controlRowsPerColumn = (int)Math.Ceiling(_controlBindings.Count / (double)controlColumns);
         int controlColumnGap = controlColumns == 2 ? 30 : 0;
         int controlColumnWidth = (controlInnerWidth - controlColumnGap) / controlColumns;
-        int keyBoxWidth = Math.Clamp(controlColumnWidth / 4, 104, 132);
+        int keyBoxWidth = Math.Clamp(controlColumnWidth / 5, 88, 110);
         Rectangle controlRowsArea = new(controlSectionBounds.X + sectionPadding, controlRowsY, controlInnerWidth, controlRowsHeight);
 
         return new LayoutMetrics(
@@ -639,7 +681,7 @@ public sealed class OptionsScene : IScene
     private void ApplySettings()
     {
         SettingsManager.SaveSettings(SettingsManager.PendingSettings);
-        _game.Input.ReloadProfilesFromSettings();
+        _game.Input.ReloadKeyboardBindings();
 
         var settings = SettingsManager.CurrentSettings;
         _game.ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);

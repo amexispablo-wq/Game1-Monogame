@@ -26,8 +26,12 @@ public sealed class Popup
     private readonly TextInputComponent? _textInput;
     private readonly Button _confirmButton;
     private readonly Button _cancelButton;
+    private readonly UIFocusManager _focus = new();
+    private readonly FocusableButton _confirmFocus;
+    private readonly FocusableButton _cancelFocus;
     private PopupResult _result;
     private double _fadeInTime;
+    private InputManager? _lastInput;
     private const double FadeInDuration = 0.15;
 
     public string Title => _title;
@@ -45,6 +49,8 @@ public sealed class Popup
         _textInput = null;
         _confirmButton = new Button("Confirm");
         _cancelButton = new Button("Cancel");
+        _confirmFocus = new FocusableButton(_confirmButton);
+        _cancelFocus = new FocusableButton(_cancelButton);
         _result = PopupResult.Pending;
         _fadeInTime = 0;
     }
@@ -57,6 +63,8 @@ public sealed class Popup
         _textInput = new TextInputComponent(initialText);
         _confirmButton = new Button("Create");
         _cancelButton = new Button("Cancel");
+        _confirmFocus = new FocusableButton(_confirmButton);
+        _cancelFocus = new FocusableButton(_cancelButton);
         _result = PopupResult.Pending;
         _fadeInTime = 0;
     }
@@ -64,6 +72,7 @@ public sealed class Popup
     public void Update(GameTime gameTime, InputManager input, int viewportWidth, int viewportHeight)
     {
         _fadeInTime += gameTime.ElapsedGameTime.TotalSeconds;
+        _lastInput = input;
 
         LayoutPopup(viewportWidth, viewportHeight);
 
@@ -73,16 +82,20 @@ public sealed class Popup
             _textInput.Update(gameTime, input);
         }
 
-        if (_confirmButton.Update(input) || input.EnterPressed)
+        _focus.Clear();
+        _focus.Add(_confirmFocus);
+        _focus.Add(_cancelFocus);
+        _focus.Update(gameTime, input);
+
+        if (_confirmFocus.WasActivated || input.EnterPressed)
         {
             _result = PopupResult.Confirmed;
         }
-        else if (_cancelButton.Update(input))
+        else if (_cancelFocus.WasActivated)
         {
             _result = PopupResult.Cancelled;
         }
 
-        // ESC to cancel
         if (input.ExitPressed)
         {
             _result = PopupResult.Cancelled;
@@ -128,6 +141,7 @@ public sealed class Popup
         LayoutButtons(popupX, popupY, popupWidth, popupHeight, _type);
         _confirmButton.Draw(spriteBatch, pixel);
         _cancelButton.Draw(spriteBatch, pixel);
+        _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _lastInput!);
     }
 
     private void LayoutPopup(int viewportWidth, int viewportHeight)

@@ -59,7 +59,7 @@ public sealed class ResolutionDropdown
     {
         Rectangle headerBounds = Bounds;
 
-        if (input.LeftMousePressed && headerBounds.Contains(input.MousePosition))
+        if (input.LeftMousePressed && headerBounds.Contains(input.UiPointerPosition))
         {
             IsExpanded = !IsExpanded;
             HighlightedIndex = null;
@@ -76,7 +76,7 @@ public sealed class ResolutionDropdown
         for (int i = 0; i < Resolutions.Count; i++)
         {
             Rectangle itemBounds = GetItemBounds(i);
-            if (!itemBounds.Contains(input.MousePosition))
+            if (!itemBounds.Contains(input.UiPointerPosition))
             {
                 continue;
             }
@@ -93,7 +93,7 @@ public sealed class ResolutionDropdown
             return;
         }
 
-        if (input.LeftMousePressed && !GetExpandedInteractionBounds().Contains(input.MousePosition))
+        if (input.LeftMousePressed && !GetExpandedInteractionBounds().Contains(input.UiPointerPosition))
         {
             IsExpanded = false;
             HighlightedIndex = null;

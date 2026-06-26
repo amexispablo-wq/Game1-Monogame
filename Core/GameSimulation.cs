@@ -58,11 +58,17 @@ public sealed class GameSimulation
     public float LavaSurfaceY { get; private set; }
     public bool IsPlayerDead { get; private set; }
     public bool HasCheckpoint => PlayerManager.HasCheckpoint;
+    public bool IsPaused { get; private set; }
     public int SnapshotCount { get; private set; }
     public GameSnapshot LastSnapshot { get; private set; }
 
     public int Advance(float frameSeconds, ILocalPlayerInputSource localInputSource)
     {
+        if (IsPaused)
+        {
+            return 0;
+        }
+
         // Latch edge-triggered inputs every render frame so presses survive until a
         // fixed tick consumes them. Without this, at high/unlocked FPS most render
         // frames run no tick and one-frame edges (jump, color, respawn) get dropped.
@@ -96,6 +102,61 @@ public sealed class GameSimulation
         }
 
         return steps;
+    }
+
+    public void SetPaused(bool paused)
+    {
+        IsPaused = paused;
+    }
+
+    /// <summary>Pause-menu respawn: checkpoint if available, else spawn. Timer and lava unchanged.</summary>
+    public void PauseMenuRespawn()
+    {
+        if (IsPlayerDead || IsLevelComplete)
+        {
+            return;
+        }
+
+        foreach (Player player in Players)
+        {
+            if (!player.IsLocal && !player.IsHostControlled)
+            {
+                continue;
+            }
+
+            PlayerManager.RespawnPlayer(player);
+            PhysicsWorld.ResetRopesForPlayer(player);
+        }
+    }
+
+    public void RestartLevel()
+    {
+        foreach (CheckpointFlag checkpoint in Level.CheckpointFlags)
+        {
+            checkpoint.IsActive = false;
+        }
+
+        PlayerManager.ClearCheckpoint();
+        PlayerManager.ReviveAllAtStart();
+
+        foreach (Player player in Players)
+        {
+            PhysicsWorld.ResetRopesForPlayer(player);
+        }
+
+        PhysicsWorld.ClearTransientState();
+
+        ElapsedTime = 0f;
+        TimerRunning = true;
+        IsLevelComplete = false;
+        IsPlayerDead = false;
+        FinalTime = 0f;
+        NewRecord = false;
+        LavaSurfaceY = _lavaStartSurfaceY;
+        IsPaused = false;
+        _session.State = GameSessionState.Playing;
+        _fixedTimeAccumulator = 0f;
+        _latchedLocalInput.Clear();
     }
 
     public void ApplySnapshot(GameSnapshot snapshot)
@@ -166,7 +227,7 @@ public sealed class GameSimulation
                 continue;
             }
 
-            PlayerInputState current = localInputSource.GetPlayerInput(player.PlayerId);
+            PlayerInputState current = localInputSource.GetPlayerInput(player.NetworkId);
             if (_latchedLocalInput.TryGetValue(player.NetworkId, out PlayerInputState latched))
             {
                 // Level-triggered axes use the freshest value; edge-triggered flags

@@ -22,6 +22,21 @@ public sealed class LevelInfoScene : IScene
     private readonly Checkbox _regularRopeCheckbox = new() { Label = "Regular Rope" };
     private readonly Checkbox _lavaRiseCheckbox = new() { Label = "Lava Rise" };
 
+    private readonly UIFocusManager _focus = new();
+    private readonly UIFocusManager _promptFocus = new();
+    private readonly FocusableTextInput _nameFocus;
+    private readonly FocusableDropdown<string> _musicFocus;
+    private readonly FocusableCheckbox _allPlayersFocus;
+    private readonly FocusableCheckbox _player1Focus;
+    private readonly FocusableCheckbox _player2Focus;
+    private readonly FocusableCheckbox _player3Focus;
+    private readonly FocusableCheckbox _player4Focus;
+    private readonly FocusableCheckbox _coloredRopeFocus;
+    private readonly FocusableCheckbox _regularRopeFocus;
+    private readonly FocusableCheckbox _lavaRiseFocus;
+    private readonly FocusableButton _backFocus;
+    private readonly FocusableButton _applyFocus;
+
     private Level _level;
     private bool _hasUnsavedChanges;
     private bool _showUnsavedChangesPrompt;
@@ -51,6 +66,19 @@ public sealed class LevelInfoScene : IScene
         _regularRopeCheckbox.IsChecked = _level.RegularRope;
         _lavaRiseCheckbox.IsChecked = _level.LavaRise;
 
+        _nameFocus = new FocusableTextInput(_nameInput);
+        _musicFocus = new FocusableDropdown<string>(_musicDropdown);
+        _allPlayersFocus = new FocusableCheckbox(_allPlayersCheckbox);
+        _player1Focus = new FocusableCheckbox(_player1Checkbox);
+        _player2Focus = new FocusableCheckbox(_player2Checkbox);
+        _player3Focus = new FocusableCheckbox(_player3Checkbox);
+        _player4Focus = new FocusableCheckbox(_player4Checkbox);
+        _coloredRopeFocus = new FocusableCheckbox(_coloredRopeCheckbox);
+        _regularRopeFocus = new FocusableCheckbox(_regularRopeCheckbox);
+        _lavaRiseFocus = new FocusableCheckbox(_lavaRiseCheckbox);
+        _backFocus = new FocusableButton(_backButton);
+        _applyFocus = new FocusableButton(_applyButton);
+
         _savedState = CaptureCurrentState();
         _hasUnsavedChanges = false;
     }
@@ -61,11 +89,26 @@ public sealed class LevelInfoScene : IScene
 
         if (_showUnsavedChangesPrompt)
         {
-            UpdateUnsavedChangesPrompt(_game.Input);
+            UpdateUnsavedChangesPrompt(gameTime);
             return;
         }
 
-        if (_backButton.Update(_game.Input) || _game.Input.ExitPressed)
+        _focus.Clear();
+        _focus.Add(_nameFocus);
+        _focus.Add(_musicFocus);
+        _focus.Add(_allPlayersFocus);
+        _focus.Add(_player1Focus);
+        _focus.Add(_player2Focus);
+        _focus.Add(_player3Focus);
+        _focus.Add(_player4Focus);
+        _focus.Add(_coloredRopeFocus);
+        _focus.Add(_regularRopeFocus);
+        _focus.Add(_lavaRiseFocus);
+        _focus.Add(_backFocus);
+        _focus.Add(_applyFocus);
+        _focus.Update(gameTime, _game.Input);
+
+        if (_backFocus.WasActivated || _game.Input.ExitPressed)
         {
             if (HasUnsavedChanges())
             {
@@ -77,32 +120,22 @@ public sealed class LevelInfoScene : IScene
             return;
         }
 
-        if (_applyButton.Update(_game.Input))
+        if (_applyFocus.WasActivated)
         {
             ApplyChanges();
         }
 
-        if (_game.Input.LeftMousePressed)
+        if (_nameInput.IsFocused)
         {
-            _nameInput.IsFocused = _nameInput.Bounds.Contains(_game.Input.MousePosition);
+            _nameInput.Update(gameTime, _game.Input);
         }
-
-        _nameInput.Update(gameTime, _game.Input);
-        _musicDropdown.Update(_game.Input);
-        _allPlayersCheckbox.Update(_game.Input);
-        _player1Checkbox.Update(_game.Input);
-        _player2Checkbox.Update(_game.Input);
-        _player3Checkbox.Update(_game.Input);
-        _player4Checkbox.Update(_game.Input);
-        _coloredRopeCheckbox.Update(_game.Input);
-        _regularRopeCheckbox.Update(_game.Input);
-        _lavaRiseCheckbox.Update(_game.Input);
 
         _hasUnsavedChanges = HasUnsavedChanges();
     }
 
     public void Draw(GameTime gameTime, SpriteBatch spriteBatch)
     {
+        LayoutControls();
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
 
         Viewport viewport = _game.Viewport;
@@ -175,10 +208,11 @@ public sealed class LevelInfoScene : IScene
 
         _backButton.Draw(spriteBatch, pixel);
         _applyButton.Draw(spriteBatch, pixel);
+        _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
 
         if (_showUnsavedChangesPrompt)
         {
-            DrawUnsavedChangesPrompt(spriteBatch, pixel, viewport);
+            DrawUnsavedChangesPrompt(spriteBatch, pixel, viewport, gameTime);
         }
 
         spriteBatch.End();
@@ -190,7 +224,46 @@ public sealed class LevelInfoScene : IScene
 
     private void LayoutControls()
     {
-        // Boundaries are calculated during Draw because layout depends on resolution.
+        Viewport viewport = _game.Viewport;
+        Rectangle contentArea = new(40, 90, viewport.Width - 80, viewport.Height - 140);
+        int y = contentArea.Y + 24;
+        const int sectionSpacing = 16;
+        const int fieldHeight = 30;
+
+        y += 32;
+        _nameInput.Bounds = new Rectangle(contentArea.X + 18, y, contentArea.Width - 36, fieldHeight);
+        y += fieldHeight + sectionSpacing;
+
+        y += 32;
+        _musicDropdown.Bounds = new Rectangle(contentArea.X + 18, y, 360, 42);
+        y += 42 + sectionSpacing;
+
+        y += 32;
+        _allPlayersCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
+        y += 34;
+
+        int rowX = contentArea.X + 18;
+        int rowWidth = (contentArea.Width - 54) / 2;
+        _player1Checkbox.Bounds = new Rectangle(rowX, y, rowWidth, 30);
+        _player2Checkbox.Bounds = new Rectangle(rowX + rowWidth + 18, y, rowWidth, 30);
+        _player3Checkbox.Bounds = new Rectangle(rowX, y + 36, rowWidth, 30);
+        _player4Checkbox.Bounds = new Rectangle(rowX + rowWidth + 18, y + 36, rowWidth, 30);
+        y += 36 * 2 + sectionSpacing;
+
+        y += 32;
+        _coloredRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
+        _regularRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y + 36, 260, 30);
+        y += 36 * 2 + sectionSpacing;
+
+        y += 32;
+        _lavaRiseCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
+
+        int buttonWidth = 140;
+        int buttonGap = 16;
+        int buttonX = contentArea.X + 18;
+        int buttonY = viewport.Height - 70;
+        _backButton.Bounds = new Rectangle(buttonX, buttonY, buttonWidth, 44);
+        _applyButton.Bounds = new Rectangle(buttonX + buttonWidth + buttonGap, buttonY, buttonWidth, 44);
     }
 
     private void DrawSectionLabel(SpriteBatch spriteBatch, Texture2D pixel, string text, Vector2 position)
@@ -249,40 +322,60 @@ public sealed class LevelInfoScene : IScene
         _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
     }
 
-    private void UpdateUnsavedChangesPrompt(InputManager input)
+    private void UpdateUnsavedChangesPrompt(GameTime gameTime)
     {
-        if (input.LeftMousePressed)
+        LayoutUnsavedPromptBounds();
+
+        _promptFocus.Clear();
+        _promptFocus.Add(new FocusableAction(_savePromptSaveBounds, () =>
         {
-            if (_savePromptSaveBounds.Contains(input.MousePosition))
-            {
-                ApplyChanges();
-                _showUnsavedChangesPrompt = false;
-                ReturnToLevelSelect();
-                return;
-            }
+            ApplyChanges();
+            _showUnsavedChangesPrompt = false;
+            ReturnToLevelSelect();
+            return true;
+        }));
+        _promptFocus.Add(new FocusableAction(_savePromptDiscardBounds, () =>
+        {
+            _showUnsavedChangesPrompt = false;
+            ReturnToLevelSelect();
+            return true;
+        }));
+        _promptFocus.Add(new FocusableAction(_savePromptCancelBounds, () =>
+        {
+            _showUnsavedChangesPrompt = false;
+            return true;
+        }));
+        _promptFocus.Update(gameTime, _game.Input);
 
-            if (_savePromptDiscardBounds.Contains(input.MousePosition))
-            {
-                _showUnsavedChangesPrompt = false;
-                ReturnToLevelSelect();
-                return;
-            }
-
-            if (_savePromptCancelBounds.Contains(input.MousePosition))
-            {
-                _showUnsavedChangesPrompt = false;
-                return;
-            }
-        }
-
-        if (input.ExitPressed)
+        if (_game.Input.ExitPressed)
         {
             _showUnsavedChangesPrompt = false;
         }
     }
 
-    private void DrawUnsavedChangesPrompt(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
+    private void LayoutUnsavedPromptBounds()
     {
+        Viewport viewport = _game.Viewport;
+        const int popupWidth = 460;
+        const int popupHeight = 220;
+        int popupX = (viewport.Width - popupWidth) / 2;
+        int popupY = (viewport.Height - popupHeight) / 2;
+
+        int buttonWidth = 120;
+        int buttonHeight = 40;
+        int buttonGap = 14;
+        int totalWidth = buttonWidth * 3 + buttonGap * 2;
+        int buttonsX = popupX + (popupWidth - totalWidth) / 2;
+        int buttonsY = popupY + popupHeight - 64;
+
+        _savePromptSaveBounds = new Rectangle(buttonsX, buttonsY, buttonWidth, buttonHeight);
+        _savePromptDiscardBounds = new Rectangle(buttonsX + buttonWidth + buttonGap, buttonsY, buttonWidth, buttonHeight);
+        _savePromptCancelBounds = new Rectangle(buttonsX + (buttonWidth + buttonGap) * 2, buttonsY, buttonWidth, buttonHeight);
+    }
+
+    private void DrawUnsavedChangesPrompt(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, GameTime gameTime)
+    {
+        LayoutUnsavedPromptBounds();
         spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(0, 0, 0, 180));
 
         const int popupWidth = 460;
@@ -307,13 +400,10 @@ public sealed class LevelInfoScene : IScene
         int buttonsX = popupX + (popupWidth - totalWidth) / 2;
         int buttonsY = popupY + popupHeight - 64;
 
-        _savePromptSaveBounds = new Rectangle(buttonsX, buttonsY, buttonWidth, buttonHeight);
-        _savePromptDiscardBounds = new Rectangle(buttonsX + buttonWidth + buttonGap, buttonsY, buttonWidth, buttonHeight);
-        _savePromptCancelBounds = new Rectangle(buttonsX + (buttonWidth + buttonGap) * 2, buttonsY, buttonWidth, buttonHeight);
-
         DrawPopupButton(spriteBatch, pixel, _savePromptSaveBounds, "Save");
         DrawPopupButton(spriteBatch, pixel, _savePromptDiscardBounds, "Discard");
         DrawPopupButton(spriteBatch, pixel, _savePromptCancelBounds, "Cancel");
+        _promptFocus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
     }
 
     private void DrawPopupButton(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, string label)

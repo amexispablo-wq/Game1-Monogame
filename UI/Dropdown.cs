@@ -32,7 +32,7 @@ public sealed class Dropdown<T> where T : notnull
     {
         Rectangle headerBounds = Bounds;
 
-        if (input.LeftMousePressed && headerBounds.Contains(input.MousePosition))
+        if (input.LeftMousePressed && headerBounds.Contains(input.UiPointerPosition))
         {
             IsExpanded = !IsExpanded;
             HighlightedIndex = null;
@@ -49,7 +49,7 @@ public sealed class Dropdown<T> where T : notnull
         for (int i = 0; i < Options.Count; i++)
         {
             Rectangle itemBounds = GetItemBounds(i);
-            if (!itemBounds.Contains(input.MousePosition))
+            if (!itemBounds.Contains(input.UiPointerPosition))
             {
                 continue;
             }
@@ -65,7 +65,7 @@ public sealed class Dropdown<T> where T : notnull
             return;
         }
 
-        if (input.LeftMousePressed && !GetExpandedInteractionBounds().Contains(input.MousePosition))
+        if (input.LeftMousePressed && !GetExpandedInteractionBounds().Contains(input.UiPointerPosition))
         {
             IsExpanded = false;
             HighlightedIndex = null;

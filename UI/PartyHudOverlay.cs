@@ -1,0 +1,68 @@
+using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+
+namespace ColorBlocks;
+
+public sealed class PartyHudOverlay
+{
+    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, PartyManager party)
+    {
+        if (party.Members.Count == 0)
+        {
+            return;
+        }
+
+        int scale = Math.Clamp(viewport.Height / 420, 1, 2);
+        int rowHeight = SimpleTextRenderer.MeasureString("A", scale).Y + 6;
+        int panelWidth = Math.Clamp((int)(viewport.Width * 0.22f), 180, 280);
+        int panelHeight = 12 + (party.Members.Count * rowHeight) + 8;
+        int x = Math.Max(8, viewport.Width - panelWidth - 12);
+        int y = 12;
+
+        Rectangle panel = new(x, y, panelWidth, panelHeight);
+        spriteBatch.Draw(pixel, panel, new Color(24, 28, 38, 210));
+        DrawHelper.DrawBorder(spriteBatch, pixel, panel, new Color(90, 104, 130), 1);
+
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "PARTY", new Vector2(panel.X + 10, panel.Y + 6), scale, new Color(255, 220, 80));
+
+        int rowY = panel.Y + 8 + SimpleTextRenderer.MeasureString("PARTY", scale).Y;
+        IReadOnlyList<PartyMember> members = party.Members;
+        for (int i = 0; i < members.Count; i++)
+        {
+            PartyMember member = members[i];
+            string icon = GetMemberIcon(member);
+            string inputIcon = GetInputIcon(member);
+            string leader = member.IsLeader ? " *" : string.Empty;
+            string line = $"{icon} {member.DisplayName}{leader}";
+            if (!string.IsNullOrEmpty(inputIcon))
+            {
+                line += $"  {inputIcon}";
+            }
+
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, line, new Vector2(panel.X + 10, rowY), scale, Color.White);
+            rowY += rowHeight;
+        }
+    }
+
+    private static string GetMemberIcon(PartyMember member)
+    {
+        return member.IsLocallyOwned ? "L" : "S";
+    }
+
+    private static string GetInputIcon(PartyMember member)
+    {
+        if (!member.IsLocallyOwned)
+        {
+            return string.Empty;
+        }
+
+        return member.InputSource switch
+        {
+            PartyInputSource.Keyboard => "KB",
+            PartyInputSource.Gamepad => $"GP{member.ControllerId + 1}",
+            _ => string.Empty
+        };
+    }
+}

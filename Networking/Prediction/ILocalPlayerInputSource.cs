@@ -2,5 +2,5 @@ namespace ColorBlocks;
 
 public interface ILocalPlayerInputSource
 {
-    PlayerInputState GetPlayerInput(PlayerId playerId);
+    PlayerInputState GetPlayerInput(int networkId);
 }
