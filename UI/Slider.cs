@@ -36,7 +36,7 @@ public sealed class Slider
         if (input.UiPointerPressed && IsHovered)
         {
             IsActive = true;
-            UpdateValueFromMouse(input.MousePosition.X);
+            UpdateValueFromMouse(input.UiPointerPosition.X);
         }
 
         if (input.LeftMouseReleased)

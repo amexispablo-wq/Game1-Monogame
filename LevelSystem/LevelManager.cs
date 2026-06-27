@@ -148,13 +148,14 @@ public static class LevelManager
 
     public static void RenameLevel(string levelId, string newDisplayName)
     {
-        var metadata = GetLevel(levelId);
-        if (metadata != null)
+        if (string.IsNullOrWhiteSpace(newDisplayName))
         {
-            // Since we store level metadata in the LevelMetadata system,
-            // renaming is handled via the display name mapping
-            // For now, this is a placeholder for future enhancement
+            return;
         }
+
+        Level level = LoadLevel(levelId);
+        level.Name = newDisplayName.Trim();
+        SaveLevel(level, levelId);
     }
 
     private static string GetLevelsDirectory()

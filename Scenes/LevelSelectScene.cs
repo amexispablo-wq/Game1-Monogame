@@ -101,9 +101,8 @@ public sealed class LevelSelectScene : IScene
 
         _secondaryButton = _mode switch
         {
-            LevelSelectMode.PlayMode => new Button("Delete Highscore"),
             LevelSelectMode.EditMode => new Button("Level Info"),
-            _ => new Button("Cancel")
+            _ => null
         };
 
         _tertiaryButton = _mode == LevelSelectMode.EditMode ? new Button("Delete") : null;
@@ -255,7 +254,7 @@ public sealed class LevelSelectScene : IScene
 
         int backIndex = _focus.Add(_backFocus, "Back");
         int? primaryIndex = _primaryFocus is not null ? _focus.Add(_primaryFocus, _mode == LevelSelectMode.PlayMode ? "Play" : "EditLevel") : null;
-        int? secondaryIndex = _secondaryFocus is not null ? _focus.Add(_secondaryFocus, _mode == LevelSelectMode.PlayMode ? "DeleteHighscore" : "LevelInfo") : null;
+        int? secondaryIndex = _secondaryFocus is not null ? _focus.Add(_secondaryFocus, "LevelInfo") : null;
         int? tertiaryIndex = _tertiaryFocus is not null ? _focus.Add(_tertiaryFocus, "DeleteLevel") : null;
         int? quaternaryIndex = _quaternaryFocus is not null ? _focus.Add(_quaternaryFocus, "CreateNew") : null;
 
@@ -288,7 +287,7 @@ public sealed class LevelSelectScene : IScene
             else if (_mode == LevelSelectMode.PlayMode)
             {
                 // LEVEL GRID -> ROPE MODE -> (right) LAVA RISE, then ROPE/LAVA -> down -> PLAY
-                // PLAY: left -> BACK, right -> DELETE HIGHSCORE
+                // PLAY: left -> BACK
                 int downTarget = ropeIndex ?? primaryIndex ?? backIndex;
                 NavigationGraphBuilder.LinkGridBottomRowTo(nav, gridStart, _gridFocusables.Count, _gridLayout.Columns, downTarget);
 
@@ -308,11 +307,6 @@ public sealed class LevelSelectScene : IScene
 
                 if (primaryIndex is int playBtn)
                 {
-                    if (secondaryIndex is int secondary)
-                    {
-                        nav.LinkHorizontal(playBtn, secondary);
-                    }
-
                     nav.LinkHorizontal(backIndex, playBtn);
                 }
             }
@@ -423,8 +417,7 @@ public sealed class LevelSelectScene : IScene
     {
         if (BestTimeStorage.TryGetBestTime(levelId, out float bestTime))
         {
-            TimeSpan ts = TimeSpan.FromSeconds(bestTime);
-            return $"Best: {ts.Minutes:00}:{ts.Seconds:00}:{(int)(ts.Milliseconds / 10):00}";
+            return $"Best: {BestTimeStorage.FormatTime(bestTime)}";
         }
 
         return "Best: --";
@@ -463,16 +456,14 @@ public sealed class LevelSelectScene : IScene
 
         if (_mode == LevelSelectMode.PlayMode)
         {
-            // Play | Delete Highscore (centered)
             var layout = ButtonRowLayout.Create(
-                new[] { "Play", "Delete Highscore" },
+                new[] { "Play" },
                 viewport.Width, viewport.Height,
                 buttonHeight, horizontalPadding, 12, buttonGap, bottomMargin);
 
-            if (layout.ButtonBounds.Length >= 2)
+            if (layout.ButtonBounds.Length >= 1)
             {
                 _primaryButton!.Bounds = layout.ButtonBounds[0];
-                _secondaryButton!.Bounds = layout.ButtonBounds[1];
             }
 
             bool leaderCanPlay = CanStartPlay();
@@ -511,23 +502,23 @@ public sealed class LevelSelectScene : IScene
 
     private bool IsMouseOverButtons()
     {
-        if (_backButton.Bounds.Contains(_game.Input.MousePosition))
+        if (_backButton.Bounds.Contains(_game.Input.UiPointerPosition))
             return true;
-        if (_primaryButton?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+        if (_primaryButton?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
             return true;
-        if (_secondaryButton?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+        if (_secondaryButton?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
             return true;
-        if (_tertiaryButton?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+        if (_tertiaryButton?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
             return true;
-        if (_quaternaryButton?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+        if (_quaternaryButton?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
             return true;
-        if (_ropeModePanelBounds.Contains(_game.Input.MousePosition))
+        if (_ropeModePanelBounds.Contains(_game.Input.UiPointerPosition))
             return true;
-        if (_ropeModeSelector?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+        if (_ropeModeSelector?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
             return true;
-        if (_lavaRiseCheckbox?.Bounds.Contains(_game.Input.MousePosition) ?? false)
+        if (_lavaRiseCheckbox?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
             return true;
-        if (_detailsPanelBounds.Contains(_game.Input.MousePosition))
+        if (_detailsPanelBounds.Contains(_game.Input.UiPointerPosition))
             return true;
 
         return false;
@@ -570,7 +561,18 @@ public sealed class LevelSelectScene : IScene
             return true;
         }
 
-        return !_game.SteamLobby.IsInLobby || _game.Party.IsLeader;
+        if (_game.SteamLobby.IsInLobby && !_game.Party.IsLeader)
+        {
+            return false;
+        }
+
+        if (_selectedLevel is null)
+        {
+            return false;
+        }
+
+        int partyCount = _game.Party.Members.Count;
+        return LevelRules.SupportsPlayerCount(_selectedLevel, partyCount);
     }
 
     private void OnLevelStartReceived(PartyStartMessage message)
@@ -589,16 +591,7 @@ public sealed class LevelSelectScene : IScene
             return;
 
         LevelMetadata level = _levels[_selectedIndex.Value];
-
-        if (_mode == LevelSelectMode.PlayMode)
-        {
-            // Show delete highscore confirmation
-            _popup = new Popup("Delete Highscore", $"Delete best time for '{level.Name}'?");
-        }
-        else
-        {
-            _game.ChangeScene(new LevelInfoScene(_game, level.Id));
-        }
+        _game.ChangeScene(new LevelInfoScene(_game, level.Id));
     }
 
     private void HandleDeleteLevel()
@@ -630,6 +623,36 @@ public sealed class LevelSelectScene : IScene
         _selectedLevelId = metadata.Id;
         _selectedLevel = LevelManager.LoadLevel(metadata.Id);
         _selectedLevelPreview = LevelPreviewManager.GetPreview(_game.GraphicsDevice, _game.Pixel, _selectedLevel, metadata.Id);
+        ApplyLevelPlayDefaults(_selectedLevel);
+    }
+
+    private void ApplyLevelPlayDefaults(Level level)
+    {
+        if (_mode != LevelSelectMode.PlayMode)
+        {
+            return;
+        }
+
+        if (_lavaRiseCheckbox != null)
+        {
+            bool supportsLava = LevelRules.SupportsLavaRise(level);
+            _lavaRiseCheckbox.IsEnabled = supportsLava;
+            _lavaRiseCheckbox.IsChecked = supportsLava;
+            s_lavaRiseEnabled = supportsLava;
+        }
+
+        if (_ropeModeSelector != null)
+        {
+            IReadOnlyList<RopeGameplayMode> allowed = LevelRules.GetAllowedRopeModes(level);
+            _ropeModeSelector.Options.Clear();
+            foreach (RopeGameplayMode mode in allowed)
+            {
+                _ropeModeSelector.Options.Add(mode);
+            }
+
+            s_selectedRopeMode = LevelRules.ClampRopeMode(level, s_selectedRopeMode);
+            _ropeModeSelector.CurrentOption = s_selectedRopeMode;
+        }
     }
 
     private void HandlePopupConfirmed()
@@ -637,14 +660,7 @@ public sealed class LevelSelectScene : IScene
         if (_popup == null)
             return;
 
-        if (_mode == LevelSelectMode.PlayMode && _selectedIndex.HasValue)
-        {
-            // Delete highscore
-            LevelMetadata level = _levels[_selectedIndex.Value];
-            BestTimeStorage.ResetLevelRecord(level.Id);
-            _selectedIndex = null;
-        }
-        else if (_mode == LevelSelectMode.EditMode)
+        if (_mode == LevelSelectMode.EditMode)
         {
             if (_popup.TextInput != null)
             {
@@ -774,7 +790,18 @@ public sealed class LevelSelectScene : IScene
 
         SimpleTextRenderer.DrawString(spriteBatch, pixel, "Best Time:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
         y += rowHeight;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, GetBestTimeText(_selectedLevelId ?? string.Empty), new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        string bestTimeText = BestTimeStorage.TryGetBestTime(_selectedLevelId ?? string.Empty, out float bestTime)
+            ? BestTimeStorage.FormatTime(bestTime)
+            : "--";
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, bestTimeText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        y += rowHeight + 4;
+
+        if (BestTimeStorage.TryGetUnofficialBestTime(_selectedLevelId ?? string.Empty, out float unofficialBest))
+        {
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Unofficial Best:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+            y += rowHeight;
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, BestTimeStorage.FormatTime(unofficialBest), new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(200, 180, 140));
+        }
     }
 
     private string GetPlayerCompatibilityText(Level level)

@@ -83,14 +83,20 @@ public sealed class EditorScene : IScene
     private readonly FocusableButton _applyFocus;
     private bool _gamepadPrimaryWasHeld;
 
+    private bool IsGamepadCursorMode() =>
+        _virtualCursor.IsActive && _game.Input.Navigation.IsGamepadActive;
+
     private bool IsPrimaryPressed() =>
-        _game.Input.LeftMousePressed || (_virtualCursor.IsActive && _game.Input.MenuConfirmPressed);
+        _game.Input.UiPointerPressed
+        || (IsGamepadCursorMode() && _game.Input.GamepadMenuConfirmPressed);
 
     private bool IsPrimaryHeld() =>
-        _game.Input.LeftMouseHeld || (_virtualCursor.IsActive && _game.Input.MenuConfirmHeld);
+        _game.Input.UiPointerHeld
+        || (IsGamepadCursorMode() && _game.Input.MenuConfirmHeld);
 
     private bool IsPrimaryReleased() =>
-        _game.Input.LeftMouseReleased || (_virtualCursor.IsActive && _gamepadPrimaryWasHeld && !_game.Input.MenuConfirmHeld);
+        _game.Input.UiPointerReleased
+        || (IsGamepadCursorMode() && _gamepadPrimaryWasHeld && !_game.Input.MenuConfirmHeld);
 
     private Point UiPointer => _game.Input.UiPointerPosition;
 
@@ -124,15 +130,32 @@ public sealed class EditorScene : IScene
         UpdateGamepadUi(gameTime);
         LayoutBackButton();
         LayoutEditorToolbar();
-        UpdateUiFocus(gameTime);
+        LayoutLavaSpeedPanel();
 
-        if (_backFocus.WasActivated || _game.Input.MenuCancelPressed)
+        if (TryHandleGamepadChromePress())
+        {
+            _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
+            return;
+        }
+
+        if (!IsGamepadCursorMode())
+        {
+            UpdateUiFocus(gameTime);
+        }
+
+        if (_game.Input.MenuCancelPressed)
         {
             _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
             return;
         }
 
-        if (_applyFocus.WasActivated && _isDirty)
+        if (!IsGamepadCursorMode() && _backFocus.WasActivated)
+        {
+            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
+            return;
+        }
+
+        if (!IsGamepadCursorMode() && _applyFocus.WasActivated && _isDirty)
         {
             ApplyChanges();
             return;
@@ -145,9 +168,8 @@ public sealed class EditorScene : IScene
         }
 
         HandleKeyboard();
-        LayoutLavaSpeedPanel();
 
-        if (_lavaSelected && _level.Lava is not null && (IsPrimaryPressed() || _game.Input.MenuConfirmPressed))
+        if (_lavaSelected && _level.Lava is not null && IsPrimaryPressed() && !IsGamepadCursorMode())
         {
             if (_lavaSpeedMinusBounds.Contains(UiPointer))
             {
@@ -229,36 +251,52 @@ public sealed class EditorScene : IScene
         _virtualCursor.BeginFrame(_game.Viewport, _game.Input);
         _virtualCursor.Update(gameTime, _game.Input, _game.Viewport);
         _game.Input.SetUiPointerOverride(_virtualCursor.IsActive ? _virtualCursor.Position : null);
-        TrySnapVirtualCursorToUi();
     }
 
-    private void TrySnapVirtualCursorToUi()
+    private bool TryHandleGamepadChromePress()
     {
-        if (!_virtualCursor.IsActive)
+        if (!IsGamepadCursorMode() || !_game.Input.GamepadMenuConfirmPressed)
         {
-            return;
+            return false;
         }
 
-        Rectangle[] snapTargets =
+        if (_lavaSelected && _level.Lava is not null)
         {
-            _backButton.Bounds,
-            _applyButton.Bounds,
-            _toolbarPanelBounds,
-            _lavaSpeedPanelBounds
-        };
-
-        foreach (Rectangle target in snapTargets)
-        {
-            if (target.Width > 0 && target.Height > 0 && target.Contains(_virtualCursor.Position))
+            if (_lavaSpeedMinusBounds.Contains(UiPointer))
             {
-                _virtualCursor.SnapTo(target);
-                return;
+                AdjustLavaRiseSpeed(-10f);
+                return true;
+            }
+
+            if (_lavaSpeedPlusBounds.Contains(UiPointer))
+            {
+                AdjustLavaRiseSpeed(10f);
+                return true;
             }
         }
+
+        if (_applyButton.Bounds.Contains(UiPointer) && _isDirty)
+        {
+            ApplyChanges();
+            return true;
+        }
+
+        if (_backButton.Bounds.Contains(UiPointer))
+        {
+            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
+            return true;
+        }
+
+        return false;
     }
 
     private void UpdateUiFocus(GameTime gameTime)
     {
+        if (IsGamepadCursorMode())
+        {
+            return;
+        }
+
         _uiFocus.Clear();
         int backIndex = _uiFocus.Add(_backFocus, "Back");
         int applyIndex = _uiFocus.Add(_applyFocus, "Apply");
@@ -425,6 +463,9 @@ public sealed class EditorScene : IScene
 
     public void OnExit()
     {
+        _virtualCursor.Reset();
+        _game.Input.SetUiPointerOverride(null);
+        _game.Input.Navigation.PreferMouse();
     }
 
     private void HandleKeyboard()
@@ -534,13 +575,13 @@ public sealed class EditorScene : IScene
             _camera.ZoomAt(zoomFactor, UiPointer, _game.Viewport);
         }
 
-        if (!mouseOverUi && _game.Input.IsAnyGamepadConnected())
+        if (!mouseOverUi && _game.Input.Navigation.IsGamepadActive && _game.Input.IsAnyGamepadConnected())
         {
             Vector2 stick = _game.Input.GetMenuLeftStick();
             if (stick.LengthSquared() > 0.04f)
             {
-                Vector2 pan = stick * 14f;
-                _camera.PanByScreenDelta(new Point((int)MathF.Round(pan.X), (int)MathF.Round(-pan.Y)));
+                Vector2 pan = new Vector2(-stick.X, stick.Y) * 14f;
+                _camera.PanByScreenDelta(new Point((int)MathF.Round(pan.X), (int)MathF.Round(pan.Y)));
             }
 
             if (_game.Input.EditorLeftTrigger > 0.1f)
@@ -1629,6 +1670,13 @@ public sealed class EditorScene : IScene
         return _toolbarPanelBounds.Contains(UiPointer);
     }
 
+    private bool IsPointerOverEditorChrome()
+    {
+        return _backButton.Bounds.Contains(UiPointer)
+            || _applyButton.Bounds.Contains(UiPointer)
+            || (_lavaSelected && _lavaSpeedPanelBounds.Contains(UiPointer));
+    }
+
     private bool IsMouseOverUi()
     {
         return _backButton.Bounds.Contains(UiPointer)
@@ -2138,6 +2186,7 @@ public sealed class EditorScene : IScene
         }
 
         LevelManager.SaveLevel(_level, _levelId);
+        BestTimeStorage.InvalidateOfficialOnLevelEdit(_levelId);
         LevelPreviewManager.GenerateAndSavePreview(_game.GraphicsDevice, _game.Pixel, _level, _levelId);
         _isDirty = false;
     }

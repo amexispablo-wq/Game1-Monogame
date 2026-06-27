@@ -587,25 +587,59 @@ public sealed class UIFocusManager
             }
         }
 
-        if (input.MenuMoveUpPressed)
+        if (!navigation.IsKeyboardActive && !navigation.IsGamepadActive)
+        {
+            return false;
+        }
+
+        if (navigation.IsKeyboardActive)
+        {
+            if (input.KeyboardMenuMoveUpPressed)
+            {
+                direction = NavigationDirection.Up;
+                return true;
+            }
+
+            if (input.KeyboardMenuMoveDownPressed)
+            {
+                direction = NavigationDirection.Down;
+                return true;
+            }
+
+            if (input.KeyboardMenuMoveLeftPressed)
+            {
+                direction = NavigationDirection.Left;
+                return true;
+            }
+
+            if (input.KeyboardMenuMoveRightPressed)
+            {
+                direction = NavigationDirection.Right;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (input.GamepadMenuMoveUpPressed)
         {
             direction = NavigationDirection.Up;
             return true;
         }
 
-        if (input.MenuMoveDownPressed)
+        if (input.GamepadMenuMoveDownPressed)
         {
             direction = NavigationDirection.Down;
             return true;
         }
 
-        if (input.MenuMoveLeftPressed)
+        if (input.GamepadMenuMoveLeftPressed)
         {
             direction = NavigationDirection.Left;
             return true;
         }
 
-        if (input.MenuMoveRightPressed)
+        if (input.GamepadMenuMoveRightPressed)
         {
             direction = NavigationDirection.Right;
             return true;

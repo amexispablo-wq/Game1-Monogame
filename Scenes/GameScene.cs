@@ -64,6 +64,7 @@ public sealed class GameScene : IScene
         _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled);
         _camera = new Camera(GetPlayersCenter());
         _game.SteamLobby.MemberLeft += OnLobbyMemberLeft;
+        _game.Music.PlayLevelMusic(_level.MusicId);
     }
 
     public void OnExit()
@@ -71,6 +72,7 @@ public sealed class GameScene : IScene
         _game.SteamLobby.MemberLeft -= OnLobbyMemberLeft;
         _game.Input.ClearGameplayBindings();
         _game.Party.UnlockAssignments();
+        _game.Music.Stop();
     }
 
     private void OnLobbyMemberLeft(ulong steamId)
@@ -171,7 +173,10 @@ public sealed class GameScene : IScene
                 _simulation.PauseMenuRespawn();
                 break;
             case PauseMenuChoice.RestartLevel:
-                _game.ChangeScene(new GameScene(_game, _levelId, _ropeGameplayMode, _lavaRiseEnabled));
+                _simulation.SetPaused(false);
+                _pauseMenu.Close();
+                _game.Input.GameplayInputBlocked = false;
+                _simulation.RestartLevel();
                 break;
             case PauseMenuChoice.BackToMenu:
                 _simulation.SetPaused(false);

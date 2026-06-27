@@ -242,7 +242,7 @@ public sealed class Player : INetworkEntity
         IsGrounded = HasGroundBelow(level);
     }
 
-    internal void ApplyMovementForces(PlayerInputState input)
+    internal void ApplyMovementForces(PlayerInputState input, float dt)
     {
         float horizontalInput = MathHelper.Clamp(input.HorizontalMovement, -1f, 1f);
         float controlFactor = State == PlayerState.Ejecting
@@ -251,8 +251,20 @@ public sealed class Player : INetworkEntity
 
         if (_justLaunched)
         {
-            AddForce(new Vector2(LaunchControlAcceleration * horizontalInput * controlFactor * Mass, 0f));
-            ApplyHorizontalDrag((IsGrounded ? GroundFriction * 0.15f : AirDrag) * controlFactor);
+            bool inputMatchesLaunchVelocity = MathF.Abs(horizontalInput) > 0.01f
+                && MathF.Abs(Velocity.X) > MaxMoveSpeed
+                && MathF.Sign(horizontalInput) == MathF.Sign(Velocity.X);
+
+            if (!inputMatchesLaunchVelocity)
+            {
+                AddForce(new Vector2(LaunchControlAcceleration * horizontalInput * controlFactor * Mass, 0f));
+            }
+            else
+            {
+                BleedExcessHorizontalSpeed(dt, bleedRate: 320f);
+            }
+
+            ApplyHorizontalDrag((IsGrounded ? GroundFriction * 0.2f : AirDrag) * controlFactor);
             return;
         }
 
@@ -265,6 +277,10 @@ public sealed class Player : INetworkEntity
             if (!alreadyPastMoveSpeed)
             {
                 AddForce(new Vector2(horizontalInput * acceleration * Mass, 0f));
+            }
+            else if (!IsGrounded)
+            {
+                BleedExcessHorizontalSpeed(dt, bleedRate: 420f);
             }
         }
 
@@ -374,6 +390,28 @@ public sealed class Player : INetworkEntity
         }
 
         AddForce(new Vector2(-Velocity.X * drag * Mass, 0f));
+    }
+
+    private void BleedExcessHorizontalSpeed(float dt, float bleedRate)
+    {
+        float cap = MaxMoveSpeed;
+        float absSpeed = MathF.Abs(Velocity.X);
+        if (absSpeed <= cap)
+        {
+            return;
+        }
+
+        float sign = MathF.Sign(Velocity.X);
+        float target = sign * cap;
+        float step = bleedRate * dt;
+        float delta = absSpeed - cap;
+        if (delta <= step)
+        {
+            Velocity = new Vector2(target, Velocity.Y);
+            return;
+        }
+
+        Velocity = new Vector2(Velocity.X - (sign * step), Velocity.Y);
     }
 
     private void HandleColorChange(PlayerInputState input, Level level)

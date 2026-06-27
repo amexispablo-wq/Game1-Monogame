@@ -328,6 +328,7 @@ public sealed class LevelInfoScene : IScene
     private void SaveLevel()
     {
         LevelManager.SaveLevel(_level, _levelId);
+        BestTimeStorage.InvalidateOfficialOnLevelEdit(_levelId);
         LevelPreviewManager.GenerateAndSavePreview(_game.GraphicsDevice, _game.Pixel, _level, _levelId);
     }
 

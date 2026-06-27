@@ -74,13 +74,13 @@
   },
   "musicId": "default_track_02",
   "allPlayers": false,
-  "player1": true,
+  "player1": false,
   "player2": false,
   "player3": false,
   "player4": false,
-  "coloredRope": false,
+  "coloredRope": true,
   "regularRope": true,
-  "lavaRise": false,
+  "lavaRise": true,
   "lavaLine": {
     "surfaceY": 1136,
     "riseSpeed": 70

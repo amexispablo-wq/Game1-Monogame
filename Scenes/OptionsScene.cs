@@ -37,6 +37,10 @@ public sealed class OptionsScene : IScene
     private RebindKind _rebindingKind = RebindKind.Keyboard;
     private double _rebindingWaitTime;
 
+    private DisplaySettingsConfirmOverlay? _displayConfirm;
+    private GameSettings? _displayRevertSnapshot;
+    private GameSettings? _pendingRevertSnapshot;
+
     private enum RebindKind
     {
         Keyboard,
@@ -146,6 +150,12 @@ public sealed class OptionsScene : IScene
     {
         LayoutUI();
 
+        if (_displayConfirm is not null)
+        {
+            UpdateDisplayConfirm(gameTime);
+            return;
+        }
+
         if (_rebindingIndex.HasValue)
         {
             HandleRebinding(gameTime);
@@ -154,6 +164,12 @@ public sealed class OptionsScene : IScene
 
         if ((_game.Input.ExitPressed || _game.Input.MenuCancelPressed) && !_focus.IsCapturingNavigation)
         {
+            if (_displayConfirm is not null)
+            {
+                RevertDisplayTrial();
+                return;
+            }
+
             SettingsManager.RevertPendingChanges();
             _game.ChangeScene(new MenuScene(_game));
             return;
@@ -171,6 +187,12 @@ public sealed class OptionsScene : IScene
         if (_applyFocus.WasActivated)
         {
             SyncPendingSettings();
+            if (HasDisplayChanges())
+            {
+                BeginDisplayConfirmTrial();
+                return;
+            }
+
             ApplySettings();
             _game.ChangeScene(new MenuScene(_game));
             return;
@@ -304,6 +326,13 @@ public sealed class OptionsScene : IScene
         }
 
         spriteBatch.End();
+
+        if (_displayConfirm is not null)
+        {
+            spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+            _displayConfirm.Draw(spriteBatch, pixel, viewport, gameTime, _game.Input);
+            spriteBatch.End();
+        }
 
         if (_rebindingIndex.HasValue)
         {
@@ -953,10 +982,102 @@ public sealed class OptionsScene : IScene
         var settings = SettingsManager.CurrentSettings;
         _game.ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);
         _game.ApplyFrameSettings(settings.FpsLimit);
+        _game.Music.ApplyVolume(settings.MusicVolume);
+    }
+
+    private bool HasDisplayChanges()
+    {
+        GameSettings current = SettingsManager.CurrentSettings;
+        GameSettings pending = SettingsManager.PendingSettings;
+        return current.ResolutionWidth != pending.ResolutionWidth
+            || current.ResolutionHeight != pending.ResolutionHeight
+            || !string.Equals(current.DisplayMode, pending.DisplayMode, StringComparison.OrdinalIgnoreCase)
+            || current.FpsLimit != pending.FpsLimit;
+    }
+
+    private void BeginDisplayConfirmTrial()
+    {
+        _displayRevertSnapshot = SettingsManager.CreateSnapshot(SettingsManager.CurrentSettings);
+        _pendingRevertSnapshot = SettingsManager.CreateSnapshot(SettingsManager.PendingSettings);
+
+        var pending = SettingsManager.PendingSettings;
+        _game.ApplyGraphicsSettings(pending.ResolutionWidth, pending.ResolutionHeight, pending.DisplayMode);
+        _game.ApplyFrameSettings(pending.FpsLimit);
+        _displayConfirm = new DisplaySettingsConfirmOverlay();
+    }
+
+    private void UpdateDisplayConfirm(GameTime gameTime)
+    {
+        if (_displayConfirm is null)
+        {
+            return;
+        }
+
+        _displayConfirm.Update(gameTime, _game.Input, _game.Viewport);
+
+        if (_displayConfirm.WasConfirmed)
+        {
+            ApplySettings();
+            _displayConfirm = null;
+            _displayRevertSnapshot = null;
+            _pendingRevertSnapshot = null;
+            _game.ChangeScene(new MenuScene(_game));
+            return;
+        }
+
+        if (_displayConfirm.WasCancelled)
+        {
+            RevertDisplayTrial();
+        }
+    }
+
+    private void RevertDisplayTrial()
+    {
+        if (_displayRevertSnapshot is not null)
+        {
+            GameSettings revert = _displayRevertSnapshot;
+            _game.ApplyGraphicsSettings(revert.ResolutionWidth, revert.ResolutionHeight, revert.DisplayMode);
+            _game.ApplyFrameSettings(revert.FpsLimit);
+        }
+
+        if (_pendingRevertSnapshot is not null)
+        {
+            SettingsManager.RestorePendingFromSnapshot(_pendingRevertSnapshot);
+            SyncUIFromPendingSettings();
+        }
+        else
+        {
+            SettingsManager.RevertPendingChanges();
+        }
+
+        _displayConfirm = null;
+        _displayRevertSnapshot = null;
+        _pendingRevertSnapshot = null;
+    }
+
+    private void SyncUIFromPendingSettings()
+    {
+        var pending = SettingsManager.PendingSettings;
+        _resolutionDropdown.SelectedResolution = new Resolution(pending.ResolutionWidth, pending.ResolutionHeight);
+        _volumeSlider.Value = pending.MusicVolume;
+        _fpsLimitSelector.CurrentOption = pending.FpsLimit;
+
+        string displayMode = pending.DisplayMode.ToLowerInvariant();
+        _displayModeSelector.CurrentOption = displayMode switch
+        {
+            "fullscreen" => DisplayMode.Fullscreen,
+            "windowed" => DisplayMode.Windowed,
+            "borderless" or "borderlesswindowed" => DisplayMode.BorderlessWindowed,
+            _ => DisplayMode.BorderlessWindowed
+        };
     }
 
     public void OnExit()
     {
+        if (_displayConfirm is not null)
+        {
+            RevertDisplayTrial();
+        }
     }
 
     private readonly record struct LayoutMetrics(

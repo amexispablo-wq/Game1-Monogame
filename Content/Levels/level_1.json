@@ -248,7 +248,7 @@
     },
     {
       "x": 832,
-      "y": 416,
+      "y": 512,
       "width": 128,
       "height": 32,
       "color": "Red"
@@ -265,13 +265,6 @@
       "y": 64,
       "width": 96,
       "height": 32,
-      "color": "Red"
-    },
-    {
-      "x": 896,
-      "y": 320,
-      "width": 96,
-      "height": 128,
       "color": "Red"
     }
   ],

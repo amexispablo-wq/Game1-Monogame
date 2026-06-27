@@ -20,7 +20,9 @@ public sealed class VirtualCursor
 
     public void BeginFrame(Viewport viewport, InputManager input)
     {
-        IsActive = input.IsAnyGamepadConnected() && !input.IsMouseRecentlyActive;
+        IsActive = input.IsAnyGamepadConnected()
+            && input.Navigation.IsGamepadActive
+            && !input.Navigation.IsMouseActive;
         if (!IsActive)
         {
             _velocity = Vector2.Zero;
@@ -43,6 +45,7 @@ public sealed class VirtualCursor
 
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
         Vector2 stick = input.GetMenuRightStick();
+        stick.Y = -stick.Y;
         float magnitude = stick.Length();
         if (magnitude < DeadZone)
         {
@@ -61,13 +64,10 @@ public sealed class VirtualCursor
         _position = new Point(x, y);
     }
 
-    public void SnapTo(Rectangle bounds)
+    public void Reset()
     {
-        if (!IsActive)
-        {
-            return;
-        }
-
-        _position = new Point(bounds.Center.X, bounds.Center.Y);
+        _initialized = false;
+        _velocity = Vector2.Zero;
+        IsActive = false;
     }
 }

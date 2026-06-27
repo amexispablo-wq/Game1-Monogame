@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 
 namespace ColorBlocks;
@@ -53,11 +54,24 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool MouseActivityThisFrame { get; private set; }
     public bool KeyboardMenuActivityThisFrame { get; private set; }
     public bool GamepadActivityThisFrame { get; private set; }
+    public bool GamepadMenuActivityThisFrame { get; private set; }
+    public bool KeyboardMenuMoveUpPressed { get; private set; }
+    public bool KeyboardMenuMoveDownPressed { get; private set; }
+    public bool KeyboardMenuMoveLeftPressed { get; private set; }
+    public bool KeyboardMenuMoveRightPressed { get; private set; }
+    public bool GamepadMenuMoveUpPressed { get; private set; }
+    public bool GamepadMenuMoveDownPressed { get; private set; }
+    public bool GamepadMenuMoveLeftPressed { get; private set; }
+    public bool GamepadMenuMoveRightPressed { get; private set; }
     public InputNavigationService Navigation { get; } = new();
+    private Point? _uiPointerOverride;
+    private float _pointerScaleX = 1f;
+    private float _pointerScaleY = 1f;
+
     public bool UiPointerPressed { get; private set; }
     public bool UiPointerHeld { get; private set; }
     public bool UiPointerReleased { get; private set; }
-    public Point UiPointerPosition => _uiPointerOverride ?? MousePosition;
+    public Point UiPointerPosition => TransformPointer(_uiPointerOverride ?? MousePosition);
     public bool IsMouseRecentlyActive => _mouseInactiveFrames < 45;
     public float EditorLeftTrigger { get; private set; }
     public float EditorRightTrigger { get; private set; }
@@ -79,7 +93,6 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public bool GameplayInputBlocked { get; set; }
 
-    private Point? _uiPointerOverride;
     private bool _virtualLeftClickRequested;
     private int _mouseInactiveFrames;
 
@@ -110,6 +123,42 @@ public sealed class InputManager : ILocalPlayerInputSource
     public void SetUiPointerOverride(Point? position)
     {
         _uiPointerOverride = position;
+    }
+
+    public void ConfigurePointerTransform(Rectangle clientBounds, Viewport backBufferViewport, PresentationManager presentation)
+    {
+        if (clientBounds.Width <= 0 || clientBounds.Height <= 0
+            || backBufferViewport.Width <= 0 || backBufferViewport.Height <= 0)
+        {
+            _pointerScaleX = 1f;
+            _pointerScaleY = 1f;
+            _presentationMapper = null;
+            return;
+        }
+
+        _pointerScaleX = backBufferViewport.Width / (float)clientBounds.Width;
+        _pointerScaleY = backBufferViewport.Height / (float)clientBounds.Height;
+        _presentationMapper = presentation;
+    }
+
+    private PresentationManager? _presentationMapper;
+
+    private Point TransformPointer(Point pointer)
+    {
+        Point backBufferPointer = pointer;
+        if (Math.Abs(_pointerScaleX - 1f) >= 0.001f || Math.Abs(_pointerScaleY - 1f) >= 0.001f)
+        {
+            backBufferPointer = new Point(
+                (int)MathF.Round(pointer.X * _pointerScaleX),
+                (int)MathF.Round(pointer.Y * _pointerScaleY));
+        }
+
+        if (_presentationMapper is null)
+        {
+            return backBufferPointer;
+        }
+
+        return _presentationMapper.MapPointerToLogical(backBufferPointer);
     }
 
     public void RequestVirtualLeftClick()
@@ -268,6 +317,11 @@ public sealed class InputManager : ILocalPlayerInputSource
             _mouseInactiveFrames = 0;
             MouseActivityThisFrame = true;
         }
+        else if (MouseDelta.X != 0 || MouseDelta.Y != 0)
+        {
+            _mouseInactiveFrames = 0;
+            MouseActivityThisFrame = false;
+        }
         else
         {
             _mouseInactiveFrames++;
@@ -284,11 +338,21 @@ public sealed class InputManager : ILocalPlayerInputSource
         MouseActivityThisFrame = false;
         KeyboardMenuActivityThisFrame = false;
         GamepadActivityThisFrame = false;
+        GamepadMenuActivityThisFrame = false;
 
-        MenuMoveUpPressed = IsNewKeyPress(Keys.Up);
-        MenuMoveDownPressed = IsNewKeyPress(Keys.Down);
-        MenuMoveLeftPressed = IsNewKeyPress(Keys.Left);
-        MenuMoveRightPressed = IsNewKeyPress(Keys.Right);
+        KeyboardMenuMoveUpPressed = IsNewKeyPress(Keys.Up);
+        KeyboardMenuMoveDownPressed = IsNewKeyPress(Keys.Down);
+        KeyboardMenuMoveLeftPressed = IsNewKeyPress(Keys.Left);
+        KeyboardMenuMoveRightPressed = IsNewKeyPress(Keys.Right);
+        GamepadMenuMoveUpPressed = false;
+        GamepadMenuMoveDownPressed = false;
+        GamepadMenuMoveLeftPressed = false;
+        GamepadMenuMoveRightPressed = false;
+
+        MenuMoveUpPressed = KeyboardMenuMoveUpPressed;
+        MenuMoveDownPressed = KeyboardMenuMoveDownPressed;
+        MenuMoveLeftPressed = KeyboardMenuMoveLeftPressed;
+        MenuMoveRightPressed = KeyboardMenuMoveRightPressed;
         MenuTabBackwardPressed = IsNewKeyPress(Keys.Tab) && ShiftHeld;
         MenuTabPressed = IsNewKeyPress(Keys.Tab) && !ShiftHeld;
         KeyboardMenuConfirmPressed = IsNewKeyPress(Keys.Enter);
@@ -299,7 +363,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         GamepadMenuConfirmPressed = false;
         GamepadMenuCancelPressed = false;
 
-        if (MenuMoveUpPressed || MenuMoveDownPressed || MenuMoveLeftPressed || MenuMoveRightPressed
+        if (KeyboardMenuMoveUpPressed || KeyboardMenuMoveDownPressed || KeyboardMenuMoveLeftPressed || KeyboardMenuMoveRightPressed
             || MenuTabPressed || MenuTabBackwardPressed || KeyboardMenuConfirmPressed || KeyboardMenuCancelPressed)
         {
             KeyboardMenuActivityThisFrame = true;
@@ -326,6 +390,7 @@ public sealed class InputManager : ILocalPlayerInputSource
             if (IsGamepadPressed(current, previous, GamepadDefaults.MenuConfirmButton))
             {
                 GamepadMenuConfirmPressed = true;
+                GamepadMenuActivityThisFrame = true;
                 GamepadActivityThisFrame = true;
             }
 
@@ -334,6 +399,7 @@ public sealed class InputManager : ILocalPlayerInputSource
             if (IsGamepadPressed(current, previous, GamepadDefaults.MenuCancelButton))
             {
                 GamepadMenuCancelPressed = true;
+                GamepadMenuActivityThisFrame = true;
                 GamepadActivityThisFrame = true;
             }
 
@@ -341,25 +407,33 @@ public sealed class InputManager : ILocalPlayerInputSource
 
             if (current.DPad.Up == ButtonState.Pressed && previous.DPad.Up == ButtonState.Released)
             {
+                GamepadMenuMoveUpPressed = true;
                 MenuMoveUpPressed = true;
+                GamepadMenuActivityThisFrame = true;
                 GamepadActivityThisFrame = true;
             }
 
             if (current.DPad.Down == ButtonState.Pressed && previous.DPad.Down == ButtonState.Released)
             {
+                GamepadMenuMoveDownPressed = true;
                 MenuMoveDownPressed = true;
+                GamepadMenuActivityThisFrame = true;
                 GamepadActivityThisFrame = true;
             }
 
             if (current.DPad.Left == ButtonState.Pressed && previous.DPad.Left == ButtonState.Released)
             {
+                GamepadMenuMoveLeftPressed = true;
                 MenuMoveLeftPressed = true;
+                GamepadMenuActivityThisFrame = true;
                 GamepadActivityThisFrame = true;
             }
 
             if (current.DPad.Right == ButtonState.Pressed && previous.DPad.Right == ButtonState.Released)
             {
+                GamepadMenuMoveRightPressed = true;
                 MenuMoveRightPressed = true;
+                GamepadMenuActivityThisFrame = true;
                 GamepadActivityThisFrame = true;
             }
 
@@ -387,8 +461,19 @@ public sealed class InputManager : ILocalPlayerInputSource
                 GamepadActivityThisFrame = true;
             }
 
+            if (current.ThumbSticks.Right.LengthSquared() > GamepadMoveDeadZone * GamepadMoveDeadZone)
+            {
+                GamepadActivityThisFrame = true;
+            }
+
+            if (current.Triggers.Left > 0.1f || current.Triggers.Right > 0.1f)
+            {
+                GamepadActivityThisFrame = true;
+            }
+
             if (HasGamepadButtonActivity(current, previous))
             {
+                GamepadMenuActivityThisFrame = true;
                 GamepadActivityThisFrame = true;
             }
 
@@ -408,13 +493,7 @@ public sealed class InputManager : ILocalPlayerInputSource
     private static bool HasGamepadButtonActivity(GamePadState current, GamePadState previous)
     {
         return current.Buttons != previous.Buttons
-            || current.DPad != previous.DPad
-            || MathF.Abs(current.ThumbSticks.Left.X - previous.ThumbSticks.Left.X) > 0.05f
-            || MathF.Abs(current.ThumbSticks.Left.Y - previous.ThumbSticks.Left.Y) > 0.05f
-            || MathF.Abs(current.ThumbSticks.Right.X - previous.ThumbSticks.Right.X) > 0.05f
-            || MathF.Abs(current.ThumbSticks.Right.Y - previous.ThumbSticks.Right.Y) > 0.05f
-            || MathF.Abs(current.Triggers.Left - previous.Triggers.Left) > 0.05f
-            || MathF.Abs(current.Triggers.Right - previous.Triggers.Right) > 0.05f;
+            || current.DPad != previous.DPad;
     }
 
     private PlayerInputState ReadKeyboardInputState()

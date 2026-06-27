@@ -24,6 +24,9 @@
     <None Update="Content\level.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="Content\Levels\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="steam_appid.txt" Condition="Exists('steam_appid.txt')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

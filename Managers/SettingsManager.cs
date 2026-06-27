@@ -19,15 +19,7 @@ public static class SettingsManager
     public static void Initialize()
     {
         LoadSettings();
-        _pendingSettings = new GameSettings
-        {
-            DisplayMode = _currentSettings.DisplayMode,
-            ResolutionWidth = _currentSettings.ResolutionWidth,
-            ResolutionHeight = _currentSettings.ResolutionHeight,
-            MusicVolume = _currentSettings.MusicVolume,
-            FpsLimit = _currentSettings.FpsLimit,
-            Keybindings = new Dictionary<string, string>(_currentSettings.Keybindings)
-        };
+        _pendingSettings = CloneSettings(_currentSettings);
     }
 
     public static void LoadSettings()
@@ -58,15 +50,7 @@ public static class SettingsManager
 
     public static void SaveSettings(GameSettings settings)
     {
-        _currentSettings = NormalizeSettings(new GameSettings
-        {
-            DisplayMode = settings.DisplayMode,
-            ResolutionWidth = settings.ResolutionWidth,
-            ResolutionHeight = settings.ResolutionHeight,
-            MusicVolume = settings.MusicVolume,
-            FpsLimit = settings.FpsLimit,
-            Keybindings = new Dictionary<string, string>(settings.Keybindings)
-        });
+        _currentSettings = NormalizeSettings(CloneSettings(settings));
 
         try
         {
@@ -85,15 +69,14 @@ public static class SettingsManager
 
     public static void RevertPendingChanges()
     {
-        _pendingSettings = new GameSettings
-        {
-            DisplayMode = _currentSettings.DisplayMode,
-            ResolutionWidth = _currentSettings.ResolutionWidth,
-            ResolutionHeight = _currentSettings.ResolutionHeight,
-            MusicVolume = _currentSettings.MusicVolume,
-            FpsLimit = _currentSettings.FpsLimit,
-            Keybindings = new Dictionary<string, string>(_currentSettings.Keybindings)
-        };
+        _pendingSettings = CloneSettings(_currentSettings);
+    }
+
+    public static GameSettings CreateSnapshot(GameSettings source) => CloneSettings(source);
+
+    public static void RestorePendingFromSnapshot(GameSettings snapshot)
+    {
+        _pendingSettings = CloneSettings(snapshot);
     }
 
     public static float GetMusicVolume() => _currentSettings.MusicVolume;
@@ -102,6 +85,7 @@ public static class SettingsManager
     private static GameSettings NormalizeSettings(GameSettings settings)
     {
         settings.Keybindings ??= new Dictionary<string, string>();
+        settings.GamepadBindings ??= new Dictionary<string, string>();
 
         bool migratingOldJumpDefault = !settings.Keybindings.ContainsKey("PullRope")
             && settings.Keybindings.TryGetValue("Jump", out string? jumpKey)
@@ -120,6 +104,20 @@ public static class SettingsManager
         }
 
         return settings;
+    }
+
+    private static GameSettings CloneSettings(GameSettings source)
+    {
+        return new GameSettings
+        {
+            DisplayMode = source.DisplayMode,
+            ResolutionWidth = source.ResolutionWidth,
+            ResolutionHeight = source.ResolutionHeight,
+            MusicVolume = source.MusicVolume,
+            FpsLimit = source.FpsLimit,
+            Keybindings = new Dictionary<string, string>(source.Keybindings),
+            GamepadBindings = new Dictionary<string, string>(source.GamepadBindings)
+        };
     }
 
     private static string GetWritablePath()

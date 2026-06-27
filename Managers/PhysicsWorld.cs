@@ -115,7 +115,7 @@ public sealed class PhysicsWorld
         player.BeginPhysicsStep(dt, _level);
         player.HandleInputState(input, _level);
         player.RefreshGroundedState(_level);
-        player.ApplyMovementForces(input);
+        player.ApplyMovementForces(input, dt);
         player.ApplyJumpImpulse(input);
         player.ApplyGravity(Gravity, input);
         player.ApplyEjectionForces();

@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Debug artifacts
+.preview_png_debug/
+
+# User settings at repo root (runtime copy lives in bin/Content)
+Content/settings.json

@@ -15,5 +15,8 @@
     "PullRope": "Space",
     "Respawn": "R"
   },
-  "GamepadBindings": {}
+  "GamepadBindings": {
+    "Jump": "A",
+    "Blue": "Y"
+  }
 }
