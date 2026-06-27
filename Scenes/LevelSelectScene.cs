@@ -62,6 +62,7 @@ public sealed class LevelSelectScene : IScene
         _game = game;
         _mode = mode;
         _backFocus = new FocusableButton(_backButton);
+        _focus.ResetFocus();
         RefreshLevelList();
         InitializeButtons();
         if (_mode == LevelSelectMode.PlayMode)
@@ -161,7 +162,7 @@ public sealed class LevelSelectScene : IScene
 
         UpdateFocus(gameTime);
 
-        if (_backFocus.WasActivated || _game.Input.ExitPressed || _game.Input.MenuCancelPressed)
+        if (_backFocus.WasActivated || _game.Input.ExitPressed || (_game.Input.MenuCancelPressed && !_focus.IsCapturingNavigation))
         {
             _game.ChangeScene(new MenuScene(_game));
             return;
@@ -220,6 +221,7 @@ public sealed class LevelSelectScene : IScene
         _gridFocusables.Clear();
         _focus.Clear();
 
+        int gridStart = -1;
         for (int i = 0; i < _levels.Count && i < _gridLayout.CellBounds.Length; i++)
         {
             int captured = i;
@@ -229,40 +231,97 @@ public sealed class LevelSelectScene : IScene
                 return true;
             });
             _gridFocusables.Add(cell);
-            _focus.Add(cell);
+            if (gridStart < 0)
+            {
+                gridStart = _focus.Add(cell, $"Level{captured}");
+            }
+            else
+            {
+                _focus.Add(cell, $"Level{captured}");
+            }
         }
 
+        int? ropeIndex = null;
+        int? lavaIndex = null;
         if (_ropeModeFocus != null)
         {
-            _focus.Add(_ropeModeFocus);
+            ropeIndex = _focus.Add(_ropeModeFocus, "RopeMode");
         }
 
         if (_lavaRiseFocus != null)
         {
-            _focus.Add(_lavaRiseFocus);
+            lavaIndex = _focus.Add(_lavaRiseFocus, "LavaRise");
         }
 
-        _focus.Add(_backFocus);
-        if (_primaryFocus != null)
+        int backIndex = _focus.Add(_backFocus, "Back");
+        int? primaryIndex = _primaryFocus is not null ? _focus.Add(_primaryFocus, _mode == LevelSelectMode.PlayMode ? "Play" : "EditLevel") : null;
+        int? secondaryIndex = _secondaryFocus is not null ? _focus.Add(_secondaryFocus, _mode == LevelSelectMode.PlayMode ? "DeleteHighscore" : "LevelInfo") : null;
+        int? tertiaryIndex = _tertiaryFocus is not null ? _focus.Add(_tertiaryFocus, "DeleteLevel") : null;
+        int? quaternaryIndex = _quaternaryFocus is not null ? _focus.Add(_quaternaryFocus, "CreateNew") : null;
+
+        NavigationGraph nav = _focus.Navigation;
+        if (gridStart >= 0 && _gridFocusables.Count > 0)
         {
-            _focus.Add(_primaryFocus);
+            nav.WireGrid(gridStart, _gridFocusables.Count, _gridLayout.Columns);
+
+            if (_mode == LevelSelectMode.EditMode && primaryIndex is int primary)
+            {
+                NavigationGraphBuilder.LinkGridBottomRowTo(nav, gridStart, _gridFocusables.Count, _gridLayout.Columns, primary);
+
+                nav.LinkHorizontal(backIndex, primary);
+
+                if (secondaryIndex is int secondary)
+                {
+                    nav.LinkHorizontal(primary, secondary);
+                }
+
+                if (tertiaryIndex is int tertiary && secondaryIndex is int sec)
+                {
+                    nav.LinkHorizontal(sec, tertiary);
+                }
+
+                if (quaternaryIndex is int quaternary && tertiaryIndex is int ter)
+                {
+                    nav.LinkHorizontal(ter, quaternary);
+                }
+            }
+            else if (_mode == LevelSelectMode.PlayMode)
+            {
+                // LEVEL GRID -> ROPE MODE -> (right) LAVA RISE, then ROPE/LAVA -> down -> PLAY
+                // PLAY: left -> BACK, right -> DELETE HIGHSCORE
+                int downTarget = ropeIndex ?? primaryIndex ?? backIndex;
+                NavigationGraphBuilder.LinkGridBottomRowTo(nav, gridStart, _gridFocusables.Count, _gridLayout.Columns, downTarget);
+
+                if (ropeIndex is int rope && lavaIndex is int lava)
+                {
+                    nav.LinkHorizontal(rope, lava);
+                    if (primaryIndex is int play)
+                    {
+                        nav.LinkVertical(rope, play);
+                        nav.Link(lava, NavigationDirection.Down, play);
+                    }
+                }
+                else if (ropeIndex is int ropeOnly && primaryIndex is int playOnly)
+                {
+                    nav.LinkVertical(ropeOnly, playOnly);
+                }
+
+                if (primaryIndex is int playBtn)
+                {
+                    if (secondaryIndex is int secondary)
+                    {
+                        nav.LinkHorizontal(playBtn, secondary);
+                    }
+
+                    nav.LinkHorizontal(backIndex, playBtn);
+                }
+            }
+
+            nav.Link(backIndex, NavigationDirection.Up, gridStart);
         }
 
-        if (_secondaryFocus != null)
-        {
-            _focus.Add(_secondaryFocus);
-        }
-
-        if (_tertiaryFocus != null)
-        {
-            _focus.Add(_tertiaryFocus);
-        }
-
-        if (_quaternaryFocus != null)
-        {
-            _focus.Add(_quaternaryFocus);
-        }
-
+        string defaultFocus = gridStart >= 0 ? "Level0" : (_mode == LevelSelectMode.PlayMode ? "Play" : "EditLevel");
+        _focus.FinalizeFocus(defaultFocus);
         _focus.Update(gameTime, _game.Input);
 
         foreach (FocusableGridCell cell in _gridFocusables)

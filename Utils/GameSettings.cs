@@ -35,4 +35,9 @@ public sealed class GameSettings
         { "Green", "L" },
         { "PullRope", "Space" }
     };
+
+    // Optional per-action gamepad button overrides. Empty = use GamepadDefaults.
+    // Only button-style actions are rebindable (Jump, Respawn, Red, Blue, Green).
+    [JsonPropertyName("GamepadBindings")]
+    public Dictionary<string, string> GamepadBindings { get; set; } = new();
 }

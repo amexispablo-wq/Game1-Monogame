@@ -14,6 +14,7 @@ public sealed class InputManager : ILocalPlayerInputSource
     private readonly Dictionary<int, PlayerInputState> _gameplayInputByNetworkId = new();
     private readonly Dictionary<int, PartyMember> _gameplayBindings = new();
     private KeyboardInputBindings _keyboardBindings;
+    private GamepadButtonBindings _gamepadBindings;
     private KeyboardState _currentKeyboard;
     private KeyboardState _previousKeyboard;
     private MouseState _currentMouse;
@@ -24,11 +25,13 @@ public sealed class InputManager : ILocalPlayerInputSource
     public InputManager()
     {
         _keyboardBindings = KeyboardInputBindings.FromSettings(SettingsManager.CurrentSettings);
+        _gamepadBindings = GamepadButtonBindings.FromSettings(SettingsManager.CurrentSettings);
     }
 
     public bool ExitPressed { get; private set; }
     public bool EnterPressed { get; private set; }
     public bool DebugTogglePressed { get; private set; }
+    public bool NavigationStepPressed { get; private set; }
     public bool GameplayPausePressed { get; private set; }
     public bool MenuMoveUpPressed { get; private set; }
     public bool MenuMoveDownPressed { get; private set; }
@@ -84,6 +87,7 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public void Update()
     {
+        NavigationDebug.BeginFrame();
         _previousKeyboard = _currentKeyboard;
         _currentKeyboard = Keyboard.GetState();
         _previousMouse = _currentMouse;
@@ -155,6 +159,7 @@ public sealed class InputManager : ILocalPlayerInputSource
     public void ReloadKeyboardBindings()
     {
         _keyboardBindings = KeyboardInputBindings.FromSettings(SettingsManager.CurrentSettings);
+        _gamepadBindings = GamepadButtonBindings.FromSettings(SettingsManager.CurrentSettings);
     }
 
     public void SetGameplayBindings(IReadOnlyDictionary<int, PartyMember> bindings)
@@ -231,6 +236,13 @@ public sealed class InputManager : ILocalPlayerInputSource
         ExitPressed = IsNewKeyPress(Keys.Escape);
         EnterPressed = IsNewKeyPress(Keys.Enter);
         DebugTogglePressed = IsNewKeyPress(Keys.F3);
+
+        if (IsNewKeyPress(Keys.F8))
+        {
+            NavigationDebug.Enabled = !NavigationDebug.Enabled;
+        }
+
+        NavigationStepPressed = IsNewKeyPress(Keys.F9);
         ControlHeld = _currentKeyboard.IsKeyDown(Keys.LeftControl) || _currentKeyboard.IsKeyDown(Keys.RightControl);
         ShiftHeld = _currentKeyboard.IsKeyDown(Keys.LeftShift) || _currentKeyboard.IsKeyDown(Keys.RightShift);
 
@@ -251,7 +263,7 @@ public sealed class InputManager : ILocalPlayerInputSource
             && _previousMouse.MiddleButton == ButtonState.Pressed;
         MouseWheelDelta = _currentMouse.ScrollWheelValue - _previousMouse.ScrollWheelValue;
 
-        if (MouseDelta != Point.Zero || LeftMousePressed || RightMousePressed || MiddleMousePressed || MouseWheelDelta != 0)
+        if (LeftMousePressed || RightMousePressed || MiddleMousePressed || MouseWheelDelta != 0)
         {
             _mouseInactiveFrames = 0;
             MouseActivityThisFrame = true;
@@ -473,23 +485,23 @@ public sealed class InputManager : ILocalPlayerInputSource
         bool pullRope = current.Triggers.Right > GamepadDefaults.PullRopeTriggerThreshold;
 
         GameColor? requestedColor = null;
-        if (IsGamepadPressed(current, previous, GamepadDefaults.RedButton))
+        if (IsGamepadPressed(current, previous, _gamepadBindings.Red))
         {
             requestedColor = GameColor.Red;
         }
-        else if (IsGamepadPressed(current, previous, GamepadDefaults.GreenButton))
+        else if (IsGamepadPressed(current, previous, _gamepadBindings.Green))
         {
             requestedColor = GameColor.Green;
         }
-        else if (IsGamepadPressed(current, previous, GamepadDefaults.BlueButton))
+        else if (IsGamepadPressed(current, previous, _gamepadBindings.Blue))
         {
             requestedColor = GameColor.Blue;
         }
 
         return new PlayerInputState(
             horizontal,
-            IsGamepadPressed(current, previous, GamepadDefaults.JumpButton),
-            IsGamepadPressed(current, previous, GamepadDefaults.RespawnButton),
+            IsGamepadPressed(current, previous, _gamepadBindings.Jump),
+            IsGamepadPressed(current, previous, _gamepadBindings.Respawn),
             fastFall,
             pullRope,
             requestedColor);
@@ -554,6 +566,35 @@ public sealed class InputManager : ILocalPlayerInputSource
             }
 
             return fallback;
+        }
+    }
+
+    private readonly record struct GamepadButtonBindings(
+        Buttons Jump,
+        Buttons Respawn,
+        Buttons Red,
+        Buttons Blue,
+        Buttons Green)
+    {
+        public static GamepadButtonBindings FromSettings(GameSettings settings)
+        {
+            return new GamepadButtonBindings(
+                Resolve(settings, GameplayInputAction.Jump),
+                Resolve(settings, GameplayInputAction.Respawn),
+                Resolve(settings, GameplayInputAction.Red),
+                Resolve(settings, GameplayInputAction.Blue),
+                Resolve(settings, GameplayInputAction.Green));
+        }
+
+        private static Buttons Resolve(GameSettings settings, GameplayInputAction action)
+        {
+            if (settings.GamepadBindings.TryGetValue(action.ToString(), out string? stored)
+                && Enum.TryParse(stored, out Buttons button))
+            {
+                return button;
+            }
+
+            return GamepadDefaults.GetDefaultButton(action);
         }
     }
 }

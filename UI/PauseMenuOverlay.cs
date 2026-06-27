@@ -25,7 +25,7 @@ public sealed class PauseMenuOverlay
         "QUIT GAME"
     };
 
-    private readonly UIFocusManager _focus = new();
+    private readonly UIFocusManager _focus = new() { Name = "Pause Menu" };
     private readonly List<FocusableGridCell> _optionFocusables = new();
     private float _openAnim;
     private Rectangle[] _optionBounds = Array.Empty<Rectangle>();
@@ -33,10 +33,19 @@ public sealed class PauseMenuOverlay
 
     public bool IsOpen { get; private set; }
 
+    private static readonly string[] OptionIds =
+    {
+        "Resume", "Respawn", "RestartLevel", "BackToMenu", "QuitGame"
+    };
+
+    private static string OptionId(int index) =>
+        index >= 0 && index < OptionIds.Length ? OptionIds[index] : $"PauseOption{index}";
+
     public void Open()
     {
         IsOpen = true;
         _openAnim = 0f;
+        _focus.ResetFocus();
     }
 
     public void Close()
@@ -62,12 +71,16 @@ public sealed class PauseMenuOverlay
 
         _optionFocusables.Clear();
         _focus.Clear();
+        var optionIndices = new List<int>();
         for (int i = 0; i < _optionBounds.Length; i++)
         {
             var option = new FocusableGridCell(_optionBounds[i], () => true);
             _optionFocusables.Add(option);
-            _focus.Add(option);
+            optionIndices.Add(_focus.Add(option, OptionId(i)));
         }
+
+        _focus.Navigation.WireVerticalChain(optionIndices);
+        _focus.FinalizeFocus(OptionId(1));
 
         _focus.Update(gameTime, input);
 

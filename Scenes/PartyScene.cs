@@ -9,7 +9,7 @@ public sealed class PartyScene : IScene
 {
     private readonly ColorBlocksGame _game;
     private readonly Button _playButton = new("Play");
-    private readonly Button _inviteButton = new("Invite From Steam");
+    private readonly Button _inviteButton = new("Invite");
     private readonly Button _backButton = new("Back");
     private readonly UIFocusManager _focus = new();
     private readonly FocusableButton _playFocus;
@@ -36,6 +36,7 @@ public sealed class PartyScene : IScene
         _playFocus = new FocusableButton(_playButton);
         _inviteFocus = new FocusableButton(_inviteButton);
         _backFocus = new FocusableButton(_backButton);
+        _focus.ResetFocus();
         _game.Party.EnsureSteamParty();
         _game.Party.ErrorOccurred += OnPartyError;
         _game.SteamLobby.ErrorOccurred += OnPartyError;
@@ -61,34 +62,71 @@ public sealed class PartyScene : IScene
         _memberFocusables.Clear();
         _focus.Clear();
         IReadOnlyList<PartyMember> members = _game.Party.Members;
+
+        int? prevSelAnchor = null;
+        int? prevKickAnchor = null;
         for (int slot = 0; slot < members.Count; slot++)
         {
             PartyMember member = members[slot];
+            int? selIndex = null;
+            int? kickIndex = null;
+
             if (member.IsLocallyOwned)
             {
-                _memberFocusables.Add(new FocusableCycleMemberInput(
-                    _memberInputBounds[slot],
-                    member,
-                    CycleMemberInput));
+                var selFocus = new FocusableCycleMemberInput(_memberInputBounds[slot], member, CycleMemberInput);
+                _memberFocusables.Add(selFocus);
+                selIndex = _focus.Add(selFocus, $"Member{slot}Input");
+
+                if (prevSelAnchor is int prev)
+                {
+                    _focus.Navigation.LinkVertical(prev, selIndex.Value);
+                }
+
+                prevSelAnchor = selIndex;
             }
 
             if (CanKickMember(member))
             {
                 int capturedSlot = slot;
-                _memberFocusables.Add(new FocusableAction(
+                var kickFocus = new FocusableAction(
                     _memberKickBounds[slot],
-                    () => _game.Party.TryKickMember(members[capturedSlot].Id)));
+                    () => _game.Party.TryKickMember(members[capturedSlot].Id));
+                _memberFocusables.Add(kickFocus);
+                kickIndex = _focus.Add(kickFocus, $"Member{slot}Kick");
+
+                if (selIndex is null && prevKickAnchor is int prevKick)
+                {
+                    _focus.Navigation.LinkVertical(prevKick, kickIndex.Value);
+                }
+
+                prevKickAnchor = kickIndex;
+            }
+
+            if (selIndex is int s && kickIndex is int k)
+            {
+                _focus.Navigation.LinkHorizontal(s, k);
             }
         }
 
-        foreach (IFocusable focusable in _memberFocusables)
+        int playIndex = _focus.Add(_playFocus, "Play");
+        int inviteIndex = _focus.Add(_inviteFocus, "Invite");
+        int backIndex = _focus.Add(_backFocus, "Back");
+
+        NavigationGraph nav = _focus.Navigation;
+
+        if (prevSelAnchor is int lastSel)
         {
-            _focus.Add(focusable);
+            nav.LinkVertical(lastSel, playIndex);
+        }
+        else if (prevKickAnchor is int lastKick)
+        {
+            nav.LinkVertical(lastKick, playIndex);
         }
 
-        _focus.Add(_playFocus);
-        _focus.Add(_inviteFocus);
-        _focus.Add(_backFocus);
+        nav.LinkHorizontal(playIndex, inviteIndex);
+        nav.LinkHorizontal(inviteIndex, backIndex);
+
+        _focus.FinalizeFocus("Play");
         _focus.Update(gameTime, _game.Input);
 
         if (_game.Input.ExitPressed || _game.Input.MenuCancelPressed || _backFocus.WasActivated)

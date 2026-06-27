@@ -116,6 +116,7 @@ public sealed class EditorScene : IScene
         _camera = new Camera(new Vector2(game.Viewport.Width * 0.5f, game.Viewport.Height * 0.5f));
         _backFocus = new FocusableButton(_backButton);
         _applyFocus = new FocusableButton(_applyButton);
+        _uiFocus.ResetFocus();
     }
 
     public void Update(GameTime gameTime)
@@ -259,22 +260,34 @@ public sealed class EditorScene : IScene
     private void UpdateUiFocus(GameTime gameTime)
     {
         _uiFocus.Clear();
-        _uiFocus.Add(_backFocus);
-        _uiFocus.Add(_applyFocus);
+        int backIndex = _uiFocus.Add(_backFocus, "Back");
+        int applyIndex = _uiFocus.Add(_applyFocus, "Apply");
+
+        NavigationGraph nav = _uiFocus.Navigation;
+
         if (_lavaSelected)
         {
-            _uiFocus.Add(new FocusableAction(_lavaSpeedMinusBounds, () =>
+            int minusIndex = _uiFocus.Add(new FocusableAction(_lavaSpeedMinusBounds, () =>
             {
                 AdjustLavaRiseSpeed(-10f);
                 return true;
-            }));
-            _uiFocus.Add(new FocusableAction(_lavaSpeedPlusBounds, () =>
+            }), "LavaSpeedMinus");
+            int plusIndex = _uiFocus.Add(new FocusableAction(_lavaSpeedPlusBounds, () =>
             {
                 AdjustLavaRiseSpeed(10f);
                 return true;
-            }));
+            }), "LavaSpeedPlus");
+
+            nav.LinkHorizontal(backIndex, minusIndex);
+            nav.LinkHorizontal(minusIndex, plusIndex);
+            nav.LinkHorizontal(plusIndex, applyIndex);
+        }
+        else
+        {
+            nav.LinkHorizontal(backIndex, applyIndex);
         }
 
+        _uiFocus.FinalizeFocus("Back");
         _uiFocus.Update(gameTime, _game.Input);
     }
 

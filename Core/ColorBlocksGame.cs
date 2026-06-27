@@ -105,6 +105,7 @@ public class ColorBlocksGame : Game
     {
         _currentScene?.OnExit();
         _currentScene = scene;
+        NavigationDebug.CurrentScene = scene.GetType().Name;
     }
 
     public void ExitGame()

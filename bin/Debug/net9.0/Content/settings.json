@@ -1,8 +1,8 @@
 {
   "displayMode": "Windowed",
-  "resolutionWidth": 1600,
-  "resolutionHeight": 1200,
-  "musicVolume": 0.30932203,
+  "resolutionWidth": 1920,
+  "resolutionHeight": 1080,
+  "musicVolume": 0.27542374,
   "fpsLimit": 144,
   "Keybindings": {
     "MoveLeft": "A",
@@ -14,5 +14,6 @@
     "Green": "L",
     "PullRope": "Space",
     "Respawn": "R"
-  }
+  },
+  "GamepadBindings": {}
 }

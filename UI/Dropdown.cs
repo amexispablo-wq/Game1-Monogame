@@ -28,11 +28,11 @@ public sealed class Dropdown<T> where T : notnull
         }
     }
 
-    public void Update(InputManager input)
+    public void Update(InputManager input, bool isFocused = true)
     {
         Rectangle headerBounds = Bounds;
 
-        if (input.LeftMousePressed && headerBounds.Contains(input.UiPointerPosition))
+        if (input.UiPointerPressed && headerBounds.Contains(input.UiPointerPosition))
         {
             IsExpanded = !IsExpanded;
             HighlightedIndex = null;
@@ -55,7 +55,7 @@ public sealed class Dropdown<T> where T : notnull
             }
 
             HighlightedIndex = i;
-            if (input.LeftMousePressed)
+            if (input.UiPointerPressed)
             {
                 _selectedIndex = i;
                 IsExpanded = false;
@@ -65,7 +65,7 @@ public sealed class Dropdown<T> where T : notnull
             return;
         }
 
-        if (input.LeftMousePressed && !GetExpandedInteractionBounds().Contains(input.UiPointerPosition))
+        if (input.UiPointerPressed && !GetExpandedInteractionBounds().Contains(input.UiPointerPosition))
         {
             IsExpanded = false;
             HighlightedIndex = null;

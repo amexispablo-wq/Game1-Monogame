@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Microsoft.Xna.Framework.Input;
 
 namespace ColorBlocks;
@@ -21,6 +22,76 @@ public static class GamepadDefaults
     public static Buttons PauseButton => Buttons.Start;
     public static Buttons MenuConfirmButton => Buttons.A;
     public static Buttons MenuCancelButton => Buttons.B;
+
+    // Button-style actions that support gamepad rebinding (axis/trigger actions excluded).
+    public static readonly GameplayInputAction[] RebindableButtonActions =
+    {
+        GameplayInputAction.Jump,
+        GameplayInputAction.Respawn,
+        GameplayInputAction.Red,
+        GameplayInputAction.Blue,
+        GameplayInputAction.Green
+    };
+
+    public static bool IsButtonRebindable(GameplayInputAction action)
+    {
+        foreach (GameplayInputAction candidate in RebindableButtonActions)
+        {
+            if (candidate == action)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static Buttons GetDefaultButton(GameplayInputAction action) => action switch
+    {
+        GameplayInputAction.Jump => JumpButton,
+        GameplayInputAction.Respawn => RespawnButton,
+        GameplayInputAction.Red => RedButton,
+        GameplayInputAction.Blue => BlueButton,
+        GameplayInputAction.Green => GreenButton,
+        _ => Buttons.A
+    };
+
+    // Buttons offered when capturing a new gamepad binding.
+    public static readonly Buttons[] CaptureButtons =
+    {
+        Buttons.A, Buttons.B, Buttons.X, Buttons.Y,
+        Buttons.LeftShoulder, Buttons.RightShoulder,
+        Buttons.Back, Buttons.Start,
+        Buttons.LeftStick, Buttons.RightStick
+    };
+
+    public static string FormatButton(Buttons button) => button switch
+    {
+        Buttons.A => "A / Cross",
+        Buttons.B => "B / Circle",
+        Buttons.X => "X / Square",
+        Buttons.Y => "Y / Triangle",
+        Buttons.LeftShoulder => "LB / L1",
+        Buttons.RightShoulder => "RB / R1",
+        Buttons.Back => "Back / Select",
+        Buttons.Start => "Start / Options",
+        Buttons.LeftStick => "L Stick Press",
+        Buttons.RightStick => "R Stick Press",
+        _ => button.ToString()
+    };
+
+    public static string GetGamepadDisplayName(GameplayInputAction action, IReadOnlyDictionary<string, string>? overrides)
+    {
+        if (IsButtonRebindable(action)
+            && overrides != null
+            && overrides.TryGetValue(action.ToString(), out string? stored)
+            && System.Enum.TryParse(stored, out Buttons parsed))
+        {
+            return FormatButton(parsed);
+        }
+
+        return GetDisplayName(action);
+    }
 
     public static string GetDisplayName(GameplayInputAction action)
     {

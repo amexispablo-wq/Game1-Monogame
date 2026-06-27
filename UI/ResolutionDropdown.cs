@@ -33,36 +33,39 @@ public sealed class ResolutionDropdown
     public int DropdownHeight { get; set; } = 150;
     public bool OpenUpwards { get; set; }
 
-    public ResolutionDropdown()
+    public void RefreshSupportedResolutions(GraphicsDevice? graphicsDevice = null)
     {
-        InitializeResolutions();
+        Resolutions = ResolutionCatalog.GetSupportedResolutions(graphicsDevice);
+        if (SelectedResolution is not null)
+        {
+            Resolution? match = Resolutions.Find(r => r.Equals(SelectedResolution));
+            if (match is not null)
+            {
+                SelectedResolution = match;
+            }
+            else if (Resolutions.Count > 0)
+            {
+                SelectedResolution = Resolutions[0];
+            }
+        }
     }
 
-    private void InitializeResolutions()
-    {
-        // 16:9
-        Resolutions.Add(new Resolution(1280, 720));
-        Resolutions.Add(new Resolution(1600, 900));
-        Resolutions.Add(new Resolution(1920, 1080));
-        Resolutions.Add(new Resolution(2560, 1440));
-
-        // Ultrawide
-        Resolutions.Add(new Resolution(2560, 1080));
-        Resolutions.Add(new Resolution(3440, 1440));
-
-        // 4:3
-        Resolutions.Add(new Resolution(1024, 768));
-        Resolutions.Add(new Resolution(1600, 1200));
-    }
-
-    public void Update(InputManager input)
+    public void Update(InputManager input, bool isFocused = true)
     {
         Rectangle headerBounds = Bounds;
 
-        if (input.LeftMousePressed && headerBounds.Contains(input.UiPointerPosition))
+        if (input.UiPointerPressed && headerBounds.Contains(input.UiPointerPosition))
         {
             IsExpanded = !IsExpanded;
-            HighlightedIndex = null;
+            if (IsExpanded)
+            {
+                HighlightedIndex = GetSelectedIndex();
+            }
+            else
+            {
+                HighlightedIndex = null;
+            }
+
             return;
         }
 
@@ -72,7 +75,6 @@ public sealed class ResolutionDropdown
             return;
         }
 
-        HighlightedIndex = null;
         for (int i = 0; i < Resolutions.Count; i++)
         {
             Rectangle itemBounds = GetItemBounds(i);
@@ -83,7 +85,7 @@ public sealed class ResolutionDropdown
 
             HighlightedIndex = i;
 
-            if (input.LeftMousePressed)
+            if (input.UiPointerPressed)
             {
                 SelectedResolution = Resolutions[i];
                 IsExpanded = false;
@@ -93,7 +95,7 @@ public sealed class ResolutionDropdown
             return;
         }
 
-        if (input.LeftMousePressed && !GetExpandedInteractionBounds().Contains(input.UiPointerPosition))
+        if (input.UiPointerPressed && !GetExpandedInteractionBounds().Contains(input.UiPointerPosition))
         {
             IsExpanded = false;
             HighlightedIndex = null;
@@ -121,7 +123,7 @@ public sealed class ResolutionDropdown
     {
         Rectangle headerBounds = Bounds;
         Color headerBg = IsExpanded ? new Color(64, 78, 106) : new Color(46, 56, 76);
-        Color border = IsExpanded ? new Color(255, 226, 122) : new Color(105, 121, 150);
+        Color border = IsExpanded ? new Color(140, 180, 230) : new Color(105, 121, 150);
 
         spriteBatch.Draw(pixel, new Rectangle(headerBounds.X + 3, headerBounds.Y + 4, headerBounds.Width, headerBounds.Height), new Color(4, 6, 10, 90));
         spriteBatch.Draw(pixel, headerBounds, headerBg);
@@ -151,12 +153,23 @@ public sealed class ResolutionDropdown
             Color itemBg = isHighlighted
                 ? new Color(74, 96, 132)
                 : (isSelected ? new Color(55, 74, 102) : new Color(38, 48, 68));
-            Color textColor = isHighlighted || isSelected ? new Color(255, 226, 122) : Color.White;
+            Color textColor = isHighlighted || isSelected ? new Color(180, 214, 255) : Color.White;
 
             spriteBatch.Draw(pixel, itemBounds, itemBg);
             spriteBatch.Draw(pixel, new Rectangle(itemBounds.X + 10, itemBounds.Bottom - 1, itemBounds.Width - 20, 1), new Color(85, 99, 126, 170));
             DrawFittedCentered(spriteBatch, pixel, Resolutions[i].ToString(), itemBounds, 2, textColor);
         }
+    }
+
+    private int GetSelectedIndex()
+    {
+        if (SelectedResolution is null)
+        {
+            return 0;
+        }
+
+        int index = Resolutions.FindIndex(r => r.Equals(SelectedResolution));
+        return index < 0 ? 0 : index;
     }
 
     private Rectangle GetDropdownBounds()

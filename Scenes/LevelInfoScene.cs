@@ -79,6 +79,7 @@ public sealed class LevelInfoScene : IScene
         _backFocus = new FocusableButton(_backButton);
         _applyFocus = new FocusableButton(_applyButton);
 
+        _focus.ResetFocus();
         _savedState = CaptureCurrentState();
         _hasUnsavedChanges = false;
     }
@@ -94,18 +95,31 @@ public sealed class LevelInfoScene : IScene
         }
 
         _focus.Clear();
-        _focus.Add(_nameFocus);
-        _focus.Add(_musicFocus);
-        _focus.Add(_allPlayersFocus);
-        _focus.Add(_player1Focus);
-        _focus.Add(_player2Focus);
-        _focus.Add(_player3Focus);
-        _focus.Add(_player4Focus);
-        _focus.Add(_coloredRopeFocus);
-        _focus.Add(_regularRopeFocus);
-        _focus.Add(_lavaRiseFocus);
-        _focus.Add(_backFocus);
-        _focus.Add(_applyFocus);
+        int nameIdx = _focus.Add(_nameFocus, "LevelName");
+        int musicIdx = _focus.Add(_musicFocus, "Music");
+        int allPlayersIdx = _focus.Add(_allPlayersFocus, "AllPlayers");
+        int p1Idx = _focus.Add(_player1Focus, "Player1");
+        int p2Idx = _focus.Add(_player2Focus, "Player2");
+        int p3Idx = _focus.Add(_player3Focus, "Player3");
+        int p4Idx = _focus.Add(_player4Focus, "Player4");
+        int coloredIdx = _focus.Add(_coloredRopeFocus, "ColoredRope");
+        int regularIdx = _focus.Add(_regularRopeFocus, "RegularRope");
+        int lavaIdx = _focus.Add(_lavaRiseFocus, "LavaRise");
+        int backIdx = _focus.Add(_backFocus, "Back");
+        int applyIdx = _focus.Add(_applyFocus, "Apply");
+
+        NavigationGraph nav = _focus.Navigation;
+        nav.LinkVertical(nameIdx, musicIdx);
+        nav.LinkVertical(musicIdx, allPlayersIdx);
+        nav.LinkVertical(allPlayersIdx, p1Idx);
+        nav.WireGrid(p1Idx, 4, 2);
+        NavigationGraphBuilder.LinkGridBottomRowTo(nav, p1Idx, 4, 2, coloredIdx);
+        nav.LinkVertical(coloredIdx, regularIdx);
+        nav.LinkVertical(regularIdx, lavaIdx);
+        nav.LinkVertical(lavaIdx, backIdx);
+        nav.LinkHorizontal(backIdx, applyIdx);
+
+        _focus.FinalizeFocus("LevelName");
         _focus.Update(gameTime, _game.Input);
 
         if (_backFocus.WasActivated || _game.Input.ExitPressed)
@@ -327,24 +341,31 @@ public sealed class LevelInfoScene : IScene
         LayoutUnsavedPromptBounds();
 
         _promptFocus.Clear();
-        _promptFocus.Add(new FocusableAction(_savePromptSaveBounds, () =>
+        int saveIdx = _promptFocus.Add(new FocusableAction(_savePromptSaveBounds, () =>
         {
             ApplyChanges();
             _showUnsavedChangesPrompt = false;
             ReturnToLevelSelect();
             return true;
-        }));
-        _promptFocus.Add(new FocusableAction(_savePromptDiscardBounds, () =>
+        }), "Save");
+        int discardIdx = _promptFocus.Add(new FocusableAction(_savePromptDiscardBounds, () =>
         {
             _showUnsavedChangesPrompt = false;
             ReturnToLevelSelect();
             return true;
-        }));
-        _promptFocus.Add(new FocusableAction(_savePromptCancelBounds, () =>
+        }), "Discard");
+        int cancelIdx = _promptFocus.Add(new FocusableAction(_savePromptCancelBounds, () =>
         {
             _showUnsavedChangesPrompt = false;
             return true;
-        }));
+        }), "Cancel");
+
+        NavigationGraph promptNav = _promptFocus.Navigation;
+        promptNav.LinkHorizontal(saveIdx, discardIdx);
+        promptNav.LinkHorizontal(discardIdx, cancelIdx);
+
+        _promptFocus.Name = "Unsaved Changes";
+        _promptFocus.FinalizeFocus("Save");
         _promptFocus.Update(gameTime, _game.Input);
 
         if (_game.Input.ExitPressed)

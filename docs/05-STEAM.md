@@ -2,8 +2,21 @@
 
 ## Estado
 
-- **Implementado:** init/shutdown de Steamworks, persona name, SteamID, estado de overlay, callbacks por frame. Tolerante a fallos (corre sin Steam, ej. en dev sin cliente).
-- **Falta:** todo lo de **multijugador online** (lobbies, networking sockets, invitaciones), achievements, stats/leaderboards, rich presence. Ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md).
+| Feature | Estado |
+|---------|--------|
+| Init/shutdown Steamworks | ✅ `SteamManager` |
+| Tolerancia a fallos (correr sin Steam) | ✅ |
+| Callbacks por frame | ✅ `SteamCallbackManager` |
+| Lobby friends-only (crear/unirse/salir) | ✅ `SteamLobbyService` |
+| Invitaciones overlay + join desde amigos | ✅ |
+| Roster de party en lobby data | ✅ `SteamPartyService` + `PartyRosterCodec` |
+| Sync inicio de nivel (líder → todos) | ✅ `BroadcastLevelStart` |
+| Rich presence (connect string) | ✅ Parcial (`#StatusInParty`) |
+| Kick vía lobby chat | ✅ |
+| **Gameplay networking (sockets)** | ❌ Ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md) |
+| Achievements / stats | ❌ |
+| Leaderboards globales | ❌ Ver [`08-ROADMAP.md`](08-ROADMAP.md) Fase 3 |
+| Steam Workshop / UGC | ❌ Ver [`08-ROADMAP.md`](08-ROADMAP.md) Fase 4 |
 
 ## SteamManager — `Steam/SteamManager.cs`
 
@@ -22,36 +35,56 @@
 
 ### Tolerancia a fallos
 
-`Initialize`/`RunCallbacks` atrapan excepciones "recuperables" (`DllNotFoundException`, `BadImageFormatException`, `EntryPointNotFoundException`, `SEHException`, `TypeInitializationException`) → el juego sigue corriendo con `IsInitialized = false` y status "Steam unavailable". Esto permite desarrollar sin el cliente de Steam abierto.
+`Initialize`/`RunCallbacks` atrapan excepciones recuperables (`DllNotFoundException`, `BadImageFormatException`, etc.) → el juego sigue con `IsInitialized = false`. Permite desarrollar sin cliente Steam abierto.
 
-El estado de Steam se ve en el **debug HUD** (`F3`) dentro de `GameScene`.
+## Steam Lobby — `Steam/SteamLobbyService.cs`
+
+Servicio principal de multijugador social (sin transporte de gameplay):
+
+- Crear lobby friends-only, unirse, salir.
+- Overlay de invitación (`ActivateGameOverlayInviteDialog`).
+- Lobby data: nivel seleccionado, `RopeGameplayMode`, lava rise.
+- `BroadcastLevelStart` / `LevelStartReceived` — líder inicia partida, clientes cargan nivel.
+- Rich presence join (`game_connect` string).
+- Eventos: `LobbyStateChanged`, `LobbyReady`, `MemberLeft`, `ErrorOccurred`.
+
+## Steam Party — `Steam/SteamPartyService.cs`
+
+- Serializa roster de `PartyManager` a lobby data (`SteamConstants.PartyRosterCodec`).
+- Reconstruye miembros locales/remotos al actualizar lobby.
+- Integrado en `PartyScene` vía `Party.BindSteamServices`.
 
 ## Ciclo de vida (en `ColorBlocksGame`)
 
-```79:96:Core/ColorBlocksGame.cs
-protected override void Initialize()
-{
-    _steam.Initialize();
-    ...
-}
-```
+```csharp
+// Initialize
+_steam.Initialize();
+_steamCallbacks = new SteamCallbackManager(_steam);
+_steamLobby = new SteamLobbyService(_steam, _steamCallbacks);
+_steamParty = new SteamPartyService(_steamLobby);
+Party.BindSteamServices(_steamLobby, _steamParty);
 
-- `Initialize()` → `_steam.Initialize()`.
-- `Update()` → `_steam.RunCallbacks()` (primero, cada frame).
-- `Dispose(disposing)` → `_steam.Shutdown()`.
+// Update (cada frame)
+_steam.RunCallbacks();
+
+// Dispose
+_steam.Shutdown();
+```
 
 ## Configuración / archivos
 
-- **`steam_appid.txt`** (raíz): contiene el App ID. Se copia al output (`CopyToOutputDirectory`). En dev suele ser `480` (Spacewar) hasta tener el App ID real de la tienda.
-- **`Steam/Native/Windows-x64/steam_api64.dll`**: DLL nativa de Steamworks, copiada al output como `steam_api64.dll` (`CopyToOutputDirectory=Always`).
-- **`Steamworks.NET` 2024.8.0** vía NuGet (`Color Blocks.csproj`).
-- **`app.manifest`**: manifiesto de la app (DPI awareness, etc.), referenciado en el csproj.
+- **`steam_appid.txt`** (raíz): App ID `4796400` (verificar ID de producción antes de release). Copiado al output.
+- **`Steam/Native/Windows-x64/steam_api64.dll`**: copiada al output como `steam_api64.dll`.
+- **`Steamworks.NET` 2024.8.0** vía NuGet.
+- **`app.manifest`**: DPI awareness, referenciado en csproj.
 
 ## Pendientes para release en Steam
 
-1. Reemplazar el App ID de dev por el **App ID real** en `steam_appid.txt`.
-2. Implementar el **coop online** sobre Steam Networking + lobbies (ver doc 03).
-3. (Opcional) Achievements, stats y leaderboards (encaja con `BestTimeStorage`).
-4. (Opcional) Rich presence e invitaciones por overlay.
-5. Empaquetado/depot via SteamPipe, build de release (`net9.0`, x64), incluir `steam_api64.dll`.
-6. Quitar/ocultar el `steam_appid.txt` de dev en la build publicada (Steam lo provee en runtime real).
+Ver checklist completo en [`08-ROADMAP.md`](08-ROADMAP.md). Resumen:
+
+1. **Coop online** — Steam Networking Sockets + serialización de snapshots/inputs.
+2. **Leaderboards globales** — `SteamUserStats` por nivel.
+3. **Workshop** — `SteamUGC` para niveles de comunidad.
+4. **Rich presence** — strings localizados en Steam Partner backend.
+5. **Achievements / cloud saves** (opcional v1).
+6. **SteamPipe** — depots, build release x64, quitar `steam_appid.txt` de build publicada.

@@ -18,8 +18,16 @@ Core/         Entry point, clase Game, bucle de simulación
   GameSimulation.cs    -> bucle de tick fijo, autoridad de gameplay
 
 Scenes/       Pantallas (patrón IScene)
-  IScene.cs, MenuScene, LevelSelectScene, GameScene, EditorScene,
+  IScene.cs, MenuScene, PartyScene, LevelSelectScene, GameScene, EditorScene,
   OptionsScene, LevelInfoScene, EditorObjectKind, EditorClipboardItem
+
+Party/        Coop local + roster Steam
+  PartyManager, PartyMember, PartyMemberId, PartyInputSource
+
+UI/           Widgets + navegación
+  Button, Slider, Checkbox, Dropdown, Popup, PauseMenuOverlay, PartyHudOverlay
+  Navigation/ UIFocusManager, NavigationGraph, Focusables, EditModeController,
+              NavigationDebug, VirtualCursor, ResolutionCatalog
 
 Entities/     Objetos de juego
   Player, Rope, RopeNode, RopeConstraint, RopeGameplayMode,
@@ -43,9 +51,9 @@ LevelSystem/  Niveles
   LevelPreviewManager
 
 Graphics/     Camera, DrawHelper, SimpleTextRenderer
-UI/           Button, Slider, Checkbox, Dropdown, Popup, layouts, etc.
 Utils/        GameColor, CollisionHelper, GameSettings, GridLayout
-Steam/        SteamManager + Native/Windows-x64/steam_api64.dll
+Steam/        SteamManager, SteamLobbyService, SteamPartyService,
+              SteamCallbackManager, SteamConstants + Native/Windows-x64/steam_api64.dll
 Content/      Content.mgcb, level.json (legado), Levels/ (en build output)
 ```
 
@@ -101,15 +109,19 @@ ColorBlocksGame (host: input, steam, escena)
 MenuScene
 ├─ "Play"          → LevelSelectScene(PlayMode)
 │                      └─ seleccionar nivel → GameScene(levelId, ropeMode)
+├─ "Party"         → PartyScene (coop local + lobby Steam)
+│                      └─ Play → LevelSelectScene(PlayMode) → GameScene
 ├─ "Level Editor"  → LevelSelectScene(EditMode)
 │                      ├─ Edit   → EditorScene(levelId)
 │                      ├─ Create → Popup texto → LevelManager.CreateNewLevel
 │                      └─ Delete → Popup confirmación → LevelManager.DeleteLevel
-└─ "Options"       → OptionsScene
+└─ "Options"       → OptionsScene (display, audio, rebinding teclado/gamepad)
 ```
 
-- `GameScene` hoy crea la sesión con `GameSession.CreateLocalTest(...)` (un solo proceso, multijugador local).
+- `GameScene` crea sesión con `GameSession.CreateLocalTest(...)` (multijugador local en un proceso).
+- `PartyScene` gestiona hasta 4 miembros (teclado + gamepads) y lobby Steam (invite, roster, kick).
 - `LevelSelectScene` mantiene el `RopeGameplayMode` elegido en un campo `static` entre transiciones.
+- Navegación UI en todas las escenas: ver [`07-UI-NAVEGACION.md`](07-UI-NAVEGACION.md).
 
 ## Patrón IScene
 

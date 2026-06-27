@@ -16,10 +16,11 @@ public sealed class FocusableButton : IFocusable
 
     public Rectangle Bounds => _button.Bounds;
     public bool IsEnabled { get; set; } = true;
-    public bool CaptureHorizontalNavigation => false;
+    public bool CapturesNavigation => false;
+    public bool IsEditing => false;
     public bool WasActivated { get; private set; }
 
-    public bool OnHorizontal(int direction) => false;
+    public bool HandleDirection(NavigationDirection direction) => false;
 
     public bool OnConfirm()
     {
@@ -32,11 +33,12 @@ public sealed class FocusableButton : IFocusable
         return true;
     }
 
+    public bool OnCancel() => false;
+
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {
         WasActivated = false;
-        bool pointerOver = Bounds.Contains(input.UiPointerPosition);
-        if (pointerOver && input.UiPointerPressed && IsEnabled)
+        if (Bounds.Contains(input.UiPointerPosition) && input.UiPointerPressed && IsEnabled)
         {
             WasActivated = true;
         }
@@ -53,6 +55,7 @@ public sealed class FocusableButton : IFocusable
 public sealed class FocusableCycleSelector<T> : IFocusable where T : notnull
 {
     private readonly CycleSelector<T> _selector;
+    private readonly EditModeController<T> _edit = new();
 
     public FocusableCycleSelector(CycleSelector<T> selector)
     {
@@ -61,22 +64,58 @@ public sealed class FocusableCycleSelector<T> : IFocusable where T : notnull
 
     public Rectangle Bounds => _selector.Bounds;
     public bool IsEnabled { get; set; } = true;
-    public bool CaptureHorizontalNavigation => true;
+    public bool CapturesNavigation => _edit.IsEditing;
+    public bool IsEditing => _edit.IsEditing;
 
-    public bool OnHorizontal(int direction)
+    public bool HandleDirection(NavigationDirection direction)
     {
-        if (!IsEnabled || _selector.Options.Count == 0)
+        if (!_edit.IsEditing || _selector.Options.Count == 0)
         {
             return false;
         }
 
-        int current = _selector.Options.IndexOf(_selector.CurrentOption);
-        int next = (current + direction + _selector.Options.Count) % _selector.Options.Count;
-        _selector.CurrentOption = _selector.Options[next];
+        if (direction == NavigationDirection.Left)
+        {
+            Cycle(-1);
+            return true;
+        }
+
+        if (direction == NavigationDirection.Right)
+        {
+            Cycle(1);
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool OnConfirm()
+    {
+        if (!IsEnabled)
+        {
+            return false;
+        }
+
+        if (_edit.IsEditing)
+        {
+            _edit.Confirm();
+            return true;
+        }
+
+        _edit.BeginEdit(_selector.CurrentOption);
         return true;
     }
 
-    public bool OnConfirm() => false;
+    public bool OnCancel()
+    {
+        if (!_edit.IsEditing)
+        {
+            return false;
+        }
+
+        _edit.Cancel(value => _selector.CurrentOption = value);
+        return true;
+    }
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {
@@ -86,6 +125,19 @@ public sealed class FocusableCycleSelector<T> : IFocusable where T : notnull
     public void DrawFocusHighlight(SpriteBatch spriteBatch, Texture2D pixel, GameTime gameTime)
     {
         FocusHighlight.Draw(spriteBatch, pixel, Bounds, gameTime.TotalGameTime.TotalSeconds);
+        if (_edit.IsEditing)
+        {
+            Rectangle editBadge = new(Bounds.Right - 72, Bounds.Y - 14, 68, 16);
+            spriteBatch.Draw(pixel, editBadge, new Color(72, 120, 200, 200));
+            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "EDIT", editBadge, 1, Color.White);
+        }
+    }
+
+    private void Cycle(int direction)
+    {
+        int current = _selector.Options.IndexOf(_selector.CurrentOption);
+        int next = (current + direction + _selector.Options.Count) % _selector.Options.Count;
+        _selector.CurrentOption = _selector.Options[next];
     }
 }
 
@@ -100,9 +152,10 @@ public sealed class FocusableCheckbox : IFocusable
 
     public Rectangle Bounds => _checkbox.Bounds;
     public bool IsEnabled => _checkbox.IsEnabled;
-    public bool CaptureHorizontalNavigation => false;
+    public bool CapturesNavigation => false;
+    public bool IsEditing => false;
 
-    public bool OnHorizontal(int direction) => false;
+    public bool HandleDirection(NavigationDirection direction) => false;
 
     public bool OnConfirm()
     {
@@ -114,6 +167,8 @@ public sealed class FocusableCheckbox : IFocusable
         _checkbox.IsChecked = !_checkbox.IsChecked;
         return true;
     }
+
+    public bool OnCancel() => false;
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {
@@ -129,6 +184,7 @@ public sealed class FocusableCheckbox : IFocusable
 public sealed class FocusableSlider : IFocusable
 {
     private readonly Slider _slider;
+    private readonly EditModeController<float> _edit = new();
 
     public FocusableSlider(Slider slider)
     {
@@ -137,22 +193,55 @@ public sealed class FocusableSlider : IFocusable
 
     public Rectangle Bounds => _slider.Bounds;
     public bool IsEnabled { get; set; } = true;
-    public bool CaptureHorizontalNavigation => true;
+    public bool CapturesNavigation => _edit.IsEditing;
+    public bool IsEditing => _edit.IsEditing;
 
-    public bool OnHorizontal(int direction)
+    public bool HandleDirection(NavigationDirection direction)
+    {
+        if (!_edit.IsEditing)
+        {
+            return false;
+        }
+
+        if (direction is NavigationDirection.Left or NavigationDirection.Right)
+        {
+            int stepDirection = direction == NavigationDirection.Left ? -1 : 1;
+            float range = _slider.MaxValue - _slider.MinValue;
+            float step = range * 0.05f;
+            _slider.Value = MathHelper.Clamp(_slider.Value + (stepDirection * step), _slider.MinValue, _slider.MaxValue);
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool OnConfirm()
     {
         if (!IsEnabled)
         {
             return false;
         }
 
-        float range = _slider.MaxValue - _slider.MinValue;
-        float step = range * 0.05f;
-        _slider.Value = MathHelper.Clamp(_slider.Value + (direction * step), _slider.MinValue, _slider.MaxValue);
+        if (_edit.IsEditing)
+        {
+            _edit.Confirm();
+            return true;
+        }
+
+        _edit.BeginEdit(_slider.Value);
         return true;
     }
 
-    public bool OnConfirm() => false;
+    public bool OnCancel()
+    {
+        if (!_edit.IsEditing)
+        {
+            return false;
+        }
+
+        _edit.Cancel(value => _slider.Value = value);
+        return true;
+    }
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {
@@ -162,36 +251,46 @@ public sealed class FocusableSlider : IFocusable
     public void DrawFocusHighlight(SpriteBatch spriteBatch, Texture2D pixel, GameTime gameTime)
     {
         FocusHighlight.Draw(spriteBatch, pixel, Bounds, gameTime.TotalGameTime.TotalSeconds);
+        if (_edit.IsEditing)
+        {
+            Rectangle editBadge = new(Bounds.Right - 72, Bounds.Y - 14, 68, 16);
+            spriteBatch.Draw(pixel, editBadge, new Color(72, 120, 200, 200));
+            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "EDIT", editBadge, 1, Color.White);
+        }
     }
 }
 
 public sealed class FocusableAction : IFocusable
 {
+    private readonly Func<Rectangle> _boundsProvider;
     private readonly Func<bool> _onConfirm;
 
     public FocusableAction(Rectangle bounds, Func<bool> onConfirm)
+        : this(() => bounds, onConfirm)
     {
-        Bounds = bounds;
+    }
+
+    public FocusableAction(Func<Rectangle> boundsProvider, Func<bool> onConfirm)
+    {
+        _boundsProvider = boundsProvider;
         _onConfirm = onConfirm;
     }
 
-    public Rectangle Bounds { get; }
+    public Rectangle Bounds => _boundsProvider();
     public bool IsEnabled { get; set; } = true;
-    public bool CaptureHorizontalNavigation => false;
+    public bool CapturesNavigation => false;
+    public bool IsEditing => false;
     public bool WasActivated { get; private set; }
 
-    public bool OnHorizontal(int direction) => false;
+    public bool HandleDirection(NavigationDirection direction) => false;
 
     public bool OnConfirm()
     {
-        if (!IsEnabled)
-        {
-            return false;
-        }
-
         WasActivated = _onConfirm();
         return WasActivated;
     }
+
+    public bool OnCancel() => false;
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {
@@ -212,6 +311,7 @@ public sealed class FocusableCycleMemberInput : IFocusable
 {
     private readonly PartyMember _member;
     private readonly Action<PartyMember, int> _cycle;
+    private readonly EditModeController _edit = new();
 
     public FocusableCycleMemberInput(Rectangle bounds, PartyMember member, Action<PartyMember, int> cycle)
     {
@@ -222,27 +322,62 @@ public sealed class FocusableCycleMemberInput : IFocusable
 
     public Rectangle Bounds { get; }
     public bool IsEnabled => _member.IsLocallyOwned;
-    public bool CaptureHorizontalNavigation => true;
+    public bool CapturesNavigation => _edit.IsEditing;
+    public bool IsEditing => _edit.IsEditing;
 
-    public bool OnHorizontal(int direction)
+    public bool HandleDirection(NavigationDirection direction)
+    {
+        if (!_edit.IsEditing)
+        {
+            return false;
+        }
+
+        if (direction == NavigationDirection.Left)
+        {
+            _cycle(_member, -1);
+            return true;
+        }
+
+        if (direction == NavigationDirection.Right)
+        {
+            _cycle(_member, 1);
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool OnConfirm()
     {
         if (!IsEnabled)
         {
             return false;
         }
 
-        _cycle(_member, direction);
+        if (_edit.IsEditing)
+        {
+            _edit.Confirm();
+            return true;
+        }
+
+        _edit.BeginEdit();
         return true;
     }
 
-    public bool OnConfirm() => false;
+    public bool OnCancel()
+    {
+        if (!_edit.IsEditing)
+        {
+            return false;
+        }
+
+        _edit.Cancel();
+        return true;
+    }
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {
-        if (navigation.AllowPointerHoverVisual
-            && Bounds.Contains(input.UiPointerPosition)
-            && input.UiPointerPressed
-            && IsEnabled)
+        if (Bounds.Contains(input.UiPointerPosition) && input.UiPointerPressed && IsEnabled)
         {
             _cycle(_member, 1);
         }
@@ -257,6 +392,7 @@ public sealed class FocusableCycleMemberInput : IFocusable
 public sealed class FocusableResolutionDropdown : IFocusable
 {
     private readonly ResolutionDropdown _dropdown;
+    private Resolution? _cancelSelection;
 
     public FocusableResolutionDropdown(ResolutionDropdown dropdown)
     {
@@ -265,25 +401,26 @@ public sealed class FocusableResolutionDropdown : IFocusable
 
     public Rectangle Bounds => _dropdown.Bounds;
     public bool IsEnabled { get; set; } = true;
-    public bool CaptureHorizontalNavigation => _dropdown.IsExpanded;
+    public bool CapturesNavigation => _dropdown.IsExpanded;
+    public bool IsEditing => _dropdown.IsExpanded;
 
-    public bool OnHorizontal(int direction)
+    public bool HandleDirection(NavigationDirection direction)
     {
         if (!_dropdown.IsExpanded || _dropdown.Resolutions.Count == 0)
         {
             return false;
         }
 
-        int current = _dropdown.HighlightedIndex ?? _dropdown.Resolutions.FindIndex(
-            r => _dropdown.SelectedResolution is not null && r.Equals(_dropdown.SelectedResolution));
-        if (current < 0)
+        if (direction is NavigationDirection.Up or NavigationDirection.Down)
         {
-            current = 0;
+            int step = direction == NavigationDirection.Up ? -1 : 1;
+            int current = _dropdown.HighlightedIndex ?? GetSelectedIndex();
+            int next = (current + step + _dropdown.Resolutions.Count) % _dropdown.Resolutions.Count;
+            _dropdown.HighlightedIndex = next;
+            return true;
         }
 
-        int next = (current + direction + _dropdown.Resolutions.Count) % _dropdown.Resolutions.Count;
-        _dropdown.HighlightedIndex = next;
-        return true;
+        return false;
     }
 
     public bool OnConfirm()
@@ -295,52 +432,63 @@ public sealed class FocusableResolutionDropdown : IFocusable
 
         if (!_dropdown.IsExpanded)
         {
+            _cancelSelection = _dropdown.SelectedResolution;
             _dropdown.IsExpanded = true;
-            _dropdown.HighlightedIndex = _dropdown.Resolutions.FindIndex(
-                r => _dropdown.SelectedResolution is not null && r.Equals(_dropdown.SelectedResolution));
-            if (_dropdown.HighlightedIndex < 0)
-            {
-                _dropdown.HighlightedIndex = 0;
-            }
-
+            _dropdown.HighlightedIndex = GetSelectedIndex();
             return true;
         }
 
         if (_dropdown.HighlightedIndex is int index && index >= 0 && index < _dropdown.Resolutions.Count)
         {
             _dropdown.SelectedResolution = _dropdown.Resolutions[index];
-            _dropdown.IsExpanded = false;
-            _dropdown.HighlightedIndex = null;
         }
 
+        _dropdown.IsExpanded = false;
+        _dropdown.HighlightedIndex = null;
+        _cancelSelection = null;
+        return true;
+    }
+
+    public bool OnCancel()
+    {
+        if (!_dropdown.IsExpanded)
+        {
+            return false;
+        }
+
+        _dropdown.SelectedResolution = _cancelSelection;
+        _dropdown.IsExpanded = false;
+        _dropdown.HighlightedIndex = null;
+        _cancelSelection = null;
         return true;
     }
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {
-        if (isFocused && input.MenuCancelPressed && _dropdown.IsExpanded)
-        {
-            _dropdown.IsExpanded = false;
-            _dropdown.HighlightedIndex = null;
-        }
-        else if (isFocused && (input.MenuMoveUpPressed || input.MenuMoveDownPressed) && _dropdown.IsExpanded)
-        {
-            int direction = input.MenuMoveUpPressed ? -1 : 1;
-            OnHorizontal(direction);
-        }
-
-        _dropdown.Update(input);
+        _dropdown.Update(input, isFocused);
     }
 
     public void DrawFocusHighlight(SpriteBatch spriteBatch, Texture2D pixel, GameTime gameTime)
     {
         FocusHighlight.Draw(spriteBatch, pixel, Bounds, gameTime.TotalGameTime.TotalSeconds);
     }
+
+    private int GetSelectedIndex()
+    {
+        if (_dropdown.SelectedResolution is null)
+        {
+            return 0;
+        }
+
+        int index = _dropdown.Resolutions.FindIndex(r => r.Equals(_dropdown.SelectedResolution));
+        return index < 0 ? 0 : index;
+    }
 }
 
 public sealed class FocusableDropdown<T> : IFocusable where T : notnull
 {
     private readonly Dropdown<T> _dropdown;
+    private T? _cancelSelection;
 
     public FocusableDropdown(Dropdown<T> dropdown)
     {
@@ -349,19 +497,26 @@ public sealed class FocusableDropdown<T> : IFocusable where T : notnull
 
     public Rectangle Bounds => _dropdown.Bounds;
     public bool IsEnabled { get; set; } = true;
-    public bool CaptureHorizontalNavigation => _dropdown.IsExpanded;
+    public bool CapturesNavigation => _dropdown.IsExpanded;
+    public bool IsEditing => _dropdown.IsExpanded;
 
-    public bool OnHorizontal(int direction)
+    public bool HandleDirection(NavigationDirection direction)
     {
         if (!_dropdown.IsExpanded || _dropdown.Options.Count == 0)
         {
             return false;
         }
 
-        int current = _dropdown.HighlightedIndex ?? Math.Max(0, _dropdown.Options.IndexOf(_dropdown.SelectedOption!));
-        int next = (current + direction + _dropdown.Options.Count) % _dropdown.Options.Count;
-        _dropdown.HighlightedIndex = next;
-        return true;
+        if (direction is NavigationDirection.Up or NavigationDirection.Down)
+        {
+            int step = direction == NavigationDirection.Up ? -1 : 1;
+            int current = _dropdown.HighlightedIndex ?? Math.Max(0, _dropdown.Options.IndexOf(_dropdown.SelectedOption!));
+            int next = (current + step + _dropdown.Options.Count) % _dropdown.Options.Count;
+            _dropdown.HighlightedIndex = next;
+            return true;
+        }
+
+        return false;
     }
 
     public bool OnConfirm()
@@ -373,6 +528,7 @@ public sealed class FocusableDropdown<T> : IFocusable where T : notnull
 
         if (!_dropdown.IsExpanded)
         {
+            _cancelSelection = _dropdown.SelectedOption;
             _dropdown.IsExpanded = true;
             return true;
         }
@@ -380,22 +536,31 @@ public sealed class FocusableDropdown<T> : IFocusable where T : notnull
         if (_dropdown.HighlightedIndex is int index && index >= 0 && index < _dropdown.Options.Count)
         {
             _dropdown.SelectedOption = _dropdown.Options[index];
-            _dropdown.IsExpanded = false;
-            _dropdown.HighlightedIndex = null;
         }
 
+        _dropdown.IsExpanded = false;
+        _dropdown.HighlightedIndex = null;
+        _cancelSelection = default;
+        return true;
+    }
+
+    public bool OnCancel()
+    {
+        if (!_dropdown.IsExpanded)
+        {
+            return false;
+        }
+
+        _dropdown.SelectedOption = _cancelSelection;
+        _dropdown.IsExpanded = false;
+        _dropdown.HighlightedIndex = null;
+        _cancelSelection = default;
         return true;
     }
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {
-        if (isFocused && input.MenuCancelPressed && _dropdown.IsExpanded)
-        {
-            _dropdown.IsExpanded = false;
-            _dropdown.HighlightedIndex = null;
-        }
-
-        _dropdown.Update(input);
+        _dropdown.Update(input, isFocused);
     }
 
     public void DrawFocusHighlight(SpriteBatch spriteBatch, Texture2D pixel, GameTime gameTime)
@@ -415,13 +580,25 @@ public sealed class FocusableTextInput : IFocusable
 
     public Rectangle Bounds => _input.Bounds;
     public bool IsEnabled { get; set; } = true;
-    public bool CaptureHorizontalNavigation => _input.IsFocused;
+    public bool CapturesNavigation => _input.IsFocused;
+    public bool IsEditing => _input.IsFocused;
 
-    public bool OnHorizontal(int direction) => false;
+    public bool HandleDirection(NavigationDirection direction) => false;
 
     public bool OnConfirm()
     {
         _input.IsFocused = true;
+        return true;
+    }
+
+    public bool OnCancel()
+    {
+        if (!_input.IsFocused)
+        {
+            return false;
+        }
+
+        _input.IsFocused = false;
         return true;
     }
 
@@ -459,16 +636,19 @@ public sealed class FocusableGridCell : IFocusable
 
     public Rectangle Bounds { get; }
     public bool IsEnabled { get; set; } = true;
-    public bool CaptureHorizontalNavigation => false;
+    public bool CapturesNavigation => false;
+    public bool IsEditing => false;
     public bool WasActivated { get; private set; }
 
-    public bool OnHorizontal(int direction) => false;
+    public bool HandleDirection(NavigationDirection direction) => false;
 
     public bool OnConfirm()
     {
         WasActivated = _onConfirm();
         return WasActivated;
     }
+
+    public bool OnCancel() => false;
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {

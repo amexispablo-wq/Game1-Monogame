@@ -574,11 +574,14 @@ public sealed class GameScene : IScene
         };
         _deathOptionFocusables.Add(checkpointOption);
         _deathOptionFocusables.Add(new FocusableGridCell(_deathQuitBounds, () => true));
-        foreach (FocusableGridCell option in _deathOptionFocusables)
-        {
-            _deathFocus.Add(option);
-        }
 
+        var optionIndices = new List<int>();
+        optionIndices.Add(_deathFocus.Add(_deathOptionFocusables[0], "RespawnStart"));
+        optionIndices.Add(_deathFocus.Add(_deathOptionFocusables[1], "RespawnCheckpoint"));
+        optionIndices.Add(_deathFocus.Add(_deathOptionFocusables[2], "Quit"));
+        _deathFocus.Navigation.WireVerticalChain(optionIndices);
+
+        _deathFocus.FinalizeFocus("RespawnStart");
         _deathFocus.Update(gameTime, _game.Input);
 
         InputManager input = _game.Input;

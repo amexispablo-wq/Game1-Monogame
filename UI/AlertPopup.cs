@@ -56,7 +56,8 @@ public sealed class AlertPopup
 
         _focus.Clear();
 
-        _focus.Add(_okFocus);
+        _focus.Add(_okFocus, "OK");
+        _focus.FinalizeFocus("OK");
 
         _focus.Update(gameTime, input);
 

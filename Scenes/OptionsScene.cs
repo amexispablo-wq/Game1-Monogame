@@ -32,8 +32,16 @@ public sealed class OptionsScene : IScene
 
     // Control bindings
     private List<(string action, string keyName, string gamepadName)> _controlBindings = new();
+    private readonly List<FocusableAction> _bindingFocusables = new();
     private int? _rebindingIndex;
+    private RebindKind _rebindingKind = RebindKind.Keyboard;
     private double _rebindingWaitTime;
+
+    private enum RebindKind
+    {
+        Keyboard,
+        Gamepad
+    }
 
     private const int MinPanelWidth = 920;
     private const int MaxPanelWidth = 1180;
@@ -109,9 +117,11 @@ public sealed class OptionsScene : IScene
         _fpsLimitFocus = new FocusableCycleSelector<int>(_fpsLimitSelector);
         _volumeFocus = new FocusableSlider(_volumeSlider);
         _resolutionFocus = new FocusableResolutionDropdown(_resolutionDropdown);
+        _resolutionDropdown.RefreshSupportedResolutions(_game.GraphicsDevice);
         _applyFocus = new FocusableButton(_applyButton);
         _backFocus = new FocusableButton(_backButton);
 
+        _focus.ResetFocus();
         InitializeControlBindings();
     }
 
@@ -126,7 +136,7 @@ public sealed class OptionsScene : IScene
                 ? SettingsManager.PendingSettings.Keybindings[action]
                 : "Unknown";
             string gamepadName = Enum.TryParse(action, out GameplayInputAction gameplayAction)
-                ? GamepadDefaults.GetDisplayName(gameplayAction)
+                ? GamepadDefaults.GetGamepadDisplayName(gameplayAction, SettingsManager.PendingSettings.GamepadBindings)
                 : "—";
             _controlBindings.Add((action, keyName, gamepadName));
         }
@@ -142,35 +152,14 @@ public sealed class OptionsScene : IScene
             return;
         }
 
-        if (_game.Input.ExitPressed || _game.Input.MenuCancelPressed)
+        if ((_game.Input.ExitPressed || _game.Input.MenuCancelPressed) && !_focus.IsCapturingNavigation)
         {
             SettingsManager.RevertPendingChanges();
             _game.ChangeScene(new MenuScene(_game));
             return;
         }
 
-        if (_resolutionDropdown.IsExpanded)
-        {
-            _resolutionDropdown.Update(_game.Input);
-            SyncPendingSettings();
-            return;
-        }
-
-        _focus.Clear();
-        _focus.Add(_resolutionFocus);
-        _focus.Add(_displayModeFocus);
-        _focus.Add(_fpsLimitFocus);
-        _focus.Add(_volumeFocus);
-        _focus.Add(_applyFocus);
-        _focus.Add(_backFocus);
-        _focus.Update(gameTime, _game.Input);
-
-        _resolutionDropdown.Update(_game.Input);
-        if (_resolutionDropdown.IsExpanded)
-        {
-            SyncPendingSettings();
-            return;
-        }
+        RebuildFocus(gameTime);
 
         if (_backFocus.WasActivated)
         {
@@ -187,18 +176,103 @@ public sealed class OptionsScene : IScene
             return;
         }
 
+        SyncPendingSettings();
+    }
+
+    private void RebuildFocus(GameTime gameTime)
+    {
         LayoutMetrics layout = GetLayoutMetrics(_game.Viewport);
+        _bindingFocusables.Clear();
+        _focus.Clear();
+
+        // Display column (visual order: MODE, RESOLUTION, FPS LIMIT)
+        int displayModeIndex = _focus.Add(_displayModeFocus, "DisplayMode");
+        int resolutionIndex = _focus.Add(_resolutionFocus, "Resolution");
+        int fpsIndex = _focus.Add(_fpsLimitFocus, "FpsLimit");
+
+        // Audio column (right of display)
+        int volumeIndex = _focus.Add(_volumeFocus, "MusicVolume");
+
+        // Control bindings: two focusable cells per action (keyboard, gamepad)
+        var keyIndices = new List<int>();
+        var padIndices = new List<int>();
         for (int i = 0; i < _controlBindings.Count; i++)
         {
-            Rectangle bindingBounds = GetControlBindingBounds(layout, i);
-            if (_game.Input.LeftMousePressed && bindingBounds.Contains(_game.Input.MousePosition))
+            int captured = i;
+            string action = _controlBindings[i].action;
+
+            var keyFocus = new FocusableAction(
+                () => GetBindingCellBounds(layout, captured, BindingCell.Keyboard),
+                () => BeginRebind(captured, RebindKind.Keyboard));
+            var padFocus = new FocusableAction(
+                () => GetBindingCellBounds(layout, captured, BindingCell.Gamepad),
+                () => BeginRebind(captured, RebindKind.Gamepad));
+
+            _bindingFocusables.Add(keyFocus);
+            _bindingFocusables.Add(padFocus);
+
+            keyIndices.Add(_focus.Add(keyFocus, $"{action}Keyboard"));
+            padIndices.Add(_focus.Add(padFocus, $"{action}Gamepad"));
+        }
+
+        int applyIndex = _focus.Add(_applyFocus, "Apply");
+        int backIndex = _focus.Add(_backFocus, "Back");
+
+        NavigationGraph nav = _focus.Navigation;
+
+        // Display column: MODE -> RESOLUTION -> FPS -> AUDIO -> CONTROLS
+        nav.LinkVertical(displayModeIndex, resolutionIndex);
+        nav.LinkVertical(resolutionIndex, fpsIndex);
+        nav.LinkVertical(fpsIndex, volumeIndex);
+        nav.LinkHorizontal(resolutionIndex, volumeIndex);
+
+        if (keyIndices.Count > 0)
+        {
+            nav.LinkVertical(volumeIndex, keyIndices[0]);
+
+            for (int i = 0; i < keyIndices.Count; i++)
             {
-                _rebindingIndex = i;
-                _rebindingWaitTime = 0;
+                nav.LinkHorizontal(keyIndices[i], padIndices[i]);
+
+                if (i < keyIndices.Count - 1)
+                {
+                    nav.LinkVertical(keyIndices[i], keyIndices[i + 1]);
+                    nav.LinkVertical(padIndices[i], padIndices[i + 1]);
+                }
+            }
+
+            int last = keyIndices.Count - 1;
+            nav.LinkVertical(keyIndices[last], applyIndex);
+            nav.LinkVertical(padIndices[last], applyIndex);
+            nav.Link(applyIndex, NavigationDirection.Up, keyIndices[last]);
+            nav.Link(backIndex, NavigationDirection.Up, padIndices[last]);
+        }
+        else
+        {
+            nav.LinkVertical(volumeIndex, applyIndex);
+        }
+
+        nav.LinkHorizontal(backIndex, applyIndex);
+
+        _focus.FinalizeFocus("DisplayMode");
+        _focus.Update(gameTime, _game.Input);
+    }
+
+    private bool BeginRebind(int index, RebindKind kind)
+    {
+        if (kind == RebindKind.Gamepad)
+        {
+            if (!Enum.TryParse(_controlBindings[index].action, out GameplayInputAction action)
+                || !GamepadDefaults.IsButtonRebindable(action))
+            {
+                return false;
             }
         }
 
-        SyncPendingSettings();
+        _rebindingIndex = index;
+        _rebindingKind = kind;
+        _rebindingWaitTime = 0;
+        return true;
     }
 
     public void Draw(GameTime gameTime, SpriteBatch spriteBatch)
@@ -291,47 +365,89 @@ public sealed class OptionsScene : IScene
     private void DrawControlSettings(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
     {
         DrawSection(spriteBatch, pixel, layout, layout.ControlSectionBounds, "CONTROL SETTINGS");
+        DrawControlTableHeader(spriteBatch, pixel, layout);
+
+        bool allowHover = _game.Input.Navigation.AllowPointerHoverVisual;
+        Point pointer = _game.Input.UiPointerPosition;
 
         for (int i = 0; i < _controlBindings.Count; i++)
         {
             Rectangle rowBounds = GetControlBindingBounds(layout, i);
-            bool isHovered = rowBounds.Contains(_game.Input.MousePosition);
-            bool isRebinding = _rebindingIndex == i;
+            GetBindingCellRects(layout, i, out Rectangle labelBounds, out Rectangle keyBounds, out Rectangle padBounds);
+
             bool isAlternate = i % 2 == 1;
+            bool rebindingKey = _rebindingIndex == i && _rebindingKind == RebindKind.Keyboard;
+            bool rebindingPad = _rebindingIndex == i && _rebindingKind == RebindKind.Gamepad;
+            bool rowHovered = allowHover && rowBounds.Contains(pointer);
 
-            Color rowFill = isRebinding
-                ? new Color(91, 62, 72)
-                : (isHovered ? new Color(55, 70, 98) : (isAlternate ? new Color(35, 44, 62) : new Color(39, 50, 70)));
-            Color rowBorder = isRebinding
-                ? new Color(255, 196, 132)
-                : (isHovered ? Accent : new Color(75, 89, 116));
-
+            Color rowFill = isAlternate ? new Color(35, 44, 62) : new Color(39, 50, 70);
             spriteBatch.Draw(pixel, rowBounds, rowFill);
-            DrawHelper.DrawBorder(spriteBatch, pixel, rowBounds, rowBorder, isHovered || isRebinding ? 2 : 1);
+            if (rowHovered)
+            {
+                DrawHelper.DrawBorder(spriteBatch, pixel, rowBounds, Accent, 2);
+            }
 
-            Rectangle keyBounds = new(
-                rowBounds.Right - (layout.KeyBoxWidth * 2) - 14,
-                rowBounds.Y + 5,
-                layout.KeyBoxWidth,
-                rowBounds.Height - 10);
-            Rectangle padBounds = new(
-                rowBounds.Right - layout.KeyBoxWidth - 8,
-                rowBounds.Y + 5,
-                layout.KeyBoxWidth,
-                rowBounds.Height - 10);
+            DrawColumnDivider(spriteBatch, pixel, layout, rowBounds.Y, rowBounds.Height);
 
-            DrawBindingBox(spriteBatch, pixel, keyBounds, isRebinding, "KB", isRebinding ? "PRESS" : FormatKeyName(_controlBindings[i].keyName));
-            DrawBindingBox(spriteBatch, pixel, padBounds, false, "PAD", _controlBindings[i].gamepadName);
-
-            Rectangle labelBounds = new(
-                rowBounds.X + 14,
-                rowBounds.Y,
-                keyBounds.X - rowBounds.X - 24,
-                rowBounds.Height);
+            string keyText = rebindingKey ? "PRESS KEY" : FormatKeyName(_controlBindings[i].keyName);
+            string padText = rebindingPad ? "PRESS BTN" : _controlBindings[i].gamepadName;
+            DrawBindingBox(spriteBatch, pixel, keyBounds, rebindingKey, keyText);
+            DrawBindingBox(spriteBatch, pixel, padBounds, rebindingPad, padText);
 
             string displayAction = FormatActionName(_controlBindings[i].action);
             DrawFittedLeft(spriteBatch, pixel, displayAction, labelBounds, 2, LabelColor);
         }
+    }
+
+    private static void DrawControlTableHeader(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
+    {
+        Rectangle header = layout.ControlHeaderBounds;
+        spriteBatch.Draw(pixel, header, new Color(32, 42, 58));
+        DrawHelper.DrawBorder(spriteBatch, pixel, header, new Color(91, 108, 139), 1);
+
+        Rectangle actionHeader = GetColumnHeaderBounds(layout, 0);
+        Rectangle keyboardHeader = GetColumnHeaderBounds(layout, 1);
+        Rectangle gamepadHeader = GetColumnHeaderBounds(layout, 2);
+
+        DrawFittedLeft(spriteBatch, pixel, "ACTION", actionHeader, 1, MutedLabelColor);
+        DrawFittedCentered(spriteBatch, pixel, "KEYBOARD", keyboardHeader, 1, MutedLabelColor);
+        DrawFittedCentered(spriteBatch, pixel, "GAMEPAD", gamepadHeader, 1, MutedLabelColor);
+
+        DrawColumnDivider(spriteBatch, pixel, layout, header.Y, header.Height);
+    }
+
+    private static void DrawColumnDivider(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout, int y, int height)
+    {
+        int x1 = layout.ControlRowsArea.X + layout.ControlActionColumnWidth + (layout.ControlColumnGap / 2);
+        int x2 = x1 + layout.ControlKeyboardColumnWidth + layout.ControlColumnGap;
+        int dividerWidth = Math.Max(1, layout.ControlColumnGap / 3);
+        Color color = new Color(75, 89, 116, 120);
+        spriteBatch.Draw(pixel, new Rectangle(x1, y + 2, dividerWidth, Math.Max(1, height - 4)), color);
+        spriteBatch.Draw(pixel, new Rectangle(x2, y + 2, dividerWidth, Math.Max(1, height - 4)), color);
+    }
+
+    private static Rectangle GetColumnHeaderBounds(LayoutMetrics layout, int column)
+    {
+        GetColumnBounds(layout, layout.ControlHeaderBounds.Y, layout.ControlHeaderBounds.Height, column, out Rectangle bounds);
+        int padH = layout.ControlCellPaddingH;
+        int padV = layout.ControlCellPaddingV;
+        return new Rectangle(bounds.X + padH, bounds.Y + padV, Math.Max(1, bounds.Width - (padH * 2)), Math.Max(1, bounds.Height - (padV * 2)));
+    }
+
+    private static void GetColumnBounds(LayoutMetrics layout, int rowY, int rowHeight, int column, out Rectangle bounds)
+    {
+        int x = layout.ControlRowsArea.X;
+        int gap = layout.ControlColumnGap;
+        int actionW = layout.ControlActionColumnWidth;
+        int keyboardW = layout.ControlKeyboardColumnWidth;
+        int gamepadW = layout.ControlGamepadColumnWidth;
+
+        bounds = column switch
+        {
+            1 => new Rectangle(x + actionW + gap, rowY, keyboardW, rowHeight),
+            2 => new Rectangle(x + actionW + gap + keyboardW + gap, rowY, gamepadW, rowHeight),
+            _ => new Rectangle(x, rowY, actionW, rowHeight)
+        };
     }
 
     private static void DrawBindingBox(
@@ -339,16 +455,19 @@ public sealed class OptionsScene : IScene
         Texture2D pixel,
         Rectangle bounds,
         bool highlighted,
-        string tag,
         string value)
     {
         spriteBatch.Draw(pixel, bounds, highlighted ? new Color(121, 76, 78) : new Color(25, 32, 47));
-        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, highlighted ? Accent : new Color(106, 122, 154), 2);
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, highlighted ? Accent : new Color(106, 122, 154), highlighted ? 2 : 1);
 
-        Rectangle tagBounds = new(bounds.X + 4, bounds.Y + 3, bounds.Width - 8, Math.Max(10, bounds.Height / 3));
-        DrawFittedCentered(spriteBatch, pixel, tag, tagBounds, 1, MutedLabelColor);
-        Rectangle valueBounds = new(bounds.X + 4, tagBounds.Bottom, bounds.Width - 8, bounds.Bottom - tagBounds.Bottom - 2);
-        DrawFittedCentered(spriteBatch, pixel, value, valueBounds, 1, highlighted ? Accent : Color.White);
+        int padX = Math.Max(10, bounds.Width / 10);
+        int padY = Math.Max(6, bounds.Height / 6);
+        Rectangle valueBounds = new(
+            bounds.X + padX,
+            bounds.Y + padY,
+            Math.Max(1, bounds.Width - (padX * 2)),
+            Math.Max(1, bounds.Height - (padY * 2)));
+        DrawFittedCentered(spriteBatch, pixel, value, valueBounds, 2, highlighted ? Accent : Color.White);
     }
 
     private void DrawButtonTray(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
@@ -397,7 +516,8 @@ public sealed class OptionsScene : IScene
         DrawHelper.DrawBorder(spriteBatch, pixel, promptBg, Accent, 3);
 
         Rectangle textBounds = new(x + 24, y + 34, width - 48, 46);
-        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "PRESS ANY KEY", textBounds, 3, Accent);
+        string prompt = _rebindingKind == RebindKind.Gamepad ? "PRESS A BUTTON" : "PRESS ANY KEY";
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, prompt, textBounds, 3, Accent);
 
         Rectangle subBounds = new(x + 24, y + 94, width - 48, 34);
         string actionName = _rebindingIndex.HasValue && _rebindingIndex.Value < _controlBindings.Count
@@ -413,22 +533,80 @@ public sealed class OptionsScene : IScene
         if (_rebindingWaitTime < 100)
             return;
 
-        var keyboard = Keyboard.GetState();
-        Keys[] pressedKeys = keyboard.GetPressedKeys();
-
-        if (pressedKeys.Length > 0)
+        if (!_rebindingIndex.HasValue || _rebindingIndex.Value >= _controlBindings.Count)
         {
-            Keys newKey = pressedKeys[0];
-            if (_rebindingIndex.HasValue && _rebindingIndex.Value < _controlBindings.Count)
-            {
-                var (action, _, gamepadName) = _controlBindings[_rebindingIndex.Value];
-                _controlBindings[_rebindingIndex.Value] = (action, newKey.ToString(), gamepadName);
-
-                SettingsManager.PendingSettings.Keybindings[action] = newKey.ToString();
-            }
-
             _rebindingIndex = null;
             _rebindingWaitTime = 0;
+            return;
+        }
+
+        // Escape always cancels the current rebind without changing anything.
+        if (Keyboard.GetState().IsKeyDown(Keys.Escape))
+        {
+            _rebindingIndex = null;
+            _rebindingWaitTime = 0;
+            return;
+        }
+
+        if (_rebindingKind == RebindKind.Keyboard)
+        {
+            HandleKeyboardRebinding();
+        }
+        else
+        {
+            HandleGamepadRebinding();
+        }
+    }
+
+    private void HandleKeyboardRebinding()
+    {
+        Keys[] pressedKeys = Keyboard.GetState().GetPressedKeys();
+        if (pressedKeys.Length == 0)
+        {
+            return;
+        }
+
+        Keys newKey = pressedKeys[0];
+        var (action, _, gamepadName) = _controlBindings[_rebindingIndex!.Value];
+        _controlBindings[_rebindingIndex.Value] = (action, newKey.ToString(), gamepadName);
+        SettingsManager.PendingSettings.Keybindings[action] = newKey.ToString();
+
+        _rebindingIndex = null;
+        _rebindingWaitTime = 0;
+    }
+
+    private void HandleGamepadRebinding()
+    {
+        var (action, keyName, _) = _controlBindings[_rebindingIndex!.Value];
+        if (!Enum.TryParse(action, out GameplayInputAction gameplayAction))
+        {
+            _rebindingIndex = null;
+            _rebindingWaitTime = 0;
+            return;
+        }
+
+        for (int device = 0; device < InputManager.MaxLocalPlayers; device++)
+        {
+            if (!_game.Input.IsGamepadConnected(device))
+            {
+                continue;
+            }
+
+            foreach (Buttons button in GamepadDefaults.CaptureButtons)
+            {
+                if (!_game.Input.WasGamepadPressed(device, button))
+                {
+                    continue;
+                }
+
+                SettingsManager.PendingSettings.GamepadBindings[action] = button.ToString();
+                _controlBindings[_rebindingIndex.Value] =
+                    (action, keyName, GamepadDefaults.GetGamepadDisplayName(gameplayAction, SettingsManager.PendingSettings.GamepadBindings));
+
+                _rebindingIndex = null;
+                _rebindingWaitTime = 0;
+                return;
+            }
         }
     }
 
@@ -457,14 +635,11 @@ public sealed class OptionsScene : IScene
         int preferredWidth = (int)(viewport.Width * 0.88f);
         int panelWidth = Math.Clamp(preferredWidth, minWidth, maxWidth);
 
-        int panelHeight = Math.Min(MaxPanelHeight, viewport.Height - (outerMarginY * 2));
-        panelHeight = Math.Max(560, panelHeight);
+        int maxPanelHeight = Math.Max(480, viewport.Height - (outerMarginY * 2));
+        int bindingCount = Math.Max(1, _controlBindings.Count);
 
-        int panelX = (viewport.Width - panelWidth) / 2;
-        int panelY = (viewport.Height - panelHeight) / 2;
-        Rectangle panelBounds = new(panelX, panelY, panelWidth, panelHeight);
-
-        bool compact = panelHeight < 700;
+        // Pass 1: estimate compactness from viewport before final panel height is known.
+        bool compact = viewport.Height < 760;
         int panelPadding = Math.Clamp(panelWidth / 44, compact ? 24 : 30, compact ? 30 : 38);
         int sectionPadding = compact ? 18 : 22;
         int sectionTitleHeight = SimpleTextRenderer.MeasureString("DISPLAY SETTINGS", SectionTitleScale).Y;
@@ -472,16 +647,43 @@ public sealed class OptionsScene : IScene
         int sectionGap = compact ? 16 : 28;
         int titleToSectionsGap = compact ? 16 : 28;
         int rowHeight = compact ? CompactRowHeight : RowHeight;
-        int keyRowHeight = compact ? CompactKeyRowHeight : KeyRowHeight;
         int keyRowGap = compact ? CompactKeyRowGap : KeyRowGap;
         int topSectionHeight = compact ? CompactTopSectionHeight : TopSectionHeight;
         int titleScale = compact ? 4 : 5;
+        int preferredRowHeight = compact ? CompactKeyRowHeight : KeyRowHeight;
+
+        int controlHeaderHeight = compact ? 26 : 30;
+        int controlHeaderGap = compact ? 4 : 6;
+        int controlChromeHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing
+            + controlHeaderHeight + controlHeaderGap;
+
+        int topBlockHeight = TitleHeight + titleToSectionsGap + topSectionHeight + sectionGap;
+        int buttonBlockHeight = ButtonHeight + sectionGap;
+
+        int comfortableDataHeight = (bindingCount * preferredRowHeight) + ((bindingCount - 1) * keyRowGap);
+        int desiredContentHeight = topBlockHeight + controlChromeHeight + comfortableDataHeight + buttonBlockHeight;
+        int desiredPanelHeight = desiredContentHeight + (panelPadding * 2);
+        int panelHeight = Math.Clamp(desiredPanelHeight, 520, maxPanelHeight);
+
+        // Pass 2: if viewport caps panel height, shrink row height so table always fits inside section.
+        int contentHeight = panelHeight - (panelPadding * 2);
+        int availableControlHeight = contentHeight - topBlockHeight - buttonBlockHeight;
+        int dataAreaHeight = Math.Max(1, availableControlHeight - controlChromeHeight);
+        int keyRowHeight = (dataAreaHeight - ((bindingCount - 1) * keyRowGap)) / bindingCount;
+        keyRowHeight = Math.Min(preferredRowHeight, Math.Max(1, keyRowHeight));
+
+        int actualDataHeight = (bindingCount * keyRowHeight) + ((bindingCount - 1) * keyRowGap);
+        int controlSectionHeight = controlChromeHeight + actualDataHeight;
+
+        int panelX = (viewport.Width - panelWidth) / 2;
+        int panelY = (viewport.Height - panelHeight) / 2;
+        Rectangle panelBounds = new(panelX, panelY, panelWidth, panelHeight);
 
         Rectangle contentBounds = new(
             panelBounds.X + panelPadding,
             panelBounds.Y + panelPadding,
             panelBounds.Width - (panelPadding * 2),
-            panelBounds.Height - (panelPadding * 2));
+            contentHeight);
 
         Rectangle titleBounds = new(contentBounds.X, contentBounds.Y, contentBounds.Width, TitleHeight);
         int topSectionY = titleBounds.Bottom + titleToSectionsGap;
@@ -489,20 +691,19 @@ public sealed class OptionsScene : IScene
         Rectangle displaySectionBounds = new(contentBounds.X, topSectionY, topSectionWidth, topSectionHeight);
         Rectangle audioSectionBounds = new(displaySectionBounds.Right + TopSectionGap, topSectionY, topSectionWidth, topSectionHeight);
 
-        int buttonWidth = Math.Clamp(contentBounds.Width / 5, 128, 150);
-        int buttonTotalWidth = (buttonWidth * 2) + ButtonGap;
-        int buttonY = contentBounds.Bottom - ButtonHeight;
-        int buttonX = panelBounds.Center.X - (buttonTotalWidth / 2);
-        Rectangle backButtonBounds = new(buttonX, buttonY, buttonWidth, ButtonHeight);
-        Rectangle applyButtonBounds = new(backButtonBounds.Right + ButtonGap, buttonY, buttonWidth, ButtonHeight);
-
         int controlSectionY = displaySectionBounds.Bottom + sectionGap;
-        int controlSectionBottom = buttonY - sectionGap;
         Rectangle controlSectionBounds = new(
             contentBounds.X,
             controlSectionY,
             contentBounds.Width,
-            Math.Max(240, controlSectionBottom - controlSectionY));
+            controlSectionHeight);
+
+        int buttonWidth = Math.Clamp(contentBounds.Width / 5, 128, 150);
+        int buttonTotalWidth = (buttonWidth * 2) + ButtonGap;
+        int buttonY = controlSectionBounds.Bottom + sectionGap;
+        int buttonX = panelBounds.Center.X - (buttonTotalWidth / 2);
+        Rectangle backButtonBounds = new(buttonX, buttonY, buttonWidth, ButtonHeight);
+        Rectangle applyButtonBounds = new(backButtonBounds.Right + ButtonGap, buttonY, buttonWidth, ButtonHeight);
 
         CreateSettingColumnLayout(displaySectionBounds, sectionPadding, out Rectangle displayLabelBounds, out Rectangle displayControlBounds);
         CreateSettingColumnLayout(audioSectionBounds, sectionPadding, out Rectangle audioLabelBounds, out Rectangle audioControlBounds);
@@ -514,14 +715,28 @@ public sealed class OptionsScene : IScene
         Rectangle volumeBounds = new(audioControlBounds.X, rowStartY, audioControlBounds.Width, rowHeight);
 
         int controlRowsY = controlSectionBounds.Y + sectionPadding + sectionTitleHeight + sectionTitleSpacing;
-        int controlRowsHeight = controlSectionBounds.Bottom - sectionPadding - controlRowsY;
+        int controlRowsHeight = controlHeaderHeight + controlHeaderGap + actualDataHeight;
         int controlInnerWidth = controlSectionBounds.Width - (sectionPadding * 2);
-        int controlColumns = controlInnerWidth >= 760 ? 2 : 1;
-        int controlRowsPerColumn = (int)Math.Ceiling(_controlBindings.Count / (double)controlColumns);
-        int controlColumnGap = controlColumns == 2 ? 30 : 0;
-        int controlColumnWidth = (controlInnerWidth - controlColumnGap) / controlColumns;
-        int keyBoxWidth = Math.Clamp(controlColumnWidth / 5, 88, 110);
-        Rectangle controlRowsArea = new(controlSectionBounds.X + sectionPadding, controlRowsY, controlInnerWidth, controlRowsHeight);
+
+        int tableWidth = controlInnerWidth;
+        int controlColumnGap = Math.Max(8, tableWidth / 64);
+        int columnsWidth = Math.Max(1, tableWidth - (controlColumnGap * 2));
+        int controlActionColumnWidth = (int)(columnsWidth * 0.45f);
+        int controlKeyboardColumnWidth = (int)(columnsWidth * 0.27f);
+        int controlGamepadColumnWidth = columnsWidth - controlActionColumnWidth - controlKeyboardColumnWidth;
+        int controlCellPaddingH = Math.Clamp(tableWidth / 80, 8, 14);
+        int controlCellPaddingV = Math.Clamp(keyRowHeight / 8, 3, 6);
+
+        Rectangle controlRowsArea = new(controlSectionBounds.X + sectionPadding, controlRowsY, tableWidth, controlRowsHeight);
+        Rectangle controlHeaderBounds = new(
+            controlRowsArea.X,
+            controlRowsArea.Y,
+            controlRowsArea.Width,
+            controlHeaderHeight);
+
+        int controlColumns = 1;
+        int controlRowsPerColumn = bindingCount;
+        int controlColumnWidth = tableWidth;
 
         return new LayoutMetrics(
             panelBounds,
@@ -549,7 +764,13 @@ public sealed class OptionsScene : IScene
             controlColumnGap,
             keyRowHeight,
             keyRowGap,
-            keyBoxWidth,
+            controlHeaderBounds,
+            controlHeaderGap,
+            controlActionColumnWidth,
+            controlKeyboardColumnWidth,
+            controlGamepadColumnWidth,
+            controlCellPaddingH,
+            controlCellPaddingV,
             backButtonBounds,
             applyButtonBounds);
     }
@@ -568,11 +789,57 @@ public sealed class OptionsScene : IScene
 
     private Rectangle GetControlBindingBounds(LayoutMetrics layout, int index)
     {
-        int column = index / layout.ControlRowsPerColumn;
         int row = index % layout.ControlRowsPerColumn;
-        int x = layout.ControlRowsArea.X + (column * (layout.ControlColumnWidth + layout.ControlColumnGap));
-        int y = layout.ControlRowsArea.Y + (row * (layout.KeyRowHeight + layout.KeyRowGap));
-        return new Rectangle(x, y, layout.ControlColumnWidth, layout.KeyRowHeight);
+        int dataY = layout.ControlHeaderBounds.Bottom + layout.ControlHeaderGap;
+        int y = dataY + (row * (layout.KeyRowHeight + layout.KeyRowGap));
+        return new Rectangle(layout.ControlRowsArea.X, y, layout.ControlRowsArea.Width, layout.KeyRowHeight);
+    }
+
+    private enum BindingCell
+    {
+        Label,
+        Keyboard,
+        Gamepad
+    }
+
+    private void GetBindingCellRects(LayoutMetrics layout, int index, out Rectangle label, out Rectangle keyboard, out Rectangle gamepad)
+    {
+        Rectangle row = GetControlBindingBounds(layout, index);
+        int padH = layout.ControlCellPaddingH;
+        int padV = layout.ControlCellPaddingV;
+
+        GetColumnBounds(layout, row.Y, row.Height, 0, out Rectangle actionCell);
+        GetColumnBounds(layout, row.Y, row.Height, 1, out Rectangle keyboardCell);
+        GetColumnBounds(layout, row.Y, row.Height, 2, out Rectangle gamepadCell);
+
+        label = new Rectangle(
+            actionCell.X + padH,
+            actionCell.Y + padV,
+            Math.Max(1, actionCell.Width - (padH * 2)),
+            Math.Max(1, actionCell.Height - (padV * 2)));
+
+        keyboard = new Rectangle(
+            keyboardCell.X + padH,
+            keyboardCell.Y + Math.Max(2, padV - 1),
+            Math.Max(1, keyboardCell.Width - (padH * 2)),
+            Math.Max(1, keyboardCell.Height - (Math.Max(2, padV - 1) * 2)));
+
+        gamepad = new Rectangle(
+            gamepadCell.X + padH,
+            gamepadCell.Y + Math.Max(2, padV - 1),
+            Math.Max(1, gamepadCell.Width - (padH * 2)),
+            Math.Max(1, gamepadCell.Height - (Math.Max(2, padV - 1) * 2)));
+    }
+
+    private Rectangle GetBindingCellBounds(LayoutMetrics layout, int index, BindingCell cell)
+    {
+        GetBindingCellRects(layout, index, out Rectangle label, out Rectangle keyboard, out Rectangle gamepad);
+        return cell switch
+        {
+            BindingCell.Keyboard => keyboard,
+            BindingCell.Gamepad => gamepad,
+            _ => label
+        };
     }
 
     private void SyncPendingSettings()
@@ -603,8 +870,8 @@ public sealed class OptionsScene : IScene
     private static int GetFittedScale(string text, Rectangle bounds, int preferredScale)
     {
         int scale = Math.Max(1, preferredScale);
-        int maxWidth = Math.Max(1, bounds.Width - 12);
-        int maxHeight = Math.Max(1, bounds.Height - 8);
+        int maxWidth = Math.Max(1, bounds.Width - 16);
+        int maxHeight = Math.Max(1, bounds.Height - 10);
 
         while (scale > 1)
         {
@@ -664,12 +931,12 @@ public sealed class OptionsScene : IScene
         return keyName switch
         {
             "Space" => "SPACE",
-            "LeftShift" => "L SHIFT",
-            "RightShift" => "R SHIFT",
-            "LeftControl" => "L CTRL",
-            "RightControl" => "R CTRL",
-            "LeftAlt" => "L ALT",
-            "RightAlt" => "R ALT",
+            "LeftShift" => "LEFT SHIFT",
+            "RightShift" => "RIGHT SHIFT",
+            "LeftControl" => "LEFT CTRL",
+            "RightControl" => "RIGHT CTRL",
+            "LeftAlt" => "LEFT ALT",
+            "RightAlt" => "RIGHT ALT",
             "OemComma" => "COMMA",
             "OemPeriod" => "PERIOD",
             "OemMinus" => "MINUS",
@@ -718,7 +985,13 @@ public sealed class OptionsScene : IScene
         int ControlColumnGap,
         int KeyRowHeight,
         int KeyRowGap,
-        int KeyBoxWidth,
+        Rectangle ControlHeaderBounds,
+        int ControlHeaderGap,
+        int ControlActionColumnWidth,
+        int ControlKeyboardColumnWidth,
+        int ControlGamepadColumnWidth,
+        int ControlCellPaddingH,
+        int ControlCellPaddingV,
         Rectangle BackButtonBounds,
         Rectangle ApplyButtonBounds);
 }

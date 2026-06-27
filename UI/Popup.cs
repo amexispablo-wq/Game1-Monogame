@@ -83,8 +83,10 @@ public sealed class Popup
         }
 
         _focus.Clear();
-        _focus.Add(_confirmFocus);
-        _focus.Add(_cancelFocus);
+        int confirmIndex = _focus.Add(_confirmFocus, "Confirm");
+        int cancelIndex = _focus.Add(_cancelFocus, "Cancel");
+        _focus.Navigation.LinkHorizontal(confirmIndex, cancelIndex);
+        _focus.FinalizeFocus("Confirm");
         _focus.Update(gameTime, input);
 
         if (_confirmFocus.WasActivated || input.EnterPressed)

@@ -24,6 +24,7 @@ public sealed class MenuScene : IScene
         _partyFocus = new FocusableButton(_partyButton);
         _editorFocus = new FocusableButton(_editorButton);
         _optionsFocus = new FocusableButton(_optionsButton);
+        _focus.ResetFocus();
     }
 
     public void Update(GameTime gameTime)
@@ -37,10 +38,17 @@ public sealed class MenuScene : IScene
         }
 
         _focus.Clear();
-        _focus.Add(_playFocus);
-        _focus.Add(_partyFocus);
-        _focus.Add(_editorFocus);
-        _focus.Add(_optionsFocus);
+        int playIndex = _focus.Add(_playFocus, "Play");
+        int partyIndex = _focus.Add(_partyFocus, "Party");
+        int editorIndex = _focus.Add(_editorFocus, "LevelEditor");
+        int optionsIndex = _focus.Add(_optionsFocus, "Options");
+
+        NavigationGraph nav = _focus.Navigation;
+        nav.LinkVertical(playIndex, partyIndex);
+        nav.LinkVertical(partyIndex, editorIndex);
+        nav.LinkVertical(editorIndex, optionsIndex);
+
+        _focus.FinalizeFocus("Play");
         _focus.Update(gameTime, _game.Input);
 
         if (_playFocus.WasActivated)
