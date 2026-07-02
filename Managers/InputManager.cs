@@ -51,6 +51,7 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool KeyboardMenuCancelPressed { get; private set; }
     public bool GamepadMenuConfirmPressed { get; private set; }
     public bool GamepadMenuCancelPressed { get; private set; }
+    public bool GamepadBackPressed { get; private set; }
     public bool MouseActivityThisFrame { get; private set; }
     public bool KeyboardMenuActivityThisFrame { get; private set; }
     public bool GamepadActivityThisFrame { get; private set; }
@@ -116,7 +117,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         UpdateSystemButtons();
         UpdateGameplayInputs();
         Navigation.Update(this);
-        RequestedColor = GetLegacyEditorRequestedColor();
+        RequestedColor = GetEditorColorRequest();
         _virtualLeftClickRequested = false;
     }
 
@@ -362,6 +363,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         MenuCancelPressed = KeyboardMenuCancelPressed;
         GamepadMenuConfirmPressed = false;
         GamepadMenuCancelPressed = false;
+        GamepadBackPressed = false;
 
         if (KeyboardMenuMoveUpPressed || KeyboardMenuMoveDownPressed || KeyboardMenuMoveLeftPressed || KeyboardMenuMoveRightPressed
             || MenuTabPressed || MenuTabBackwardPressed || KeyboardMenuConfirmPressed || KeyboardMenuCancelPressed)
@@ -399,6 +401,13 @@ public sealed class InputManager : ILocalPlayerInputSource
             if (IsGamepadPressed(current, previous, GamepadDefaults.MenuCancelButton))
             {
                 GamepadMenuCancelPressed = true;
+                GamepadMenuActivityThisFrame = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (IsGamepadPressed(current, previous, Buttons.Back))
+            {
+                GamepadBackPressed = true;
                 GamepadMenuActivityThisFrame = true;
                 GamepadActivityThisFrame = true;
             }
@@ -591,24 +600,61 @@ public sealed class InputManager : ILocalPlayerInputSource
         return current.IsButtonDown(button) && previous.IsButtonUp(button);
     }
 
-    private GameColor? GetLegacyEditorRequestedColor()
+    public bool TryGetEditorColorRequest(out GameColor color)
     {
-        if (IsNewKeyPress(Keys.R))
+        if (IsNewKeyPress(_keyboardBindings.Red))
         {
-            return GameColor.Red;
+            color = GameColor.Red;
+            return true;
         }
 
-        if (IsNewKeyPress(Keys.B))
+        if (IsNewKeyPress(_keyboardBindings.Blue))
         {
-            return GameColor.Blue;
+            color = GameColor.Blue;
+            return true;
         }
 
-        if (IsNewKeyPress(Keys.G))
+        if (IsNewKeyPress(_keyboardBindings.Green))
         {
-            return GameColor.Green;
+            color = GameColor.Green;
+            return true;
         }
 
-        return null;
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            GamePadState current = _currentGamepads[i];
+            GamePadState previous = _previousGamepads[i];
+            if (!current.IsConnected)
+            {
+                continue;
+            }
+
+            if (IsGamepadPressed(current, previous, _gamepadBindings.Red))
+            {
+                color = GameColor.Red;
+                return true;
+            }
+
+            if (IsGamepadPressed(current, previous, _gamepadBindings.Blue))
+            {
+                color = GameColor.Blue;
+                return true;
+            }
+
+            if (IsGamepadPressed(current, previous, _gamepadBindings.Green))
+            {
+                color = GameColor.Green;
+                return true;
+            }
+        }
+
+        color = default;
+        return false;
+    }
+
+    private GameColor? GetEditorColorRequest()
+    {
+        return TryGetEditorColorRequest(out GameColor color) ? color : null;
     }
 
     private readonly record struct KeyboardInputBindings(

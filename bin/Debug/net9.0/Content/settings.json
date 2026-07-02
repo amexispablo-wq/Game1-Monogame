@@ -10,13 +10,15 @@
     "Jump": "W",
     "FastFall": "S",
     "Red": "J",
-    "Blue": "K",
-    "Green": "L",
+    "Blue": "L",
+    "Green": "K",
     "PullRope": "Space",
     "Respawn": "R"
   },
   "GamepadBindings": {
     "Jump": "A",
-    "Blue": "Y"
+    "Blue": "B",
+    "Red": "X",
+    "Green": "Y"
   }
 }

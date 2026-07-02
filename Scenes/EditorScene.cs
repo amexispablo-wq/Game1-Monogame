@@ -76,6 +76,10 @@ public sealed class EditorScene : IScene
     private Rectangle _lavaSpeedPanelBounds;
     private Rectangle _lavaSpeedMinusBounds;
     private Rectangle _lavaSpeedPlusBounds;
+    private Rectangle _colorPanelBounds;
+    private Rectangle _colorRedBounds;
+    private Rectangle _colorGreenBounds;
+    private Rectangle _colorBlueBounds;
 
     private readonly VirtualCursor _virtualCursor = new();
     private readonly UIFocusManager _uiFocus = new();
@@ -130,6 +134,7 @@ public sealed class EditorScene : IScene
         UpdateGamepadUi(gameTime);
         LayoutBackButton();
         LayoutEditorToolbar();
+        LayoutColorPanel();
         LayoutLavaSpeedPanel();
 
         if (TryHandleGamepadChromePress())
@@ -143,7 +148,7 @@ public sealed class EditorScene : IScene
             UpdateUiFocus(gameTime);
         }
 
-        if (_game.Input.MenuCancelPressed)
+        if (_game.Input.KeyboardMenuCancelPressed || _game.Input.GamepadBackPressed)
         {
             _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
             return;
@@ -169,6 +174,12 @@ public sealed class EditorScene : IScene
 
         HandleKeyboard();
 
+        if (TryApplyColorFromPointer())
+        {
+            _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
+            return;
+        }
+
         if (_lavaSelected && _level.Lava is not null && IsPrimaryPressed() && !IsGamepadCursorMode())
         {
             if (_lavaSpeedMinusBounds.Contains(UiPointer))
@@ -187,7 +198,8 @@ public sealed class EditorScene : IScene
         }
 
         bool mouseOverToolbar = IsMouseOverToolbar();
-        bool cameraBlockedByUi = _backButton.IsHovered
+        bool cameraBlockedByUi = _colorPanelBounds.Contains(UiPointer)
+            || _backButton.IsHovered
             || _applyButton.IsHovered
             || (mouseOverToolbar && !IsDraggingToolbarObject);
         HandleCameraInput(cameraBlockedByUi);
@@ -273,6 +285,11 @@ public sealed class EditorScene : IScene
                 AdjustLavaRiseSpeed(10f);
                 return true;
             }
+        }
+
+        if (TryApplyColorFromPointer())
+        {
+            return true;
         }
 
         if (_applyButton.Bounds.Contains(UiPointer) && _isDirty)
@@ -535,11 +552,67 @@ public sealed class EditorScene : IScene
             }
         }
 
-        if (!_game.Input.ControlHeld && _game.Input.RequestedColor is { } requestedColor)
+        if (!_game.Input.ControlHeld && _game.Input.TryGetEditorColorRequest(out GameColor requestedColor))
         {
-            _selectedColor = requestedColor;
-            ApplyColorToSelection(requestedColor);
+            SetSelectedColor(requestedColor);
         }
+    }
+
+    private void SetSelectedColor(GameColor color)
+    {
+        _selectedColor = color;
+        ApplyColorToSelection(color);
+    }
+
+    private bool TryApplyColorFromPointer()
+    {
+        if (!IsPrimaryPressed())
+        {
+            return false;
+        }
+
+        if (_colorRedBounds.Contains(UiPointer))
+        {
+            SetSelectedColor(GameColor.Red);
+            return true;
+        }
+
+        if (_colorGreenBounds.Contains(UiPointer))
+        {
+            SetSelectedColor(GameColor.Green);
+            return true;
+        }
+
+        if (_colorBlueBounds.Contains(UiPointer))
+        {
+            SetSelectedColor(GameColor.Blue);
+            return true;
+        }
+
+        return false;
+    }
+
+    private void LayoutColorPanel()
+    {
+        Viewport viewport = _game.Viewport;
+        int minDimension = Math.Min(viewport.Width, viewport.Height);
+        int margin = Math.Max(8, (int)(minDimension * 0.025f));
+        int panelWidth = Math.Min(
+            Math.Clamp((int)(viewport.Width * 0.28f), 220, 300),
+            Math.Max(1, viewport.Width - (margin * 2)));
+        int panelHeight = Math.Min(
+            Math.Clamp((int)(viewport.Height * 0.065f), 38, 52),
+            Math.Max(1, viewport.Height - (margin * 2)));
+        _colorPanelBounds = new Rectangle(margin, margin, panelWidth, panelHeight);
+
+        int swatchGap = 6;
+        int swatchSize = Math.Max(18, panelHeight - Math.Max(12, panelHeight / 3));
+        int swatchesWidth = (swatchSize * 3) + (swatchGap * 2);
+        int swatchY = _colorPanelBounds.Center.Y - (swatchSize / 2);
+        int swatchX = _colorPanelBounds.Left + margin / 2;
+        _colorRedBounds = new Rectangle(swatchX, swatchY, swatchSize, swatchSize);
+        _colorGreenBounds = new Rectangle(_colorRedBounds.Right + swatchGap, swatchY, swatchSize, swatchSize);
+        _colorBlueBounds = new Rectangle(_colorGreenBounds.Right + swatchGap, swatchY, swatchSize, swatchSize);
     }
 
     private void HandleCameraInput(bool mouseOverUi)
@@ -1679,7 +1752,8 @@ public sealed class EditorScene : IScene
 
     private bool IsMouseOverUi()
     {
-        return _backButton.Bounds.Contains(UiPointer)
+        return _colorPanelBounds.Contains(UiPointer)
+            || _backButton.Bounds.Contains(UiPointer)
             || _applyButton.Bounds.Contains(UiPointer)
             || IsMouseOverToolbar()
             || (_lavaSelected && _lavaSpeedPanelBounds.Contains(UiPointer));
@@ -1982,35 +2056,40 @@ public sealed class EditorScene : IScene
 
     private void DrawEditorUi(SpriteBatch spriteBatch, Texture2D pixel)
     {
-        Viewport viewport = _game.Viewport;
-        int minDimension = Math.Min(viewport.Width, viewport.Height);
-        int margin = Math.Max(8, (int)(minDimension * 0.025f));
-        int panelWidth = Math.Min(
-            Math.Clamp((int)(viewport.Width * 0.2f), 190, 250),
-            Math.Max(1, viewport.Width - (margin * 2)));
-        int panelHeight = Math.Min(
-            Math.Clamp((int)(viewport.Height * 0.065f), 38, 52),
-            Math.Max(1, viewport.Height - (margin * 2)));
-        Rectangle panel = new(margin, margin, panelWidth, panelHeight);
-        int colorBoxSize = Math.Max(18, panel.Height - Math.Max(12, panel.Height / 3));
-        Rectangle colorBox = new(panel.Left + margin / 2, panel.Center.Y - (colorBoxSize / 2), colorBoxSize, colorBoxSize);
-        string label = $"COLOR {_selectedColor}";
-        int labelX = colorBox.Right + Math.Max(8, panel.Width / 18);
-        int labelScale = FitTextScale(label, 2, panel.Right - labelX - Math.Max(4, panel.Width / 24));
-        Point labelSize = SimpleTextRenderer.MeasureString(label, labelScale);
+        LayoutColorPanel();
+        Rectangle panel = _colorPanelBounds;
+        string label = "COLOR";
+        int labelX = _colorBlueBounds.Right + Math.Max(8, panel.Width / 18);
+        int labelScale = FitTextScale($"{label} {_selectedColor}", 2, panel.Right - labelX - Math.Max(4, panel.Width / 24));
+        Point labelSize = SimpleTextRenderer.MeasureString($"{label} {_selectedColor}", labelScale);
 
         spriteBatch.Draw(pixel, panel, new Color(22, 26, 34, 220));
         DrawHelper.DrawBorder(spriteBatch, pixel, panel, new Color(134, 145, 166), 2);
-        spriteBatch.Draw(pixel, colorBox, _selectedColor.ToXnaColor());
-        DrawHelper.DrawBorder(spriteBatch, pixel, colorBox, Color.Black, 2);
+        DrawColorSwatch(spriteBatch, pixel, _colorRedBounds, GameColor.Red);
+        DrawColorSwatch(spriteBatch, pixel, _colorGreenBounds, GameColor.Green);
+        DrawColorSwatch(spriteBatch, pixel, _colorBlueBounds, GameColor.Blue);
 
         SimpleTextRenderer.DrawString(
             spriteBatch,
             pixel,
-            label,
+            $"{label} {_selectedColor}",
             new Vector2(labelX, panel.Center.Y - (labelSize.Y * 0.5f)),
             labelScale,
             Color.White);
+    }
+
+    private void DrawColorSwatch(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, GameColor color)
+    {
+        bool selected = _selectedColor == color;
+        bool hovered = bounds.Contains(UiPointer);
+        spriteBatch.Draw(pixel, bounds, color.ToXnaColor());
+        Color border = selected
+            ? new Color(255, 220, 80)
+            : hovered
+                ? Color.White
+                : Color.Black;
+        int thickness = selected ? 3 : 2;
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, border, thickness);
     }
 
     private void DrawToolbar(SpriteBatch spriteBatch, Texture2D pixel)
@@ -2127,15 +2206,15 @@ public sealed class EditorScene : IScene
     private void LayoutBackButton()
     {
         Viewport viewport = _game.Viewport;
-        int minDimension = Math.Min(viewport.Width, viewport.Height);
-        int margin = Math.Max(8, (int)(minDimension * 0.022f));
         int height = Math.Clamp((int)(viewport.Height * 0.058f), 36, 44);
         int gap = 10;
-        int backWidth = Math.Min(180, Math.Max(1, viewport.Width - (margin * 2)));
+        int backWidth = Math.Min(180, Math.Max(120, (int)(viewport.Width * 0.14f)));
         int applyWidth = Math.Min(120, Math.Max(90, backWidth - 40));
+        int x = _colorPanelBounds.Left;
+        int y = _colorPanelBounds.Bottom + gap;
 
-        _backButton.Bounds = new Rectangle(viewport.Width - backWidth - margin, margin, backWidth, height);
-        _applyButton.Bounds = new Rectangle(_backButton.Bounds.X - gap - applyWidth, margin, applyWidth, height);
+        _applyButton.Bounds = new Rectangle(x, y, applyWidth, height);
+        _backButton.Bounds = new Rectangle(x, y + height + gap, backWidth, height);
     }
 
     private void DrawApplyButton(SpriteBatch spriteBatch, Texture2D pixel)

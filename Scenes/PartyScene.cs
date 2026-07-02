@@ -20,6 +20,11 @@ public sealed class PartyScene : IScene
     private readonly Rectangle[] _memberKickBounds = new Rectangle[PartyManager.MaxMembers];
     private readonly List<IFocusable> _memberFocusables = new();
     private AlertPopup? _alertPopup;
+    private int _titleY;
+    private int _titleScale = 4;
+    private int _lobbyY;
+    private const int LobbyTextScale = 2;
+    private Rectangle _panelBounds;
 
     private static readonly Color Background = new(29, 34, 45);
     private static readonly Color PanelFill = new(38, 46, 62);
@@ -157,16 +162,16 @@ public sealed class PartyScene : IScene
 
         spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), Background);
 
-        int titleScale = Math.Clamp(viewport.Height / 180, 3, 5);
-        DrawCenteredText(spriteBatch, pixel, "PARTY", viewport.Width / 2, Math.Max(28, viewport.Height / 14), titleScale, Accent);
+        Point titleSize = SimpleTextRenderer.MeasureString("PARTY", _titleScale);
+        DrawCenteredText(spriteBatch, pixel, "PARTY", viewport.Width / 2, _titleY, _titleScale, Accent);
 
         if (_game.Party.IsInSteamLobby)
         {
             string lobbyText = $"Lobby {_game.Party.LobbyId}";
-            DrawCenteredText(spriteBatch, pixel, lobbyText, viewport.Width / 2, Math.Max(56, viewport.Height / 12), 2, MutedColor);
+            DrawCenteredText(spriteBatch, pixel, lobbyText, viewport.Width / 2, _lobbyY, LobbyTextScale, MutedColor);
         }
 
-        Rectangle panel = GetPanelBounds(viewport);
+        Rectangle panel = _panelBounds;
         spriteBatch.Draw(pixel, panel, PanelFill);
         DrawHelper.DrawBorder(spriteBatch, pixel, panel, PanelBorder, 2);
 
@@ -253,7 +258,6 @@ public sealed class PartyScene : IScene
 
     private void LeaveAndReturnToMenu()
     {
-        _game.Party.LeaveParty();
         _game.ChangeScene(new MenuScene(_game));
     }
 
@@ -271,7 +275,21 @@ public sealed class PartyScene : IScene
     private void Layout()
     {
         Viewport viewport = _game.Viewport;
-        Rectangle panel = GetPanelBounds(viewport);
+        int titleY = Math.Max(24, viewport.Height / 20);
+        int titleScale = Math.Clamp(viewport.Height / 180, 3, 5);
+        _titleY = titleY;
+        _titleScale = titleScale;
+        int headerBottom = titleY + SimpleTextRenderer.MeasureString("PARTY", titleScale).Y + 8;
+
+        if (_game.Party.IsInSteamLobby)
+        {
+            _lobbyY = headerBottom;
+            string lobbyText = $"Lobby {_game.Party.LobbyId}";
+            headerBottom = _lobbyY + SimpleTextRenderer.MeasureString(lobbyText, LobbyTextScale).Y + 12;
+        }
+
+        _panelBounds = GetPanelBounds(viewport, headerBottom);
+        Rectangle panel = _panelBounds;
         int rowHeight = Math.Clamp((panel.Height - 24) / PartyManager.MaxMembers, 52, 78);
         int selectorWidth = Math.Clamp(panel.Width / 3, 180, 280);
         int rowGap = 8;
@@ -368,12 +386,18 @@ public sealed class PartyScene : IScene
         SimpleTextRenderer.DrawString(spriteBatch, pixel, text, position, scale, color);
     }
 
-    private static Rectangle GetPanelBounds(Viewport viewport)
+    private static Rectangle GetPanelBounds(Viewport viewport, int headerBottom)
     {
         int width = Math.Clamp((int)(viewport.Width * 0.72f), 520, 860);
         int height = Math.Clamp((int)(viewport.Height * 0.52f), 300, 420);
         int x = (viewport.Width - width) / 2;
-        int y = Math.Max(88, viewport.Height / 7);
+        int y = headerBottom + 8;
+        int maxY = viewport.Height - height - 100;
+        if (y > maxY)
+        {
+            y = Math.Max(headerBottom + 4, maxY);
+        }
+
         return new Rectangle(x, y, width, height);
     }
 }
