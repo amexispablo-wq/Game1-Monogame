@@ -360,7 +360,16 @@ public sealed class EditorScene : IScene
             transformMatrix: _camera.GetTransform(viewport));
 
         DrawEditorBackground(spriteBatch, pixel, visibleWorldBounds);
-        DrawGrid(spriteBatch, pixel, visibleWorldBounds);
+        spriteBatch.End();
+
+        spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+        DrawGrid(spriteBatch, pixel, viewport, visibleWorldBounds);
+        spriteBatch.End();
+
+        spriteBatch.Begin(
+            samplerState: SamplerState.PointClamp,
+            transformMatrix: _camera.GetTransform(viewport));
+
         _level.DrawPlatforms(spriteBatch, pixel, debugDraw: false);
         _level.DrawLaunchPads(spriteBatch, pixel, debugDraw: false, isEditorMode: true);
         _level.DrawGoals(spriteBatch, pixel, debugDraw: false);
@@ -1971,41 +1980,58 @@ public sealed class EditorScene : IScene
         }
     }
 
-    private void DrawGrid(SpriteBatch spriteBatch, Texture2D pixel, Rectangle visibleWorldBounds)
+    private void DrawGrid(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, Rectangle visibleWorldBounds)
     {
-        // Always 32x32 world-unit cells; fade out as cells shrink on screen (no adaptive step).
+        // Fixed 32x32 world cells, drawn in screen space. Fade to fully invisible before cells get tiny.
         float screenCellSize = GridSize * _camera.Zoom;
-        const float fullVisibilityCellSize = 22f;
-        const float hiddenCellSize = 5f;
-        float fade = (screenCellSize - hiddenCellSize) / (fullVisibilityCellSize - hiddenCellSize);
-        fade = MathHelper.Clamp(fade, 0f, 1f);
-        if (fade <= 0f)
+        const float fullVisibilityCellSize = 26f;
+        const float hiddenCellSize = 12f;
+        if (screenCellSize <= hiddenCellSize)
         {
             return;
         }
 
-        int baseAlpha = _snapToGrid ? 28 : 14;
-        byte alpha = (byte)MathHelper.Clamp((int)MathF.Round(baseAlpha * fade), 0, 32);
+        float fade = (screenCellSize - hiddenCellSize) / (fullVisibilityCellSize - hiddenCellSize);
+        fade = MathHelper.Clamp(fade, 0f, 1f);
+        fade *= fade;
+
+        int baseAlpha = _snapToGrid ? 32 : 16;
+        byte alpha = (byte)MathHelper.Clamp((int)MathF.Round(baseAlpha * fade), 0, 36);
         if (alpha == 0)
         {
             return;
         }
 
         Color gridColor = new Color((byte)255, (byte)255, (byte)255, alpha);
-        const int lineThickness = 1;
 
         int startX = FloorToGrid(visibleWorldBounds.Left);
         int endX = visibleWorldBounds.Right + GridSize;
-        for (int x = startX; x <= endX; x += GridSize)
+        int lastScreenX = int.MinValue;
+        for (int worldX = startX; worldX <= endX; worldX += GridSize)
         {
-            spriteBatch.Draw(pixel, new Rectangle(x, visibleWorldBounds.Top, lineThickness, visibleWorldBounds.Height), gridColor);
+            int screenX = (int)MathF.Round(_camera.WorldToScreen(new Vector2(worldX, 0f), viewport).X);
+            if (screenX < 0 || screenX >= viewport.Width || screenX == lastScreenX)
+            {
+                continue;
+            }
+
+            lastScreenX = screenX;
+            spriteBatch.Draw(pixel, new Rectangle(screenX, 0, 1, viewport.Height), gridColor);
         }
 
         int startY = FloorToGrid(visibleWorldBounds.Top);
         int endY = visibleWorldBounds.Bottom + GridSize;
-        for (int y = startY; y <= endY; y += GridSize)
+        int lastScreenY = int.MinValue;
+        for (int worldY = startY; worldY <= endY; worldY += GridSize)
         {
-            spriteBatch.Draw(pixel, new Rectangle(visibleWorldBounds.Left, y, visibleWorldBounds.Width, lineThickness), gridColor);
+            int screenY = (int)MathF.Round(_camera.WorldToScreen(new Vector2(0f, worldY), viewport).Y);
+            if (screenY < 0 || screenY >= viewport.Height || screenY == lastScreenY)
+            {
+                continue;
+            }
+
+            lastScreenY = screenY;
+            spriteBatch.Draw(pixel, new Rectangle(0, screenY, viewport.Width, 1), gridColor);
         }
     }
 

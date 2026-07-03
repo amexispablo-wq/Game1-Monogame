@@ -48,6 +48,13 @@ public sealed class Camera
         return ((screenPosition - viewportCenter) / Zoom) + Position;
     }
 
+    public Vector2 WorldToScreen(Vector2 worldPosition, Viewport viewport)
+    {
+        Vector2 center = new(viewport.Width * 0.5f, viewport.Height * 0.5f);
+        Vector2 snapped = GetSnappedPosition();
+        return (worldPosition - snapped) * Zoom + center;
+    }
+
     public Rectangle GetVisibleWorldRectangle(Viewport viewport, int padding)
     {
         Vector2 topLeft = ScreenToWorld(Vector2.Zero, viewport);

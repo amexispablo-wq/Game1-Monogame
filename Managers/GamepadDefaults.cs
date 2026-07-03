@@ -13,16 +13,15 @@ namespace ColorBlocks;
 /// </summary>
 public static class GamepadDefaults
 {
-    // Per-axis deadzone. Radial lets paired drift (e.g. +X +Y) slip through as diagonal input.
-    public const float MoveDeadZone = 0.40f;
-    public const float FastFallProcessedThreshold = 0.52f;
-    public const float MenuStickDirectionThreshold = 0.42f;
-    public const float GameplayAxisNoiseFloor = 0.10f;
-    public const float EditorPanStickThreshold = 0.42f;
+    // Per-axis deadzone + rescale. Tuned for responsive sticks; deadzone filters idle noise.
+    public const float MoveDeadZone = 0.28f;
+    public const float FastFallProcessedThreshold = 0.45f;
+    public const float MenuStickDirectionThreshold = 0.30f;
+    public const float EditorPanStickThreshold = 0.18f;
     public const float PullRopeTriggerThreshold = 0.35f;
 
     // Raw-axis edge threshold for binding capture prompts.
-    public const float FastFallStickThreshold = 0.52f;
+    public const float FastFallStickThreshold = 0.45f;
 
     public static float ProcessAxis(float raw, float deadzone = MoveDeadZone)
     {
@@ -40,11 +39,6 @@ public static class GamepadDefaults
         new(ProcessAxis(raw.X), ProcessAxis(raw.Y));
 
     public static float ProcessHorizontalAxis(float rawX) => ProcessAxis(rawX);
-
-    public static float ApplyGameplayNoiseFloor(float axisValue)
-    {
-        return MathF.Abs(axisValue) < GameplayAxisNoiseFloor ? 0f : axisValue;
-    }
 
     public static bool UsesAnalogStick(GamepadBindingKind kind) =>
         kind is GamepadBindingKind.DefaultAxis
@@ -64,7 +58,7 @@ public static class GamepadDefaults
 
         if (leftAnalog && rightAnalog)
         {
-            return ApplyGameplayNoiseFloor(Math.Clamp(processedStick.X, -1f, 1f));
+            return Math.Clamp(processedStick.X, -1f, 1f);
         }
 
         float horizontal = 0f;
@@ -86,7 +80,7 @@ public static class GamepadDefaults
             horizontal += 1f;
         }
 
-        return ApplyGameplayNoiseFloor(Math.Clamp(horizontal, -1f, 1f));
+        return Math.Clamp(horizontal, -1f, 1f);
     }
 
     public static bool ReadFastFallHeld(
