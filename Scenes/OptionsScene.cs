@@ -15,6 +15,7 @@ public sealed class OptionsScene : IScene
     private ResolutionDropdown _resolutionDropdown = new();
     private CycleSelector<DisplayMode> _displayModeSelector;
     private CycleSelector<int> _fpsLimitSelector;
+    private CycleSelector<ColorMode> _colorModeSelector;
 
     // Audio settings
     private Slider _volumeSlider = new("Music Volume", 0.75f, 0f, 1f);
@@ -25,6 +26,7 @@ public sealed class OptionsScene : IScene
     private readonly UIFocusManager _focus = new();
     private readonly FocusableCycleSelector<DisplayMode> _displayModeFocus;
     private readonly FocusableCycleSelector<int> _fpsLimitFocus;
+    private readonly FocusableCycleSelector<ColorMode> _colorModeFocus;
     private readonly FocusableSlider _volumeFocus;
     private readonly FocusableResolutionDropdown _resolutionFocus;
     private readonly FocusableButton _applyFocus;
@@ -93,6 +95,16 @@ public sealed class OptionsScene : IScene
         var fpsOptions = new List<int> { -1, 0, 30, 60, 120, 144, 240 };
         _fpsLimitSelector = new CycleSelector<int>(fpsOptions, FormatFpsLimit);
 
+        var colorModes = new List<ColorMode>
+        {
+            ColorMode.Normal,
+            ColorMode.Protanopia,
+            ColorMode.Deuteranopia,
+            ColorMode.Tritanopia,
+            ColorMode.HighContrast
+        };
+        _colorModeSelector = new CycleSelector<ColorMode>(colorModes, ColorPaletteManager.FormatMode);
+
         var pending = SettingsManager.PendingSettings;
         _resolutionDropdown.SelectedResolution = new Resolution(pending.ResolutionWidth, pending.ResolutionHeight);
         _resolutionDropdown.Label = string.Empty;
@@ -116,9 +128,11 @@ public sealed class OptionsScene : IScene
         };
         _displayModeSelector.CurrentOption = initialMode;
         _fpsLimitSelector.CurrentOption = pending.FpsLimit;
+        _colorModeSelector.CurrentOption = pending.ColorMode;
 
         _displayModeFocus = new FocusableCycleSelector<DisplayMode>(_displayModeSelector);
         _fpsLimitFocus = new FocusableCycleSelector<int>(_fpsLimitSelector);
+        _colorModeFocus = new FocusableCycleSelector<ColorMode>(_colorModeSelector);
         _volumeFocus = new FocusableSlider(_volumeSlider);
         _resolutionFocus = new FocusableResolutionDropdown(_resolutionDropdown);
         _resolutionDropdown.RefreshSupportedResolutions(_game.GraphicsDevice);
@@ -214,6 +228,7 @@ public sealed class OptionsScene : IScene
 
         // Audio column (right of display)
         int volumeIndex = _focus.Add(_volumeFocus, "MusicVolume");
+        int colorModeIndex = _focus.Add(_colorModeFocus, "ColorMode");
 
         // Control bindings: two focusable cells per action (keyboard, gamepad)
         var keyIndices = new List<int>();
@@ -245,12 +260,13 @@ public sealed class OptionsScene : IScene
         // Display column: MODE -> RESOLUTION -> FPS -> AUDIO -> CONTROLS
         nav.LinkVertical(displayModeIndex, resolutionIndex);
         nav.LinkVertical(resolutionIndex, fpsIndex);
-        nav.LinkVertical(fpsIndex, volumeIndex);
+        nav.LinkVertical(fpsIndex, colorModeIndex);
+        nav.LinkVertical(volumeIndex, colorModeIndex);
         nav.LinkHorizontal(resolutionIndex, volumeIndex);
 
         if (keyIndices.Count > 0)
         {
-            nav.LinkVertical(volumeIndex, keyIndices[0]);
+            nav.LinkVertical(colorModeIndex, keyIndices[0]);
 
             for (int i = 0; i < keyIndices.Count; i++)
             {
@@ -268,10 +284,11 @@ public sealed class OptionsScene : IScene
             nav.LinkVertical(padIndices[last], applyIndex);
             nav.Link(applyIndex, NavigationDirection.Up, keyIndices[last]);
             nav.Link(backIndex, NavigationDirection.Up, padIndices[last]);
+            nav.Link(colorModeIndex, NavigationDirection.Down, keyIndices[0]);
         }
         else
         {
-            nav.LinkVertical(volumeIndex, applyIndex);
+            nav.LinkVertical(colorModeIndex, applyIndex);
         }
 
         nav.LinkHorizontal(backIndex, applyIndex);
@@ -389,6 +406,8 @@ public sealed class OptionsScene : IScene
         DrawSection(spriteBatch, pixel, layout, layout.AudioSectionBounds, "AUDIO SETTINGS");
         DrawSettingLabel(spriteBatch, pixel, "MUSIC VOLUME", layout.AudioLabelBounds, layout.VolumeBounds);
         _volumeSlider.Draw(spriteBatch, pixel);
+        DrawSettingLabel(spriteBatch, pixel, "COLOR MODE", layout.ColorModeLabelBounds, layout.ColorModeBounds);
+        _colorModeSelector.Draw(spriteBatch, pixel);
     }
 
     private void DrawControlSettings(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
@@ -545,7 +564,9 @@ public sealed class OptionsScene : IScene
         DrawHelper.DrawBorder(spriteBatch, pixel, promptBg, Accent, 3);
 
         Rectangle textBounds = new(x + 24, y + 34, width - 48, 46);
-        string prompt = _rebindingKind == RebindKind.Gamepad ? "PRESS A BUTTON" : "PRESS ANY KEY";
+        string prompt = _rebindingKind == RebindKind.Gamepad
+            ? GetGamepadRebindPrompt()
+            : "PRESS ANY KEY";
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, prompt, textBounds, 3, Accent);
 
         Rectangle subBounds = new(x + 24, y + 94, width - 48, 34);
@@ -554,6 +575,8 @@ public sealed class OptionsScene : IScene
             : "UNKNOWN";
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, actionName, subBounds, 2, LabelColor);
     }
+
+    private string GetGamepadRebindPrompt() => "STICK, D-PAD, OR BUTTON";
 
     private void HandleRebinding(GameTime gameTime)
     {
@@ -616,26 +639,26 @@ public sealed class OptionsScene : IScene
 
         for (int device = 0; device < InputManager.MaxLocalPlayers; device++)
         {
-            if (!_game.Input.IsGamepadConnected(device))
+            if (!_game.Input.TryCaptureGamepadBinding(device, gameplayAction, out string bindingToken))
             {
                 continue;
             }
 
-            foreach (Buttons button in GamepadDefaults.CaptureButtons)
+            if (bindingToken == GamepadBindingTokens.Default)
             {
-                if (!_game.Input.WasGamepadPressed(device, button))
-                {
-                    continue;
-                }
-
-                SettingsManager.PendingSettings.GamepadBindings[action] = button.ToString();
-                _controlBindings[_rebindingIndex.Value] =
-                    (action, keyName, GamepadDefaults.GetGamepadDisplayName(gameplayAction, SettingsManager.PendingSettings.GamepadBindings));
-
-                _rebindingIndex = null;
-                _rebindingWaitTime = 0;
-                return;
+                SettingsManager.PendingSettings.GamepadBindings.Remove(action);
             }
+            else
+            {
+                SettingsManager.PendingSettings.GamepadBindings[action] = bindingToken;
+            }
+
+            _controlBindings[_rebindingIndex.Value] =
+                (action, keyName, GamepadDefaults.GetGamepadDisplayName(gameplayAction, SettingsManager.PendingSettings.GamepadBindings));
+
+            _rebindingIndex = null;
+            _rebindingWaitTime = 0;
+            return;
         }
     }
 
@@ -648,6 +671,7 @@ public sealed class OptionsScene : IScene
         _resolutionDropdown.OpenUpwards = false;
         _fpsLimitSelector.Bounds = layout.FpsLimitBounds;
         _volumeSlider.Bounds = layout.VolumeBounds;
+        _colorModeSelector.Bounds = layout.ColorModeBounds;
 
         ControlWidth = layout.ControlSectionBounds.Width;
 
@@ -742,6 +766,9 @@ public sealed class OptionsScene : IScene
         Rectangle resolutionBounds = new(displayControlBounds.X, rowStartY + rowHeight + 10, displayControlBounds.Width, rowHeight);
         Rectangle fpsLimitBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 2), displayControlBounds.Width, rowHeight);
         Rectangle volumeBounds = new(audioControlBounds.X, rowStartY, audioControlBounds.Width, rowHeight);
+        int colorModeRowY = rowStartY + rowHeight + 10;
+        Rectangle colorModeBounds = new(audioControlBounds.X, colorModeRowY, audioControlBounds.Width, rowHeight);
+        Rectangle colorModeLabelBounds = new(audioLabelBounds.X, colorModeRowY, audioLabelBounds.Width, rowHeight);
 
         int controlRowsY = controlSectionBounds.Y + sectionPadding + sectionTitleHeight + sectionTitleSpacing;
         int controlRowsHeight = controlHeaderHeight + controlHeaderGap + actualDataHeight;
@@ -782,10 +809,12 @@ public sealed class OptionsScene : IScene
             displayControlBounds,
             audioLabelBounds,
             audioControlBounds,
+            colorModeLabelBounds,
             displayModeBounds,
             resolutionBounds,
             fpsLimitBounds,
             volumeBounds,
+            colorModeBounds,
             controlRowsArea,
             controlColumns,
             controlRowsPerColumn,
@@ -875,12 +904,15 @@ public sealed class OptionsScene : IScene
     {
         SettingsManager.PendingSettings.MusicVolume = _volumeSlider.Value;
         SettingsManager.PendingSettings.FpsLimit = _fpsLimitSelector.CurrentOption;
+        SettingsManager.PendingSettings.ColorMode = _colorModeSelector.CurrentOption;
         SettingsManager.PendingSettings.DisplayMode = _displayModeSelector.CurrentOption.ToString();
         if (_resolutionDropdown.SelectedResolution != null)
         {
             SettingsManager.PendingSettings.ResolutionWidth = _resolutionDropdown.SelectedResolution.Width;
             SettingsManager.PendingSettings.ResolutionHeight = _resolutionDropdown.SelectedResolution.Height;
         }
+
+        ColorPaletteManager.ApplySettings(SettingsManager.PendingSettings.ColorMode);
     }
 
     private static void DrawFittedLeft(SpriteBatch spriteBatch, Texture2D pixel, string text, Rectangle bounds, int preferredScale, Color color)
@@ -983,6 +1015,7 @@ public sealed class OptionsScene : IScene
         _game.ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);
         _game.ApplyFrameSettings(settings.FpsLimit);
         _game.Music.ApplyVolume(settings.MusicVolume);
+        ColorPaletteManager.ApplySettings(settings.ColorMode);
     }
 
     private bool HasDisplayChanges()
@@ -1095,10 +1128,12 @@ public sealed class OptionsScene : IScene
         Rectangle DisplayControlBounds,
         Rectangle AudioLabelBounds,
         Rectangle AudioControlBounds,
+        Rectangle ColorModeLabelBounds,
         Rectangle DisplayModeBounds,
         Rectangle ResolutionBounds,
         Rectangle FpsLimitBounds,
         Rectangle VolumeBounds,
+        Rectangle ColorModeBounds,
         Rectangle ControlRowsArea,
         int ControlColumns,
         int ControlRowsPerColumn,

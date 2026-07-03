@@ -1,18 +1,106 @@
+using System;
 using System.Collections.Generic;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
 namespace ColorBlocks;
 
 /// <summary>
 /// Default gamepad bindings using MonoGame's Xbox-style button layout.
-/// PlayStation controllers map through Steam Input / OS drivers to these buttons.
+/// PlayStation pads (DualShock 4 / DualSense, USB or Bluetooth) are supported via
+/// Steam Input when launched through Steam, or via SDL2 mappings when running standalone.
 /// Display names show both Xbox and PlayStation labels for the options screen.
 /// </summary>
 public static class GamepadDefaults
 {
-    public const float MoveDeadZone = 0.28f;
-    public const float FastFallStickThreshold = 0.45f;
+    // Per-axis deadzone. Radial lets paired drift (e.g. +X +Y) slip through as diagonal input.
+    public const float MoveDeadZone = 0.40f;
+    public const float FastFallProcessedThreshold = 0.52f;
+    public const float MenuStickDirectionThreshold = 0.42f;
+    public const float GameplayAxisNoiseFloor = 0.10f;
+    public const float EditorPanStickThreshold = 0.42f;
     public const float PullRopeTriggerThreshold = 0.35f;
+
+    // Raw-axis edge threshold for binding capture prompts.
+    public const float FastFallStickThreshold = 0.52f;
+
+    public static float ProcessAxis(float raw, float deadzone = MoveDeadZone)
+    {
+        float abs = MathF.Abs(raw);
+        if (abs <= deadzone)
+        {
+            return 0f;
+        }
+
+        float scaled = (abs - deadzone) / (1f - deadzone);
+        return MathF.Sign(raw) * Math.Clamp(scaled, 0f, 1f);
+    }
+
+    public static Vector2 ProcessLeftStick(Vector2 raw) =>
+        new(ProcessAxis(raw.X), ProcessAxis(raw.Y));
+
+    public static float ProcessHorizontalAxis(float rawX) => ProcessAxis(rawX);
+
+    public static float ApplyGameplayNoiseFloor(float axisValue)
+    {
+        return MathF.Abs(axisValue) < GameplayAxisNoiseFloor ? 0f : axisValue;
+    }
+
+    public static bool UsesAnalogStick(GamepadBindingKind kind) =>
+        kind is GamepadBindingKind.DefaultAxis
+            or GamepadBindingKind.StickLeft
+            or GamepadBindingKind.StickRight
+            or GamepadBindingKind.StickUp
+            or GamepadBindingKind.StickDown;
+
+    public static float ReadHorizontalMovement(
+        Vector2 processedStick,
+        GamepadActionBinding moveLeft,
+        GamepadActionBinding moveRight,
+        GamePadState current)
+    {
+        bool leftAnalog = UsesAnalogStick(moveLeft.Kind);
+        bool rightAnalog = UsesAnalogStick(moveRight.Kind);
+
+        if (leftAnalog && rightAnalog)
+        {
+            return ApplyGameplayNoiseFloor(Math.Clamp(processedStick.X, -1f, 1f));
+        }
+
+        float horizontal = 0f;
+        if (leftAnalog)
+        {
+            horizontal -= Math.Max(0f, -processedStick.X);
+        }
+        else if (moveLeft.IsActive(current, GameplayInputAction.MoveLeft, processedStick))
+        {
+            horizontal -= 1f;
+        }
+
+        if (rightAnalog)
+        {
+            horizontal += Math.Max(0f, processedStick.X);
+        }
+        else if (moveRight.IsActive(current, GameplayInputAction.MoveRight, processedStick))
+        {
+            horizontal += 1f;
+        }
+
+        return ApplyGameplayNoiseFloor(Math.Clamp(horizontal, -1f, 1f));
+    }
+
+    public static bool ReadFastFallHeld(
+        Vector2 processedStick,
+        GamepadActionBinding fastFall,
+        GamePadState current)
+    {
+        if (UsesAnalogStick(fastFall.Kind))
+        {
+            return processedStick.Y < -FastFallProcessedThreshold;
+        }
+
+        return fastFall.IsActive(current, GameplayInputAction.FastFall);
+    }
 
     public static Buttons JumpButton => Buttons.A;
     public static Buttons RedButton => Buttons.X;
@@ -23,11 +111,14 @@ public static class GamepadDefaults
     public static Buttons MenuConfirmButton => Buttons.A;
     public static Buttons MenuCancelButton => Buttons.B;
 
-    // Button-style actions that support gamepad rebinding (axis/trigger actions excluded).
+    // Button-style actions that support gamepad rebinding.
     public static readonly GameplayInputAction[] RebindableButtonActions =
     {
+        GameplayInputAction.MoveLeft,
+        GameplayInputAction.MoveRight,
         GameplayInputAction.Jump,
         GameplayInputAction.Respawn,
+        GameplayInputAction.FastFall,
         GameplayInputAction.Red,
         GameplayInputAction.Blue,
         GameplayInputAction.Green
@@ -53,8 +144,11 @@ public static class GamepadDefaults
         GameplayInputAction.Red => RedButton,
         GameplayInputAction.Blue => BlueButton,
         GameplayInputAction.Green => GreenButton,
-        _ => Buttons.A
+        _ => Buttons.None
     };
+
+    public static bool UsesDefaultAxisBinding(GameplayInputAction action) =>
+        action is GameplayInputAction.MoveLeft or GameplayInputAction.MoveRight or GameplayInputAction.FastFall;
 
     // Buttons offered when capturing a new gamepad binding.
     public static readonly Buttons[] CaptureButtons =
@@ -82,12 +176,9 @@ public static class GamepadDefaults
 
     public static string GetGamepadDisplayName(GameplayInputAction action, IReadOnlyDictionary<string, string>? overrides)
     {
-        if (IsButtonRebindable(action)
-            && overrides != null
-            && overrides.TryGetValue(action.ToString(), out string? stored)
-            && System.Enum.TryParse(stored, out Buttons parsed))
+        if (overrides != null && overrides.TryGetValue(action.ToString(), out string? stored))
         {
-            return FormatButton(parsed);
+            return GamepadActionBinding.FormatToken(stored, action);
         }
 
         return GetDisplayName(action);
@@ -97,11 +188,11 @@ public static class GamepadDefaults
     {
         return action switch
         {
-            GameplayInputAction.MoveLeft => "Left Stick / D-Pad",
-            GameplayInputAction.MoveRight => "Left Stick / D-Pad",
+            GameplayInputAction.MoveLeft => "Left Stick ←",
+            GameplayInputAction.MoveRight => "Left Stick →",
             GameplayInputAction.Jump => "A / Cross",
             GameplayInputAction.Respawn => "Back / Select",
-            GameplayInputAction.FastFall => "Stick Down / D-Pad Down",
+            GameplayInputAction.FastFall => "Left Stick ↓",
             GameplayInputAction.PullRope => "RT / R2",
             GameplayInputAction.Red => "X / Square",
             GameplayInputAction.Blue => "B / Circle",

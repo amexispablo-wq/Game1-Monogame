@@ -18,9 +18,18 @@ public sealed class Camera
 
     public Matrix GetTransform(Viewport viewport)
     {
-        return Matrix.CreateTranslation(new Vector3(-Position, 0f))
+        Vector2 snappedPosition = GetSnappedPosition();
+        return Matrix.CreateTranslation(new Vector3(-snappedPosition.X, -snappedPosition.Y, 0f))
             * Matrix.CreateScale(Zoom, Zoom, 1f)
             * Matrix.CreateTranslation(new Vector3(viewport.Width * 0.5f, viewport.Height * 0.5f, 0f));
+    }
+
+    public Vector2 GetSnappedPosition()
+    {
+        float zoom = MathF.Max(0.0001f, Zoom);
+        return new Vector2(
+            MathF.Round(Position.X * zoom) / zoom,
+            MathF.Round(Position.Y * zoom) / zoom);
     }
 
     public void SetZoom(float zoom)

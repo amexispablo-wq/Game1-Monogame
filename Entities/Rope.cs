@@ -25,8 +25,6 @@ public sealed class Rope : INetworkEntity
     private const float TenseStateThreshold = 0.08f;
     private const int MaxPullNodeRadius = 8;
     private const float PullingEndpointImpulseScale = 0.72f;
-    private static readonly Color NeutralRopeColor = new(210, 180, 140);
-
     private readonly IReadOnlyList<Player> _colorPlayers;
     private Vector2 _startPinnedCorrection;
     private Vector2 _endPinnedCorrection;
@@ -780,61 +778,62 @@ public sealed class Rope : INetworkEntity
         bool HasRed,
         bool HasGreen,
         bool HasBlue,
-        Color XnaColor,
-        string Name)
+        string Name,
+        bool IsNeutral)
     {
+        public Color XnaColor => IsNeutral
+            ? ColorPaletteManager.Get(ColorType.Rope)
+            : ColorPaletteManager.MixFlags(HasRed, HasGreen, HasBlue);
+
         public static RopeColorState Create(bool hasRed, bool hasGreen, bool hasBlue)
         {
-            Color color;
-            string name;
+            string name = GetMixName(hasRed, hasGreen, hasBlue);
+            return new RopeColorState(hasRed, hasGreen, hasBlue, name, IsNeutral: false);
+        }
 
+        private static string GetMixName(bool hasRed, bool hasGreen, bool hasBlue)
+        {
             if (hasRed && hasGreen && hasBlue)
             {
-                color = Color.White;
-                name = "WHITE";
-            }
-            else if (hasRed && hasGreen)
-            {
-                color = Color.Yellow;
-                name = "YELLOW";
-            }
-            else if (hasRed && hasBlue)
-            {
-                color = Color.Magenta;
-                name = "MAGENTA";
-            }
-            else if (hasGreen && hasBlue)
-            {
-                color = Color.Cyan;
-                name = "CYAN";
-            }
-            else if (hasRed)
-            {
-                color = GameColor.Red.ToXnaColor();
-                name = "RED";
-            }
-            else if (hasGreen)
-            {
-                color = GameColor.Green.ToXnaColor();
-                name = "GREEN";
-            }
-            else if (hasBlue)
-            {
-                color = GameColor.Blue.ToXnaColor();
-                name = "BLUE";
-            }
-            else
-            {
-                color = Color.White;
-                name = "NONE";
+                return "WHITE";
             }
 
-            return new RopeColorState(hasRed, hasGreen, hasBlue, color, name);
+            if (hasRed && hasGreen)
+            {
+                return "YELLOW";
+            }
+
+            if (hasRed && hasBlue)
+            {
+                return "MAGENTA";
+            }
+
+            if (hasGreen && hasBlue)
+            {
+                return "CYAN";
+            }
+
+            if (hasRed)
+            {
+                return "RED";
+            }
+
+            if (hasGreen)
+            {
+                return "GREEN";
+            }
+
+            if (hasBlue)
+            {
+                return "BLUE";
+            }
+
+            return "NONE";
         }
 
         public static RopeColorState CreateNeutral()
         {
-            return new RopeColorState(false, false, false, Rope.NeutralRopeColor, "NEUTRAL");
+            return new RopeColorState(false, false, false, "NEUTRAL", IsNeutral: true);
         }
     }
 }

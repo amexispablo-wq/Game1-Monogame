@@ -347,6 +347,7 @@ public sealed class GameSimulation
         IsPlayerDead = true;
         TimerRunning = false;
         _session.State = GameSessionState.Dead;
+        _latchedLocalInput.Clear();
 
         foreach (Player player in Players)
         {
@@ -379,6 +380,7 @@ public sealed class GameSimulation
         TimerRunning = true;
         LavaSurfaceY = _lavaStartSurfaceY;
         _session.State = GameSessionState.Playing;
+        _latchedLocalInput.Clear();
 
         foreach (Player player in Players)
         {

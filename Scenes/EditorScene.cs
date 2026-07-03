@@ -651,9 +651,12 @@ public sealed class EditorScene : IScene
         if (!mouseOverUi && _game.Input.Navigation.IsGamepadActive && _game.Input.IsAnyGamepadConnected())
         {
             Vector2 stick = _game.Input.GetMenuLeftStick();
-            if (stick.LengthSquared() > 0.04f)
+            float panThreshold = GamepadDefaults.EditorPanStickThreshold;
+            float stickMagnitude = stick.Length();
+            if (stickMagnitude >= panThreshold)
             {
-                Vector2 pan = new Vector2(-stick.X, stick.Y) * 14f;
+                float speedScale = stickMagnitude * 18f;
+                Vector2 pan = new Vector2(-stick.X, stick.Y) / stickMagnitude * speedScale;
                 _camera.PanByScreenDelta(new Point((int)MathF.Round(pan.X), (int)MathF.Round(pan.Y)));
             }
 
@@ -1970,10 +1973,24 @@ public sealed class EditorScene : IScene
 
     private void DrawGrid(SpriteBatch spriteBatch, Texture2D pixel, Rectangle visibleWorldBounds)
     {
-        // Fixed 1 world-pixel lines; fade alpha when zoomed out so dense grid doesn't wash white.
-        float zoomFade = MathHelper.Clamp(_camera.Zoom, 0.15f, 1f);
-        int baseAlpha = _snapToGrid ? 20 : 10;
-        byte alpha = (byte)MathHelper.Clamp((int)(baseAlpha * zoomFade), 4, 24);
+        // Always 32x32 world-unit cells; fade out as cells shrink on screen (no adaptive step).
+        float screenCellSize = GridSize * _camera.Zoom;
+        const float fullVisibilityCellSize = 22f;
+        const float hiddenCellSize = 5f;
+        float fade = (screenCellSize - hiddenCellSize) / (fullVisibilityCellSize - hiddenCellSize);
+        fade = MathHelper.Clamp(fade, 0f, 1f);
+        if (fade <= 0f)
+        {
+            return;
+        }
+
+        int baseAlpha = _snapToGrid ? 28 : 14;
+        byte alpha = (byte)MathHelper.Clamp((int)MathF.Round(baseAlpha * fade), 0, 32);
+        if (alpha == 0)
+        {
+            return;
+        }
+
         Color gridColor = new Color((byte)255, (byte)255, (byte)255, alpha);
         const int lineThickness = 1;
 

@@ -40,4 +40,7 @@ public sealed class GameSettings
     // Only button-style actions are rebindable (Jump, Respawn, Red, Blue, Green).
     [JsonPropertyName("GamepadBindings")]
     public Dictionary<string, string> GamepadBindings { get; set; } = new();
+
+    [JsonPropertyName("ColorMode")]
+    public ColorMode ColorMode { get; set; } = ColorMode.Normal;
 }

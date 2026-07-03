@@ -81,10 +81,10 @@ public sealed class LaunchPad
         int width = Math.Max(6, Bounds.Width);
         int height = Math.Max(6, Bounds.Height);
         int rowStep = Math.Max(1, height / 18);
-        Color fill = new Color(80, 210, 255) * alpha;
-        Color bright = new Color(176, 246, 255) * alpha;
-        Color baseColor = new Color(32, 78, 108) * alpha;
-        Color border = Color.Black * alpha;
+        Color fill = ColorPaletteManager.Get(ColorType.LaunchPad) * alpha;
+        Color bright = ColorPaletteManager.GetLaunchPadBright() * alpha;
+        Color baseColor = ColorPaletteManager.GetLaunchPadBase() * alpha;
+        Color border = ColorPaletteManager.Get(ColorType.Black) * alpha;
 
         for (int y = 0; y < height; y += rowStep)
         {
@@ -115,7 +115,7 @@ public sealed class LaunchPad
         float height = Math.Max(6, Bounds.Height);
         Vector2 start = new(0f, height * 0.24f);
         Vector2 end = new(0f, -height * 0.68f);
-        Color arrowColor = new Color(255, 245, 135) * alpha;
+        Color arrowColor = ColorPaletteManager.GetLaunchPadArrow() * alpha;
 
         DrawLocalLine(spriteBatch, pixel, start, end, arrowColor, 4f);
         DrawLocalLine(spriteBatch, pixel, end, end + new Vector2(-Math.Max(8f, Bounds.Width * 0.12f), Math.Max(8f, height * 0.22f)), arrowColor, 4f);
@@ -142,7 +142,7 @@ public sealed class LaunchPad
                 size,
                 size);
 
-            spriteBatch.Draw(pixel, particle, new Color(132, 232, 255) * ((1f - phase) * 0.55f * alpha));
+            spriteBatch.Draw(pixel, particle, ColorPaletteManager.GetLaunchPadParticle() * ((1f - phase) * 0.55f * alpha));
         }
     }
 

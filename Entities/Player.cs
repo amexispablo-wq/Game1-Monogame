@@ -34,13 +34,15 @@ public sealed class Player : INetworkEntity
         PartyMemberId partyMemberId,
         Vector2 startPosition,
         InputDevice assignedInput,
-        NetworkEntityOwnership ownership)
+        NetworkEntityOwnership ownership,
+        string displayLabel)
     {
         PlayerId = playerId;
         PlayerIndex = playerIndex;
         PartyMemberId = partyMemberId;
         Position = startPosition;
         AssignedInput = assignedInput;
+        DisplayLabel = displayLabel;
         CurrentColor = GameColor.Red;
         ConfigureNetworkOwnership(ownership);
     }
@@ -53,6 +55,7 @@ public sealed class Player : INetworkEntity
     public PlayerId PlayerId { get; }
     public int PlayerIndex { get; }
     public PartyMemberId PartyMemberId { get; }
+    public string DisplayLabel { get; }
     public InputDevice AssignedInput { get; set; }
     public Vector2 Position { get; set; }
     public Vector2 Velocity { get; set; }
@@ -851,7 +854,7 @@ public sealed class Player : INetworkEntity
         }
 
         float amount = MathHelper.Clamp(_ejectionRampAmount, 0f, 1f);
-        Color glowColor = Color.Lerp(CurrentColor.ToXnaColor(), Color.White, 0.35f) * (0.12f + (0.12f * amount));
+        Color glowColor = Color.Lerp(CurrentColor.ToXnaColor(), ColorPaletteManager.Get(ColorType.White), 0.35f) * (0.12f + (0.12f * amount));
 
         Rectangle glowBounds = bounds;
         glowBounds.Inflate(3 + (int)MathF.Round(4f * amount), 3 + (int)MathF.Round(4f * amount));
@@ -966,12 +969,12 @@ public sealed class Player : INetworkEntity
 
     private void DrawPlayerIndicator(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds)
     {
-        string label = (PlayerIndex + 1).ToString();
+        string label = DisplayLabel;
         const int scale = 2;
         Point textSize = SimpleTextRenderer.MeasureString(label, scale);
         Vector2 position = new(
-            bounds.Center.X - (textSize.X * 0.5f),
-            bounds.Top - textSize.Y - 6);
+            MathF.Round(bounds.Center.X - (textSize.X * 0.5f)),
+            MathF.Round(bounds.Top - textSize.Y - 6));
 
         SimpleTextRenderer.DrawString(spriteBatch, pixel, label, position + new Vector2(1f, 1f), scale, Color.Black);
         SimpleTextRenderer.DrawString(spriteBatch, pixel, label, position, scale, Color.White);

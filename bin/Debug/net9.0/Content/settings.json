@@ -3,7 +3,7 @@
   "resolutionWidth": 1920,
   "resolutionHeight": 1080,
   "musicVolume": 0.27542374,
-  "fpsLimit": 144,
+  "fpsLimit": 0,
   "Keybindings": {
     "MoveLeft": "A",
     "MoveRight": "D",
@@ -19,6 +19,9 @@
     "Jump": "A",
     "Blue": "B",
     "Red": "X",
-    "Green": "Y"
-  }
+    "Green": "Y",
+    "MoveLeft": "StickLeft",
+    "MoveRight": "StickLeft"
+  },
+  "ColorMode": "Normal"
 }

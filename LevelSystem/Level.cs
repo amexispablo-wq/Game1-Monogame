@@ -432,10 +432,10 @@ public sealed class Level
                     continue;
                 }
 
-                Color mixedColor = MixColors(new List<Color>
+                Color mixedColor = MixGameColors(new List<GameColor>
                 {
-                    first.PlatformColor.ToXnaColor(),
-                    second.PlatformColor.ToXnaColor()
+                    first.PlatformColor,
+                    second.PlatformColor
                 });
 
                 spriteBatch.Draw(pixel, pairIntersection, mixedColor);
@@ -465,11 +465,11 @@ public sealed class Level
                         continue;
                     }
 
-                    Color mixedColor = MixColors(new List<Color>
+                    Color mixedColor = MixGameColors(new List<GameColor>
                     {
-                        first.PlatformColor.ToXnaColor(),
-                        second.PlatformColor.ToXnaColor(),
-                        third.PlatformColor.ToXnaColor()
+                        first.PlatformColor,
+                        second.PlatformColor,
+                        third.PlatformColor
                     });
 
                     spriteBatch.Draw(pixel, tripleIntersection, mixedColor);
@@ -499,47 +499,6 @@ public sealed class Level
         return new Rectangle(left, top, right - left, bottom - top);
     }
 
-    public static Color MixColors(List<Color> colors)
-    {
-        bool hasRed = colors.Any(color => color == GameColor.Red.ToXnaColor());
-        bool hasGreen = colors.Any(color => color == GameColor.Green.ToXnaColor());
-        bool hasBlue = colors.Any(color => color == GameColor.Blue.ToXnaColor());
-
-        if (hasRed && hasGreen && hasBlue)
-        {
-            return Color.White;
-        }
-
-        if (hasRed && hasGreen)
-        {
-            return Color.Yellow;
-        }
-
-        if (hasRed && hasBlue)
-        {
-            return Color.Magenta;
-        }
-
-        if (hasGreen && hasBlue)
-        {
-            return Color.Cyan;
-        }
-
-        if (hasRed)
-        {
-            return GameColor.Red.ToXnaColor();
-        }
-
-        if (hasGreen)
-        {
-            return GameColor.Green.ToXnaColor();
-        }
-
-        if (hasBlue)
-        {
-            return GameColor.Blue.ToXnaColor();
-        }
-
-        return Color.White;
-    }
+    public static Color MixGameColors(IReadOnlyList<GameColor> colors) =>
+        ColorPaletteManager.MixGameColors(colors);
 }

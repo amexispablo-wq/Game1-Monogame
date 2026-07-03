@@ -29,13 +29,22 @@ public sealed class NetworkInputBuffer
 
     public void StoreFrame(InputFrame frame)
     {
-        Dictionary<int, PlayerInputState> inputMap = frame.ToInputMap();
-        if (!_frames.ContainsKey(frame.Tick))
+        MergeFrame(frame);
+    }
+
+    public void MergeFrame(InputFrame frame)
+    {
+        if (!_frames.TryGetValue(frame.Tick, out Dictionary<int, PlayerInputState>? inputMap))
         {
+            inputMap = new Dictionary<int, PlayerInputState>();
+            _frames[frame.Tick] = inputMap;
             TotalFramesStored++;
         }
 
-        _frames[frame.Tick] = inputMap;
+        foreach (PlayerInputEntry entry in frame.PlayerInputs)
+        {
+            inputMap[entry.NetworkId] = entry.Input.Sanitized();
+        }
     }
 
     public IReadOnlyDictionary<int, PlayerInputState> GetInputs(SimulationTick tick)

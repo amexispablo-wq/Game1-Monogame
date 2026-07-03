@@ -141,6 +141,40 @@ public sealed class PartyManager
         AssignNetworkPlayerIds();
     }
 
+    public void ApplyPreferredInputForPrimaryLocalMember(InputManager input)
+    {
+        if (AssignmentsLocked)
+        {
+            return;
+        }
+
+        PartyMember? primary = null;
+        foreach (PartyMember member in _members)
+        {
+            if (member.IsLocallyOwned)
+            {
+                primary = member;
+                break;
+            }
+        }
+
+        if (primary is null)
+        {
+            return;
+        }
+
+        if (input.LastUsedPartyInputSource == PartyInputSource.Gamepad && input.LastUsedPartyControllerId >= 0)
+        {
+            TryAssignInput(primary.Id, PartyInputSource.Gamepad, input.LastUsedPartyControllerId);
+            return;
+        }
+
+        if (input.LastUsedPartyInputSource == PartyInputSource.Keyboard)
+        {
+            TryAssignInput(primary.Id, PartyInputSource.Keyboard);
+        }
+    }
+
     public void UnlockAssignments()
     {
         AssignmentsLocked = false;

@@ -13,7 +13,8 @@
 | Sync inicio de nivel (líder → todos) | ✅ `BroadcastLevelStart` |
 | Rich presence (connect string) | ✅ Parcial (`#StatusInParty`) |
 | Kick vía lobby chat | ✅ |
-| **Gameplay networking (sockets)** | ❌ Ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md) |
+| **Steam Input API** | ✅ `SteamInputService` (DualShock 4 / DualSense / Xbox) |
+| **Gameplay networking (sockets)** | 🟡 Ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md) |
 | Achievements / stats | ❌ |
 | Leaderboards globales | ❌ Ver [`08-ROADMAP.md`](08-ROADMAP.md) Fase 3 |
 | Steam Workshop / UGC | ❌ Ver [`08-ROADMAP.md`](08-ROADMAP.md) Fase 4 |
@@ -70,6 +71,30 @@ _steam.RunCallbacks();
 // Dispose
 _steam.Shutdown();
 ```
+
+## Steam Input — `Steam/SteamInputService.cs`
+
+Juego usa layout **Xbox** (`GamePad` de MonoGame). Steam Input traduce DualShock 4, DualSense, Xbox, etc. a ese layout cuando el cliente Steam está activo.
+
+| Paso | Qué hace |
+|------|----------|
+| `SteamInput.Init(false)` | Tras `SteamAPI.Init()` |
+| `SetInputActionManifestFilePath` | Carga `steam_input_manifest.vdf` del output |
+| `RunFrame()` | Cada frame, **antes** de `InputManager.Update()` |
+| `GetControllerType` / `GetControllerLabel` | F3 debug: tipo real del pad (PS4, PS5, Xbox…) |
+
+Archivos copiados al build: `Steam/steam_input_manifest.vdf`, `Steam/controller_gamepad.vdf`.
+
+### Steam Partner (requerido para release)
+
+1. **Steam Input** → habilitar.
+2. Controllers: Xbox One, Generic Gamepad, **PlayStation 4**, **PlayStation 5**.
+3. Template: **Custom Configuration (Bundled with Game)** → ruta `steam_input_manifest.vdf`.
+4. Publicar cambios en Steamworks.
+
+### Sin Steam (dev / exe directo)
+
+PS4/PS5 dependen de **SDL2** (MonoGame DesktopGL) + drivers Windows. USB suele ir mejor; Bluetooth variable. Para pruebas locales con pad Sony en Windows, lanzar vía Steam o usar DS4Windows.
 
 ## Configuración / archivos
 

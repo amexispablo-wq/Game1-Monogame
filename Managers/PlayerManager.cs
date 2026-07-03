@@ -22,13 +22,17 @@ public sealed class PlayerManager
     public bool HasCheckpoint => CurrentCheckpoint is not null;
     public Vector2 RespawnPosition => CurrentCheckpoint?.RespawnPosition ?? _level.PlayerStart;
 
-    public IReadOnlyList<Player> SpawnFromParty(IReadOnlyList<PartyMember> members, InputManager input)
+    public IReadOnlyList<Player> SpawnFromParty(
+        IReadOnlyList<PartyMember> members,
+        InputManager input,
+        string localSteamUsername)
     {
         Players.Clear();
         _session.ClearPlayers();
 
         Dictionary<int, PartyMember> bindings = new();
         int spawnIndex = 0;
+        int localOrdinal = 0;
         for (int i = 0; i < members.Count; i++)
         {
             PartyMember member = members[i];
@@ -37,6 +41,7 @@ public sealed class PlayerManager
             bool isLocal = member.IsLocallyOwned;
             int ownerId = member.OwnerId != 0 ? member.OwnerId : _session.LocalOwnerId;
             bool isHostControlled = isLocal && _session.IsHost;
+            string indicatorLabel = BuildIndicatorLabel(member, localSteamUsername, ref localOrdinal);
 
             int networkId = member.NetworkPlayerId > 0
                 ? member.NetworkPlayerId
@@ -52,7 +57,8 @@ public sealed class PlayerManager
                 member.Id,
                 spawnPosition,
                 assignedInput,
-                ownership);
+                ownership,
+                indicatorLabel);
             Players.Add(player);
             bindings[networkId] = member;
 
@@ -153,7 +159,7 @@ public sealed class PlayerManager
     {
         int networkId = _session.AllocateNetworkId();
         NetworkEntityOwnership ownership = new(networkId, ownerId, isLocal, isHostControlled);
-        Player player = new(playerId, playerIndex, partyMemberId, spawnPosition, assignedInput, ownership);
+        Player player = new(playerId, playerIndex, partyMemberId, spawnPosition, assignedInput, ownership, displayName);
         Players.Add(player);
 
         _session.RegisterPlayer(new PlayerSessionInfo(
@@ -180,6 +186,20 @@ public sealed class PlayerManager
             3 => PlayerId.Player4,
             _ => PlayerId.Player1
         };
+    }
+
+    private static string BuildIndicatorLabel(PartyMember member, string localSteamUsername, ref int localOrdinal)
+    {
+        if (!member.IsLocallyOwned || member.MemberType == PartyMemberType.SteamRemote)
+        {
+            return member.DisplayName;
+        }
+
+        string label = localOrdinal == 0
+            ? localSteamUsername
+            : $"{localSteamUsername} {localOrdinal + 1}";
+        localOrdinal++;
+        return label;
     }
 
     private static InputDevice ToInputDevice(PartyMember member)

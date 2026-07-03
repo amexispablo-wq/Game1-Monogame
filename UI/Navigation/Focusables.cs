@@ -311,7 +311,6 @@ public sealed class FocusableCycleMemberInput : IFocusable
 {
     private readonly PartyMember _member;
     private readonly Action<PartyMember, int> _cycle;
-    private readonly EditModeController _edit = new();
 
     public FocusableCycleMemberInput(Rectangle bounds, PartyMember member, Action<PartyMember, int> cycle)
     {
@@ -322,12 +321,12 @@ public sealed class FocusableCycleMemberInput : IFocusable
 
     public Rectangle Bounds { get; }
     public bool IsEnabled => _member.IsLocallyOwned;
-    public bool CapturesNavigation => _edit.IsEditing;
-    public bool IsEditing => _edit.IsEditing;
+    public bool CapturesNavigation => false;
+    public bool IsEditing => false;
 
     public bool HandleDirection(NavigationDirection direction)
     {
-        if (!_edit.IsEditing)
+        if (!IsEnabled)
         {
             return false;
         }
@@ -354,26 +353,11 @@ public sealed class FocusableCycleMemberInput : IFocusable
             return false;
         }
 
-        if (_edit.IsEditing)
-        {
-            _edit.Confirm();
-            return true;
-        }
-
-        _edit.BeginEdit();
+        _cycle(_member, 1);
         return true;
     }
 
-    public bool OnCancel()
-    {
-        if (!_edit.IsEditing)
-        {
-            return false;
-        }
-
-        _edit.Cancel();
-        return true;
-    }
+    public bool OnCancel() => false;
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {

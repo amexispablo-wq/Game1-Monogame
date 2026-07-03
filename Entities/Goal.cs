@@ -7,8 +7,6 @@ namespace ColorBlocks;
 public sealed class Goal
 {
     public static readonly Point FixedSize = new(48, 64);
-    private static readonly Color GoalFlagColor = new(255, 207, 72);
-    private static readonly Color GoalFlagShadow = new(209, 79, 66);
 
     public Goal(Point position)
     {
@@ -21,7 +19,7 @@ public sealed class Goal
 
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, float alpha = 1f)
     {
-        DrawFlag(spriteBatch, pixel, Bounds, GoalFlagColor, GoalFlagShadow, alpha);
+        DrawFlag(spriteBatch, pixel, Bounds, ColorPaletteManager.Get(ColorType.Goal), ColorPaletteManager.GetGoalShadow(), alpha);
 
         if (debugDraw)
         {
@@ -31,7 +29,7 @@ public sealed class Goal
 
     public static void DrawIcon(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, float alpha = 1f)
     {
-        DrawFlag(spriteBatch, pixel, bounds, GoalFlagColor, GoalFlagShadow, alpha);
+        DrawFlag(spriteBatch, pixel, bounds, ColorPaletteManager.Get(ColorType.Goal), ColorPaletteManager.GetGoalShadow(), alpha);
     }
 
     internal static void DrawFlag(

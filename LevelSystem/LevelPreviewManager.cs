@@ -15,6 +15,16 @@ public static class LevelPreviewManager
     private const string PreviewDirectoryName = "LevelPreviews";
     private static readonly Dictionary<string, Texture2D> PreviewCache = new();
 
+    public static void InvalidateCache()
+    {
+        foreach (Texture2D texture in PreviewCache.Values)
+        {
+            texture.Dispose();
+        }
+
+        PreviewCache.Clear();
+    }
+
     public static Texture2D GetPreview(GraphicsDevice graphicsDevice, Texture2D pixel, Level level, string levelId)
     {
         if (PreviewCache.TryGetValue(levelId, out Texture2D? cached) && cached is { IsDisposed: false })

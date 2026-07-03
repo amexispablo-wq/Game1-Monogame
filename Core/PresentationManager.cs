@@ -41,8 +41,8 @@ public sealed class PresentationManager : IDisposable
         }
 
         float scale = MathF.Min(backWidth / (float)_logicalWidth, backHeight / (float)_logicalHeight);
-        int destWidth = Math.Max(1, (int)MathF.Round(_logicalWidth * scale));
-        int destHeight = Math.Max(1, (int)MathF.Round(_logicalHeight * scale));
+        int destWidth = Math.Max(1, (int)MathF.Floor(_logicalWidth * scale));
+        int destHeight = Math.Max(1, (int)MathF.Floor(_logicalHeight * scale));
         int destX = (backWidth - destWidth) / 2;
         int destY = (backHeight - destHeight) / 2;
         _destinationRect = new Rectangle(destX, destY, destWidth, destHeight);

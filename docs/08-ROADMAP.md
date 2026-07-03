@@ -42,41 +42,38 @@ Objetivo: experiencia sólida en single-player y coop local antes de abrir onlin
 
 ---
 
-## Fase 2 — Coop online (bloqueador principal)
+## Fase 2 — Coop online (en progreso)
 
-Hoy: lobby Steam sincroniza **quién está en el party** y **qué nivel jugar**, pero cada cliente corre su **propia simulación** (`GameSessionRole.LocalTest`). Input remoto = vacío.
+**v1 scaffold listo.** Lobby + transporte + loop host-authoritative. Falta QA 2-client, predicción, interpolación.
 
-### 2.1 Transporte
+### 2.1 Transporte — hecho
 
-- Elegir: **Steam Networking Sockets** (`SteamNetworkingSockets` / `ISteamNetworkingMessages`) vía Steamworks.NET.
-- Serialización binaria compacta de `InputFramePacket` y `GameSnapshotPacket` (evitar JSON en runtime).
-- Host = autoridad; clientes predicen jugador local.
+- `SteamGameNetworkService` — `ISteamNetworkingMessages`, canales 0/1.
+- `NetworkPacketCodec` — binario `InputFrame` + `GameSnapshot`.
 
-### 2.2 Sesión
+### 2.2 Sesión — parcial
 
-- Implementar `GameSession.CreateHost` / `CreateClient`.
-- Registrar peers reales con `OwnerId` y SteamID al unirse al lobby.
-- `InputManager`: inyectar input remoto para `PartyMemberType.SteamRemote` (hoy devuelve `Empty`).
+- `GameSession.CreateOnline` en lobby (Host/Client).
+- `OwnerId` + `NetworkPlayerId` vía roster + `AssignNetworkPlayerIds`.
+- Input remoto en **host** vía `GameNetworkCoordinator` → `NetworkInputBuffer` (no `InputManager`).
 
-### 2.3 Loop de red
+### 2.3 Loop de red — hecho (v1)
 
 ```
-Host:  recibe InputFrame → NetworkInputBuffer → simula → broadcast GameSnapshot
-Client: envía input local → predice → recibe snapshot → ApplySnapshot + reconciliación
+Host:  PumpIncoming → Advance → BroadcastSnapshot
+Client: SendLocalInput → TryConsumeClientSnapshot → ApplySnapshot
 ```
 
-Andamiaje ya existe en `Networking/` — ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md).
+### 2.4 Gameplay online — pendiente
 
-### 2.4 Gameplay online
+- Spawn roster: `SpawnFromParty` (OK). `SpawnRemotePlayer` mid-game: sin cablear.
+- Interpolación entre snapshots.
+- Desconexión parcial (`MemberLeft` → PartyScene).
+- F3 debug: rol NET + snapshot seq.
 
-- Spawn remoto: `PlayerManager.SpawnRemotePlayer` (existe, sin cablear).
-- Interpolación de entidades remotas entre snapshots.
-- Desconexión / reconexión / kick (parcial vía chat lobby).
-- Validar con debug HUD F3 (rol, autoridad por entidad).
+### 2.5 QA online — pendiente
 
-### 2.5 QA online
-
-- 2–4 jugadores, distintas latencias, host migration (opcional, difícil — evaluar si necesario v1).
+- 2 Steam clients, latencia, host migration (opcional v1).
 
 ---
 

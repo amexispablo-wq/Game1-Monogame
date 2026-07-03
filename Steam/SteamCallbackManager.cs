@@ -17,6 +17,8 @@ public sealed class SteamCallbackManager : IDisposable
     private Callback<LobbyMatchList_t>? _lobbyMatchList;
     private Callback<GameRichPresenceJoinRequested_t>? _gameRichPresenceJoinRequested;
     private Callback<LobbyChatMsg_t>? _lobbyChatMsg;
+    private Callback<SteamNetworkingMessagesSessionRequest_t>? _networkingSessionRequest;
+    private Callback<SteamNetworkingMessagesSessionFailed_t>? _networkingSessionFailed;
 
     public event Action<LobbyCreated_t>? LobbyCreated;
     public event Action<LobbyEnter_t>? LobbyEnter;
@@ -27,6 +29,8 @@ public sealed class SteamCallbackManager : IDisposable
     public event Action<LobbyMatchList_t>? LobbyMatchList;
     public event Action<GameRichPresenceJoinRequested_t>? GameRichPresenceJoinRequested;
     public event Action<LobbyChatMsg_t>? LobbyChatMsg;
+    public event Action<SteamNetworkingMessagesSessionRequest_t>? NetworkingSessionRequest;
+    public event Action<SteamNetworkingMessagesSessionFailed_t>? NetworkingSessionFailed;
 
     public void Register()
     {
@@ -44,6 +48,10 @@ public sealed class SteamCallbackManager : IDisposable
         _lobbyMatchList = Callback<LobbyMatchList_t>.Create(data => LobbyMatchList?.Invoke(data));
         _gameRichPresenceJoinRequested = Callback<GameRichPresenceJoinRequested_t>.Create(data => GameRichPresenceJoinRequested?.Invoke(data));
         _lobbyChatMsg = Callback<LobbyChatMsg_t>.Create(data => LobbyChatMsg?.Invoke(data));
+        _networkingSessionRequest = Callback<SteamNetworkingMessagesSessionRequest_t>.Create(
+            data => NetworkingSessionRequest?.Invoke(data));
+        _networkingSessionFailed = Callback<SteamNetworkingMessagesSessionFailed_t>.Create(
+            data => NetworkingSessionFailed?.Invoke(data));
     }
 
     public void Dispose()
@@ -63,5 +71,7 @@ public sealed class SteamCallbackManager : IDisposable
         _lobbyMatchList?.Dispose();
         _gameRichPresenceJoinRequested?.Dispose();
         _lobbyChatMsg?.Dispose();
+        _networkingSessionRequest?.Dispose();
+        _networkingSessionFailed?.Dispose();
     }
 }

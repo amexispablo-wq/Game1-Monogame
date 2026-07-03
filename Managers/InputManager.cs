@@ -99,6 +99,9 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public bool LeftMousePressed { get; private set; }
 
+    public PartyInputSource LastUsedPartyInputSource { get; private set; } = PartyInputSource.Keyboard;
+    public int LastUsedPartyControllerId { get; private set; } = -1;
+
     public void Update()
     {
         NavigationDebug.BeginFrame();
@@ -116,6 +119,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         UpdateMenuNavigation();
         UpdateSystemButtons();
         UpdateGameplayInputs();
+        UpdateLastUsedPartyInput();
         Navigation.Update(this);
         RequestedColor = GetEditorColorRequest();
         _virtualLeftClickRequested = false;
@@ -186,7 +190,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         {
             if (_currentGamepads[i].IsConnected)
             {
-                return _currentGamepads[i].ThumbSticks.Left;
+                return GamepadDefaults.ProcessLeftStick(_currentGamepads[i].ThumbSticks.Left);
             }
         }
 
@@ -249,6 +253,47 @@ public sealed class InputManager : ILocalPlayerInputSource
         }
 
         return IsGamepadPressed(_currentGamepads[deviceIndex], _previousGamepads[deviceIndex], button);
+    }
+
+    public bool TryCaptureGamepadBinding(int deviceIndex, GameplayInputAction action, out string bindingToken)
+    {
+        bindingToken = string.Empty;
+        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers || !_currentGamepads[deviceIndex].IsConnected)
+        {
+            return false;
+        }
+
+        GamePadState current = _currentGamepads[deviceIndex];
+        GamePadState previous = _previousGamepads[deviceIndex];
+
+        if (GamepadActionBinding.TryCaptureAnyEdge(current, previous, out bindingToken))
+        {
+            return true;
+        }
+
+        if (IsGamepadPressed(current, previous, Buttons.Start))
+        {
+            bindingToken = GamepadBindingTokens.Default;
+            return true;
+        }
+
+        foreach (Buttons button in GamepadDefaults.CaptureButtons)
+        {
+            if (button == Buttons.Start)
+            {
+                continue;
+            }
+
+            if (!IsGamepadPressed(current, previous, button))
+            {
+                continue;
+            }
+
+            bindingToken = button.ToString();
+            return true;
+        }
+
+        return false;
     }
 
     public bool IsKeyDown(Keys key) => _currentKeyboard.IsKeyDown(key);
@@ -388,6 +433,7 @@ public sealed class InputManager : ILocalPlayerInputSource
 
             GamePadState current = _currentGamepads[i];
             GamePadState previous = _previousGamepads[i];
+            Vector2 processedLeftStick = GamepadDefaults.ProcessLeftStick(current.ThumbSticks.Left);
 
             if (IsGamepadPressed(current, previous, GamepadDefaults.MenuConfirmButton))
             {
@@ -446,25 +492,25 @@ public sealed class InputManager : ILocalPlayerInputSource
                 GamepadActivityThisFrame = true;
             }
 
-            if (current.ThumbSticks.Left.X < -GamepadMoveDeadZone)
+            if (processedLeftStick.X < -GamepadDefaults.MenuStickDirectionThreshold)
             {
                 stickLeft = true;
                 GamepadActivityThisFrame = true;
             }
 
-            if (current.ThumbSticks.Left.X > GamepadMoveDeadZone)
+            if (processedLeftStick.X > GamepadDefaults.MenuStickDirectionThreshold)
             {
                 stickRight = true;
                 GamepadActivityThisFrame = true;
             }
 
-            if (current.ThumbSticks.Left.Y > GamepadMoveDeadZone)
+            if (processedLeftStick.Y > GamepadDefaults.MenuStickDirectionThreshold)
             {
                 stickUp = true;
                 GamepadActivityThisFrame = true;
             }
 
-            if (current.ThumbSticks.Left.Y < -GamepadMoveDeadZone)
+            if (processedLeftStick.Y < -GamepadDefaults.MenuStickDirectionThreshold)
             {
                 stickDown = true;
                 GamepadActivityThisFrame = true;
@@ -555,44 +601,51 @@ public sealed class InputManager : ILocalPlayerInputSource
             return PlayerInputState.Empty;
         }
 
-        float horizontal = 0f;
-        if (current.ThumbSticks.Left.X < -GamepadMoveDeadZone || current.DPad.Left == ButtonState.Pressed)
-        {
-            horizontal -= 1f;
-        }
-
-        if (current.ThumbSticks.Left.X > GamepadMoveDeadZone || current.DPad.Right == ButtonState.Pressed)
-        {
-            horizontal += 1f;
-        }
-
-        horizontal = Math.Clamp(horizontal, -1f, 1f);
-
-        bool fastFall = current.ThumbSticks.Left.Y < -GamepadDefaults.FastFallStickThreshold
-            || current.DPad.Down == ButtonState.Pressed;
+        Vector2 processedStick = GamepadDefaults.ProcessLeftStick(current.ThumbSticks.Left);
+        float horizontal = GamepadDefaults.ReadHorizontalMovement(
+            processedStick,
+            _gamepadBindings.MoveLeft,
+            _gamepadBindings.MoveRight,
+            current);
+        bool fastFall = GamepadDefaults.ReadFastFallHeld(
+            processedStick,
+            _gamepadBindings.FastFall,
+            current);
         bool pullRope = current.Triggers.Right > GamepadDefaults.PullRopeTriggerThreshold;
 
         GameColor? requestedColor = null;
-        if (IsGamepadPressed(current, previous, _gamepadBindings.Red))
+        if (WasBindingPressed(current, previous, _gamepadBindings.Red, GameplayInputAction.Red))
         {
             requestedColor = GameColor.Red;
         }
-        else if (IsGamepadPressed(current, previous, _gamepadBindings.Green))
+        else if (WasBindingPressed(current, previous, _gamepadBindings.Green, GameplayInputAction.Green))
         {
             requestedColor = GameColor.Green;
         }
-        else if (IsGamepadPressed(current, previous, _gamepadBindings.Blue))
+        else if (WasBindingPressed(current, previous, _gamepadBindings.Blue, GameplayInputAction.Blue))
         {
             requestedColor = GameColor.Blue;
         }
 
         return new PlayerInputState(
             horizontal,
-            IsGamepadPressed(current, previous, _gamepadBindings.Jump),
-            IsGamepadPressed(current, previous, _gamepadBindings.Respawn),
+            WasBindingPressed(current, previous, _gamepadBindings.Jump, GameplayInputAction.Jump),
+            WasBindingPressed(current, previous, _gamepadBindings.Respawn, GameplayInputAction.Respawn),
             fastFall,
             pullRope,
             requestedColor);
+    }
+
+    private static bool WasBindingPressed(
+        GamePadState current,
+        GamePadState previous,
+        GamepadActionBinding binding,
+        GameplayInputAction action)
+    {
+        Vector2 processedCurrent = GamepadDefaults.ProcessLeftStick(current.ThumbSticks.Left);
+        Vector2 processedPrevious = GamepadDefaults.ProcessLeftStick(previous.ThumbSticks.Left);
+        return binding.IsActive(current, action, processedCurrent)
+            && !binding.IsActive(previous, action, processedPrevious);
     }
 
     private static bool IsGamepadPressed(GamePadState current, GamePadState previous, Buttons button)
@@ -600,24 +653,72 @@ public sealed class InputManager : ILocalPlayerInputSource
         return current.IsButtonDown(button) && previous.IsButtonUp(button);
     }
 
-    public bool TryGetEditorColorRequest(out GameColor color)
+    private void UpdateLastUsedPartyInput()
+    {
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            if (!_currentGamepads[i].IsConnected)
+            {
+                continue;
+            }
+
+            if (HasGamepadPartyActivity(_currentGamepads[i], _previousGamepads[i]))
+            {
+                LastUsedPartyInputSource = PartyInputSource.Gamepad;
+                LastUsedPartyControllerId = i;
+                return;
+            }
+        }
+
+        if (KeyboardMenuActivityThisFrame || HasKeyboardGameplayActivity())
+        {
+            LastUsedPartyInputSource = PartyInputSource.Keyboard;
+            LastUsedPartyControllerId = -1;
+        }
+    }
+
+    private bool HasKeyboardGameplayActivity()
+    {
+        return _currentKeyboard.IsKeyDown(_keyboardBindings.MoveLeft)
+            || _currentKeyboard.IsKeyDown(_keyboardBindings.MoveRight)
+            || _currentKeyboard.IsKeyDown(_keyboardBindings.Jump)
+            || _currentKeyboard.IsKeyDown(_keyboardBindings.FastFall)
+            || _currentKeyboard.IsKeyDown(_keyboardBindings.PullRope)
+            || IsNewKeyPress(_keyboardBindings.Red)
+            || IsNewKeyPress(_keyboardBindings.Blue)
+            || IsNewKeyPress(_keyboardBindings.Green)
+            || IsNewKeyPress(_keyboardBindings.Respawn);
+    }
+
+    private static bool HasGamepadPartyActivity(GamePadState current, GamePadState previous)
+    {
+        if (GamepadDefaults.ProcessLeftStick(current.ThumbSticks.Left).LengthSquared() > 0.0001f
+            || current.ThumbSticks.Right.LengthSquared() > GamepadMoveDeadZone * GamepadMoveDeadZone
+            || current.Triggers.Left > GamepadDefaults.PullRopeTriggerThreshold
+            || current.Triggers.Right > GamepadDefaults.PullRopeTriggerThreshold)
+        {
+            return true;
+        }
+
+        return current.Buttons != previous.Buttons
+            || current.DPad != previous.DPad;
+    }
+
+    private GameColor? GetEditorColorRequest()
     {
         if (IsNewKeyPress(_keyboardBindings.Red))
         {
-            color = GameColor.Red;
-            return true;
+            return GameColor.Red;
         }
 
         if (IsNewKeyPress(_keyboardBindings.Blue))
         {
-            color = GameColor.Blue;
-            return true;
+            return GameColor.Blue;
         }
 
         if (IsNewKeyPress(_keyboardBindings.Green))
         {
-            color = GameColor.Green;
-            return true;
+            return GameColor.Green;
         }
 
         for (int i = 0; i < MaxLocalPlayers; i++)
@@ -629,32 +730,35 @@ public sealed class InputManager : ILocalPlayerInputSource
                 continue;
             }
 
-            if (IsGamepadPressed(current, previous, _gamepadBindings.Red))
+            if (WasBindingPressed(current, previous, _gamepadBindings.Red, GameplayInputAction.Red))
             {
-                color = GameColor.Red;
-                return true;
+                return GameColor.Red;
             }
 
-            if (IsGamepadPressed(current, previous, _gamepadBindings.Blue))
+            if (WasBindingPressed(current, previous, _gamepadBindings.Blue, GameplayInputAction.Blue))
             {
-                color = GameColor.Blue;
-                return true;
+                return GameColor.Blue;
             }
 
-            if (IsGamepadPressed(current, previous, _gamepadBindings.Green))
+            if (WasBindingPressed(current, previous, _gamepadBindings.Green, GameplayInputAction.Green))
             {
-                color = GameColor.Green;
-                return true;
+                return GameColor.Green;
             }
+        }
+
+        return null;
+    }
+
+    public bool TryGetEditorColorRequest(out GameColor color)
+    {
+        if (GetEditorColorRequest() is GameColor requested)
+        {
+            color = requested;
+            return true;
         }
 
         color = default;
         return false;
-    }
-
-    private GameColor? GetEditorColorRequest()
-    {
-        return TryGetEditorColorRequest(out GameColor color) ? color : null;
     }
 
     private readonly record struct KeyboardInputBindings(
@@ -695,31 +799,32 @@ public sealed class InputManager : ILocalPlayerInputSource
     }
 
     private readonly record struct GamepadButtonBindings(
-        Buttons Jump,
-        Buttons Respawn,
-        Buttons Red,
-        Buttons Blue,
-        Buttons Green)
+        GamepadActionBinding MoveLeft,
+        GamepadActionBinding MoveRight,
+        GamepadActionBinding Jump,
+        GamepadActionBinding Respawn,
+        GamepadActionBinding FastFall,
+        GamepadActionBinding Red,
+        GamepadActionBinding Blue,
+        GamepadActionBinding Green)
     {
         public static GamepadButtonBindings FromSettings(GameSettings settings)
         {
             return new GamepadButtonBindings(
+                Resolve(settings, GameplayInputAction.MoveLeft),
+                Resolve(settings, GameplayInputAction.MoveRight),
                 Resolve(settings, GameplayInputAction.Jump),
                 Resolve(settings, GameplayInputAction.Respawn),
+                Resolve(settings, GameplayInputAction.FastFall),
                 Resolve(settings, GameplayInputAction.Red),
                 Resolve(settings, GameplayInputAction.Blue),
                 Resolve(settings, GameplayInputAction.Green));
         }
 
-        private static Buttons Resolve(GameSettings settings, GameplayInputAction action)
+        private static GamepadActionBinding Resolve(GameSettings settings, GameplayInputAction action)
         {
-            if (settings.GamepadBindings.TryGetValue(action.ToString(), out string? stored)
-                && Enum.TryParse(stored, out Buttons button))
-            {
-                return button;
-            }
-
-            return GamepadDefaults.GetDefaultButton(action);
+            settings.GamepadBindings.TryGetValue(action.ToString(), out string? stored);
+            return GamepadActionBinding.Parse(stored, action);
         }
     }
 }

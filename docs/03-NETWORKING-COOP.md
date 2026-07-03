@@ -1,6 +1,6 @@
 # 03 — Networking / Coop Online
 
-> **Estado actual:** coop **local** funcional (hasta 4 jugadores). Lobby **Steam** funcional para party, invites y sincronizar inicio de nivel. La **simulación online sincronizada NO funciona** — no hay transporte de red; cada cliente corre su propia simulación.
+> **Estado actual:** coop **local** funcional. Lobby Steam funcional. **v1 online host-authoritative** implementado: `SteamGameNetworkService` + `GameNetworkCoordinator` + loop en `GameScene`. Cliente aplica snapshots (sin predicción aún). Host mergea input remoto vía `NetworkInputBuffer`.
 
 ## Qué funciona hoy
 
@@ -23,8 +23,8 @@ Flujo:
 1. `PartyScene` crea/une lobby al entrar.
 2. Líder elige nivel en `LevelSelectScene` → `BroadcastLevelStart`.
 3. No-líderes reciben `LevelStartReceived` y cargan el mismo nivel.
-4. Cada cliente corre **`GameSession.CreateLocalTest`** — simulación independiente.
-5. Miembros remotos (`PartyMemberType.SteamRemote`) tienen input **vacío** (`PlayerInputState.Empty`).
+4. En lobby: host usa `GameSession.CreateOnline(Host)`, clientes `CreateOnline(Client)`.
+5. Host simula; clientes envían `InputFrame` y aplican `GameSnapshot`. Input remoto en host vía buffer de red (no `InputManager`).
 
 Ver también [`05-STEAM.md`](05-STEAM.md).
 
@@ -70,17 +70,16 @@ Ver también [`05-STEAM.md`](05-STEAM.md).
 - `InputFramePacket(InputFrame)` y `GameSnapshotPacket(GameSnapshot)`.
 - **No hay serializador binario** (a bytes) ni deserializador implementado todavía.
 
-## Qué FALTA para coop online funcional (simulación sincronizada)
+## Qué FALTA para coop online v1 completo
 
-1. **Transporte de gameplay.** Steam Networking Sockets (`SteamNetworkingSockets` / `SteamNetworkingMessages`) vía Steamworks.NET. El lobby ya existe; falta enviar/recibir paquetes de juego.
-2. **Serialización de paquetes.** Escribir/leer `InputFrame`, `GameSnapshot`, `SessionState` a/desde bytes (binario compacto).
-3. **Factories de sesión.** `GameSession.CreateHost(...)` y `CreateClient(...)`, registro de peers con `OwnerId` y SteamId.
-4. **Input remoto.** `InputManager` debe leer inputs de peers para `PartyMemberType.SteamRemote` (hoy stub).
-5. **Loop de host:** recibir `InputFramePacket` → `NetworkInputBuffer.StoreFrame` → simular → broadcast `GameSnapshotPacket`.
-6. **Loop de cliente:** enviar input local → predecir → recibir snapshots → `ApplySnapshot` + reconciliación.
-7. **Spawning remoto.** `PlayerManager.SpawnRemotePlayer` existe; falta cablear al unirse un peer.
-8. **Interpolación** de entidades remotas entre snapshots.
-9. **Desconexión/reconexión** robusta (hoy: miembro sale → volver a `PartyScene` tras delay).
+1. ~~**Transporte de gameplay.**~~ Hecho: `SteamGameNetworkService` (`ISteamNetworkingMessages`, canales 0=input / 1=snapshot).
+2. ~~**Serialización de paquetes.**~~ Hecho: `NetworkPacketCodec` + `PacketBuffer`.
+3. ~~**Factories de sesión online.**~~ Hecho: `GameSession.CreateOnline` (Host/Client) en `GameScene`.
+4. ~~**Loop host/client.**~~ Hecho en `GameScene` + `GameNetworkCoordinator` (cliente snapshot-only por ahora).
+5. **Predicción cliente + reconciliación** — cliente no predice local aún.
+6. **Interpolación** de entidades remotas entre snapshots.
+7. **Spawning dinámico** mid-game (`SpawnRemotePlayer` sin cablear; roster pre-spawn sí funciona).
+8. **Desconexión/reconexión** robusta (parcial: `MemberLeft` → `PartyScene`).
 
 > Nota: items de lobby/matchmaking/invites del listado anterior **ya están implementados**. Ver [`08-ROADMAP.md`](08-ROADMAP.md) Fase 2.
 

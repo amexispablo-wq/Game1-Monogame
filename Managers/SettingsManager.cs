@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ColorBlocks;
 
@@ -36,6 +37,7 @@ public static class SettingsManager
                 if (loaded != null)
                 {
                     _currentSettings = NormalizeSettings(loaded);
+                    ColorPaletteManager.ApplySettings(_currentSettings.ColorMode);
                     return;
                 }
             }
@@ -46,6 +48,7 @@ public static class SettingsManager
         }
 
         _currentSettings = NormalizeSettings(new GameSettings());
+        ColorPaletteManager.ApplySettings(_currentSettings.ColorMode);
     }
 
     public static void SaveSettings(GameSettings settings)
@@ -70,6 +73,7 @@ public static class SettingsManager
     public static void RevertPendingChanges()
     {
         _pendingSettings = CloneSettings(_currentSettings);
+        ColorPaletteManager.ApplySettings(_currentSettings.ColorMode);
     }
 
     public static GameSettings CreateSnapshot(GameSettings source) => CloneSettings(source);
@@ -116,7 +120,8 @@ public static class SettingsManager
             MusicVolume = source.MusicVolume,
             FpsLimit = source.FpsLimit,
             Keybindings = new Dictionary<string, string>(source.Keybindings),
-            GamepadBindings = new Dictionary<string, string>(source.GamepadBindings)
+            GamepadBindings = new Dictionary<string, string>(source.GamepadBindings),
+            ColorMode = source.ColorMode
         };
     }
 
@@ -138,7 +143,8 @@ public static class SettingsManager
         return new JsonSerializerOptions
         {
             WriteIndented = true,
-            PropertyNameCaseInsensitive = true
+            PropertyNameCaseInsensitive = true,
+            Converters = { new JsonStringEnumConverter() }
         };
     }
 }

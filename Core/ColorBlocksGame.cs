@@ -10,8 +10,11 @@ public class ColorBlocksGame : Game
     private readonly GraphicsDeviceManager _graphics;
     private readonly SteamManager _steam = new();
     private readonly SteamCallbackManager _steamCallbacks = new();
+    private readonly SteamInputService _steamInput;
     private readonly SteamLobbyService _steamLobby;
     private readonly SteamPartyService _steamParty;
+    private readonly SteamGameNetworkService _steamGameNetwork;
+    private readonly GameNetworkCoordinator _gameNetwork;
     private readonly PartyHudOverlay _partyHud = new();
     private readonly MusicManager _music = new();
     private readonly PresentationManager _presentation = new();
@@ -40,7 +43,10 @@ public class ColorBlocksGame : Game
         ApplyFrameSettings(settings.FpsLimit, applyChanges: false);
         ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode, applyChanges: false);
         _steamLobby = new SteamLobbyService(_steam, _steamCallbacks);
+        _steamInput = new SteamInputService(_steam);
         _steamParty = new SteamPartyService(_steamLobby);
+        _steamGameNetwork = new SteamGameNetworkService(_steam, _steamCallbacks);
+        _gameNetwork = new GameNetworkCoordinator(_steamGameNetwork, _steamLobby);
     }
 
     public InputManager Input => _input;
@@ -48,7 +54,9 @@ public class ColorBlocksGame : Game
     public Texture2D Pixel => _pixel;
     public SteamManager Steam => _steam;
     public SteamLobbyService SteamLobby => _steamLobby;
+    public SteamInputService SteamInput => _steamInput;
     public SteamPartyService SteamParty => _steamParty;
+    public GameNetworkCoordinator GameNetwork => _gameNetwork;
     public MusicManager Music => _music;
     public Viewport Viewport => _presentation.LogicalViewport;
     public PresentationManager Presentation => _presentation;
@@ -115,19 +123,20 @@ public class ColorBlocksGame : Game
     // fpsLimit: -1 = VSync, 0 = Unlimited, >0 = hard cap.
     public void ApplyFrameSettings(int fpsLimit, bool applyChanges = true)
     {
+        bool useVsync = fpsLimit < 0;
+
+        _graphics.SynchronizeWithVerticalRetrace = useVsync;
+
         if (fpsLimit < 0)
         {
-            _graphics.SynchronizeWithVerticalRetrace = true;
             IsFixedTimeStep = false;
         }
         else if (fpsLimit == 0)
         {
-            _graphics.SynchronizeWithVerticalRetrace = false;
             IsFixedTimeStep = false;
         }
         else
         {
-            _graphics.SynchronizeWithVerticalRetrace = false;
             IsFixedTimeStep = true;
             TargetElapsedTime = TimeSpan.FromTicks(TimeSpan.TicksPerSecond / fpsLimit);
         }
@@ -158,6 +167,7 @@ public class ColorBlocksGame : Game
         if (_steam.IsInitialized)
         {
             _steamCallbacks.Register();
+            _steamInput.Initialize();
             Party.BindSteamServices(_steamLobby, _steamParty);
         }
 
@@ -177,12 +187,14 @@ public class ColorBlocksGame : Game
         ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);
 
         _music.ApplyVolume(SettingsManager.GetMusicVolume());
+        ApplyFrameSettings(SettingsManager.CurrentSettings.FpsLimit);
         ChangeScene(new MenuScene(this));
     }
 
     protected override void Update(GameTime gameTime)
     {
         _steam.RunCallbacks();
+        _steamInput.RunFrame();
         _input.ConfigurePointerTransform(Window.ClientBounds, GraphicsDevice.Viewport, _presentation);
         _input.Update();
 
@@ -217,6 +229,7 @@ public class ColorBlocksGame : Game
         if (disposing)
         {
             _presentation.Dispose();
+            _steamInput.Shutdown();
             _steamCallbacks.Dispose();
             _steam.Shutdown();
         }

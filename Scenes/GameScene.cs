@@ -7,7 +7,6 @@ namespace ColorBlocks;
 
 public sealed class GameScene : IScene
 {
-    private const float CompletionReturnDelaySeconds = 3f;
     private const float MaxSceneFrameTime = 0.25f;
 
     private readonly ColorBlocksGame _game;
@@ -24,8 +23,11 @@ public sealed class GameScene : IScene
     private bool _completionUiActive;
     private float _finalTime;
     private bool _newRecord;
-    private float _completionReturnDelay;
     private float _completionUiElapsed;
+    private Rectangle _completionReplayBounds;
+    private Rectangle _completionMenuBounds;
+    private readonly UIFocusManager _completionFocus = new();
+    private readonly List<FocusableGridCell> _completionOptionFocusables = new();
     private Rectangle _deathRespawnStartBounds;
     private Rectangle _deathCheckpointBounds;
     private Rectangle _deathQuitBounds;
@@ -59,8 +61,9 @@ public sealed class GameScene : IScene
         _session.LavaRiseEnabled = lavaRiseEnabled;
         _level = LevelManager.LoadLevel(levelId);
         _playerManager = new PlayerManager(_session, _level);
+        _game.Party.ApplyPreferredInputForPrimaryLocalMember(_game.Input);
         _game.Party.LockAssignments();
-        _playerManager.SpawnFromParty(_game.Party.Members, _game.Input);
+        _playerManager.SpawnFromParty(_game.Party.Members, _game.Input, _game.Steam.Username);
         _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled);
         _camera = new Camera(GetPlayersCenter());
         _game.SteamLobby.MemberLeft += OnLobbyMemberLeft;
@@ -72,6 +75,7 @@ public sealed class GameScene : IScene
         _game.SteamLobby.MemberLeft -= OnLobbyMemberLeft;
         _game.Input.ClearGameplayBindings();
         _game.Party.UnlockAssignments();
+        _game.GameNetwork.Reset();
         _game.Music.Stop();
     }
 
@@ -116,10 +120,9 @@ public sealed class GameScene : IScene
             return;
         }
 
-        _game.Input.GameplayInputBlocked = false;
-
         if (_simulation.IsPlayerDead)
         {
+            _game.Input.GameplayInputBlocked = true;
             UpdateDeathUi(gameTime);
             UpdateCamera(gameTime);
             return;
@@ -127,19 +130,15 @@ public sealed class GameScene : IScene
 
         if (_simulation.IsLevelComplete)
         {
+            _game.Input.GameplayInputBlocked = true;
             BeginCompletionUi();
-            _completionReturnDelay = MathF.Max(0f, _completionReturnDelay - dt);
             _completionUiElapsed += dt;
+            UpdateCompletionUi(gameTime);
             UpdateCamera(gameTime);
-
-            if (CanReturnToMenu() && (_game.Input.MenuConfirmPressed || _game.Input.ExitPressed))
-            {
-                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
-                return;
-            }
-
             return;
         }
+
+        _game.Input.GameplayInputBlocked = false;
 
         if (_game.Input.GameplayPausePressed)
         {
@@ -153,8 +152,29 @@ public sealed class GameScene : IScene
             _debugDraw = !_debugDraw;
         }
 
+        GameNetworkCoordinator network = _game.GameNetwork;
+        network.PumpIncoming(_session, _simulation);
+
+        if (_session.Role == GameSessionRole.Client)
+        {
+            network.SendLocalInput(_session, _simulation, _game.Input);
+            if (network.TryConsumeClientSnapshot(out GameSnapshot snapshot))
+            {
+                _simulation.ApplySnapshot(snapshot);
+            }
+
+            BeginCompletionUi();
+            UpdateCamera(gameTime);
+            return;
+        }
+
         _simulation.Advance(dt, _game.Input);
         BeginCompletionUi();
+
+        if (_session.Role == GameSessionRole.Host)
+        {
+            network.BroadcastSnapshot(_session, _simulation.LastSnapshot);
+        }
 
         UpdateCamera(gameTime);
     }
@@ -238,7 +258,7 @@ public sealed class GameScene : IScene
 
         if (_simulation.IsLevelComplete)
         {
-            DrawCompletionUi(spriteBatch, _game.Pixel, viewport);
+            DrawCompletionUi(spriteBatch, _game.Pixel, viewport, gameTime);
         }
 
         if (_simulation.IsPlayerDead)
@@ -362,13 +382,122 @@ public sealed class GameScene : IScene
         _completionUiActive = true;
         _finalTime = _simulation.FinalTime;
         _newRecord = _simulation.NewRecord;
-        _completionReturnDelay = CompletionReturnDelaySeconds;
         _completionUiElapsed = 0f;
     }
 
-    private bool CanReturnToMenu()
+    private void UpdateCompletionUi(GameTime gameTime)
     {
-        return !_simulation.IsLevelComplete || _completionReturnDelay <= 0f;
+        LayoutCompletionUi();
+
+        _completionOptionFocusables.Clear();
+        _completionFocus.Clear();
+        _completionOptionFocusables.Add(new FocusableGridCell(_completionReplayBounds, () => true));
+        _completionOptionFocusables.Add(new FocusableGridCell(_completionMenuBounds, () => true));
+
+        int replayIndex = _completionFocus.Add(_completionOptionFocusables[0], "Replay");
+        int menuIndex = _completionFocus.Add(_completionOptionFocusables[1], "BackToMenu");
+        _completionFocus.Navigation.LinkHorizontal(replayIndex, menuIndex);
+
+        _completionFocus.FinalizeFocus("Replay");
+        _completionFocus.Update(gameTime, _game.Input);
+
+        InputManager input = _game.Input;
+        if (input.UiPointerPressed)
+        {
+            if (_completionReplayBounds.Contains(input.UiPointerPosition))
+            {
+                ReplayLevel();
+                return;
+            }
+
+            if (_completionMenuBounds.Contains(input.UiPointerPosition))
+            {
+                ReturnToLevelSelect();
+                return;
+            }
+        }
+
+        for (int i = 0; i < _completionOptionFocusables.Count; i++)
+        {
+            if (!_completionOptionFocusables[i].WasActivated)
+            {
+                continue;
+            }
+
+            if (i == 0)
+            {
+                ReplayLevel();
+            }
+            else
+            {
+                ReturnToLevelSelect();
+            }
+
+            return;
+        }
+
+        for (int i = 0; i < _completionOptionFocusables.Count; i++)
+        {
+            bool confirmed = _completionFocus.Focused == _completionOptionFocusables[i]
+                && ((input.Navigation.IsKeyboardActive && input.KeyboardMenuConfirmPressed)
+                    || (input.Navigation.IsGamepadActive && input.GamepadMenuConfirmPressed));
+            if (!confirmed)
+            {
+                continue;
+            }
+
+            if (i == 0)
+            {
+                ReplayLevel();
+            }
+            else
+            {
+                ReturnToLevelSelect();
+            }
+
+            return;
+        }
+
+        if (input.ExitPressed || input.MenuCancelPressed)
+        {
+            ReturnToLevelSelect();
+        }
+    }
+
+    private void ReplayLevel()
+    {
+        _completionUiActive = false;
+        _completionUiElapsed = 0f;
+        _game.Input.GameplayInputBlocked = false;
+        _simulation.RestartLevel();
+    }
+
+    private void ReturnToLevelSelect()
+    {
+        _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+    }
+
+    private void LayoutCompletionUi()
+    {
+        Viewport viewport = _game.Viewport;
+        int margin = Math.Max(12, (int)(viewport.Width * 0.08f));
+        int panelWidth = Math.Min(620, Math.Max(1, viewport.Width - (margin * 2)));
+        int panelHeight = Math.Min(340, Math.Max(220, (int)(viewport.Height * 0.46f)));
+        panelHeight = Math.Min(panelHeight, Math.Max(1, viewport.Height - (margin * 2)));
+        Rectangle panel = new(
+            (viewport.Width - panelWidth) / 2,
+            (viewport.Height - panelHeight) / 2,
+            panelWidth,
+            panelHeight);
+
+        int buttonGap = Math.Max(14, panel.Width / 24);
+        int buttonHeight = Math.Clamp(panel.Height / 5, 44, 58);
+        int buttonWidth = (panel.Width - buttonGap - (panelWidth / 6)) / 2;
+        int buttonsY = panel.Bottom - buttonHeight - Math.Max(18, panel.Height / 10);
+        int buttonsX = panel.X + ((panel.Width - ((buttonWidth * 2) + buttonGap)) / 2);
+
+        _completionReplayBounds = new Rectangle(buttonsX, buttonsY, buttonWidth, buttonHeight);
+        _completionMenuBounds = new Rectangle(_completionReplayBounds.Right + buttonGap, buttonsY, buttonWidth, buttonHeight);
     }
 
     private static string FormatTime(float seconds)
@@ -447,14 +576,24 @@ public sealed class GameScene : IScene
             $"RESPAWN POS {FormatVector(_playerManager.RespawnPosition)}",
             $"LAUNCH PADS {_level.LaunchPads.Count} LAST FORCE {FormatVector(_simulation.PhysicsWorld.LastLaunchForce)}",
             $"SESSION {_session.Role} OWNER {_session.LocalOwnerId} HOST {_session.HostOwnerId}",
+            $"NET {_game.GameNetwork.GetOnlineRoleLabel(_session)} SNAP {_simulation.LastSnapshot.Sequence}",
             $"STEAM INITIALIZED: {FormatDebugBool(steam.IsInitialized)}",
             $"STEAM IN LOBBY: {FormatDebugBool(lobby.IsInLobby)}",
             $"STEAM USERNAME: {steam.Username}",
             $"STEAMID: {steam.SteamId}",
             $"OWNER: {lobby.GetLobbyOwnerSteamId()}",
             $"OVERLAY ENABLED: {FormatDebugBool(steam.IsOverlayEnabled)}",
-            $"STEAM STATUS: {steam.Status}"
+            $"STEAM STATUS: {steam.Status}",
+            $"STEAM INPUT: {FormatDebugBool(_game.SteamInput.IsInitialized)}"
         };
+
+        for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
+        {
+            if (_game.Input.IsGamepadConnected(i))
+            {
+                lines.Add($"PAD{i + 1} {_game.SteamInput.GetControllerLabel(i)}");
+            }
+        }
 
         foreach (PartyMember member in _game.Party.Members)
         {
@@ -524,12 +663,14 @@ public sealed class GameScene : IScene
         return entity.IsHostControlled ? "HOST" : "REPLICA";
     }
 
-    private void DrawCompletionUi(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
+    private void DrawCompletionUi(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, GameTime gameTime)
     {
+        LayoutCompletionUi();
+
         float fade = MathHelper.Clamp(_completionUiElapsed / 0.45f, 0f, 1f);
         int margin = Math.Max(12, (int)(viewport.Width * 0.08f));
         int panelWidth = Math.Min(620, Math.Max(1, viewport.Width - (margin * 2)));
-        int panelHeight = Math.Min(260, Math.Max(150, (int)(viewport.Height * 0.38f)));
+        int panelHeight = Math.Min(340, Math.Max(220, (int)(viewport.Height * 0.46f)));
         panelHeight = Math.Min(panelHeight, Math.Max(1, viewport.Height - (margin * 2)));
         Rectangle panel = new(
             (viewport.Width - panelWidth) / 2,
@@ -549,7 +690,7 @@ public sealed class GameScene : IScene
         int recordScale = FitTextScale("NEW RECORD", GetResponsiveTextScale(viewport, 220, 2, 5), maxTextWidth);
         int centerX = panel.Center.X;
         int topPadding = Math.Max(18, panel.Height / 7);
-        int lineGap = Math.Max(20, panel.Height / 6);
+        int lineGap = Math.Max(20, panel.Height / 7);
 
         DrawCenteredText(spriteBatch, pixel, title, centerX, panel.Top + topPadding, titleScale, Color.White * fade);
         DrawCenteredText(spriteBatch, pixel, finalTime, centerX, panel.Top + topPadding + lineGap, bodyScale, Color.White * fade);
@@ -565,6 +706,29 @@ public sealed class GameScene : IScene
                 recordScale,
                 new Color(255, 220, 80) * fade);
         }
+
+        DrawCompletionButton(spriteBatch, pixel, _completionReplayBounds, "REPLAY", fade);
+        DrawCompletionButton(spriteBatch, pixel, _completionMenuBounds, "BACK TO MENU", fade);
+
+        if (_completionOptionFocusables.Count >= 2)
+        {
+            _completionFocus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
+        }
+    }
+
+    private void DrawCompletionButton(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, string label, float fade)
+    {
+        bool highlighted = _game.Input.Navigation.AllowPointerHoverVisual
+            && bounds.Contains(_game.Input.UiPointerPosition);
+        Color fill = highlighted ? new Color(58, 50, 24) : new Color(36, 32, 20);
+        Color border = highlighted ? new Color(255, 232, 120) : new Color(255, 220, 80);
+        Color textColor = new Color(255, 244, 196) * fade;
+
+        spriteBatch.Draw(pixel, bounds, fill * (0.92f * fade));
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, border * fade, highlighted ? 4 : 3);
+
+        int scale = FitTextScale(label, GetResponsiveTextScale(_game.Viewport, 220, 2, 4), bounds.Width - 20);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, label, bounds, scale, textColor);
     }
 
     private void UpdateDeathUi(GameTime gameTime)
