@@ -182,7 +182,9 @@ public sealed class PartyScene : IScene
         for (int slot = 0; slot < PartyManager.MaxMembers; slot++)
         {
             Rectangle row = _memberRowBounds[slot];
-            string slotLabel = slot < members.Count ? GetSlotLabel(members[slot], slot) : $"Player {slot + 1}";
+            string slotLabel = slot < members.Count
+                ? PartyDisplayNames.FormatMemberListLabel(members[slot])
+                : PartyDisplayNames.FormatEmptySlotLabel(slot);
             SimpleTextRenderer.DrawString(spriteBatch, pixel, slotLabel, new Vector2(row.X, row.Y + 8), labelScale, LabelColor);
 
             if (slot < members.Count)
@@ -336,16 +338,6 @@ public sealed class PartyScene : IScene
         }
 
         _game.Party.TryCycleMemberInput(member.Id, direction, _game.Input.IsGamepadConnected);
-    }
-
-    private static string GetSlotLabel(PartyMember member, int slot)
-    {
-        if (member.IsLeader)
-        {
-            return $"{member.DisplayName} (Leader)";
-        }
-
-        return member.IsLocallyOwned ? $"Player {slot + 1}" : member.DisplayName;
     }
 
     private static string GetSelectorText(PartyMember member)

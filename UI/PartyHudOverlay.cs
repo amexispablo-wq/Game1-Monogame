@@ -32,37 +32,10 @@ public sealed class PartyHudOverlay
         for (int i = 0; i < members.Count; i++)
         {
             PartyMember member = members[i];
-            string icon = GetMemberIcon(member);
-            string inputIcon = GetInputIcon(member);
-            string leader = member.IsLeader ? " *" : string.Empty;
-            string line = $"{icon} {member.DisplayName}{leader}";
-            if (!string.IsNullOrEmpty(inputIcon))
-            {
-                line += $"  {inputIcon}";
-            }
+            string line = PartyDisplayNames.FormatMemberListLabel(member);
 
             SimpleTextRenderer.DrawString(spriteBatch, pixel, line, new Vector2(panel.X + 10, rowY), scale, Color.White);
             rowY += rowHeight;
         }
-    }
-
-    private static string GetMemberIcon(PartyMember member)
-    {
-        return member.IsLocallyOwned ? "L" : "S";
-    }
-
-    private static string GetInputIcon(PartyMember member)
-    {
-        if (!member.IsLocallyOwned)
-        {
-            return string.Empty;
-        }
-
-        return member.InputSource switch
-        {
-            PartyInputSource.Keyboard => "KB",
-            PartyInputSource.Gamepad => $"GP{member.ControllerId + 1}",
-            _ => string.Empty
-        };
     }
 }

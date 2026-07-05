@@ -132,9 +132,9 @@ public sealed class EditorScene : IScene
     public void Update(GameTime gameTime)
     {
         UpdateGamepadUi(gameTime);
+        LayoutColorPanel();
         LayoutBackButton();
         LayoutEditorToolbar();
-        LayoutColorPanel();
         LayoutLavaSpeedPanel();
 
         if (TryHandleGamepadChromePress())
@@ -202,7 +202,7 @@ public sealed class EditorScene : IScene
             || _backButton.IsHovered
             || _applyButton.IsHovered
             || (mouseOverToolbar && !IsDraggingToolbarObject);
-        HandleCameraInput(cameraBlockedByUi);
+        HandleCameraInput(cameraBlockedByUi, gameTime);
 
         Point mouse = GetMouseWorldPosition();
         UpdateHoverState(mouse);
@@ -348,8 +348,10 @@ public sealed class EditorScene : IScene
 
     public void Draw(GameTime gameTime, SpriteBatch spriteBatch)
     {
+        LayoutColorPanel();
         LayoutBackButton();
         LayoutEditorToolbar();
+        LayoutLavaSpeedPanel();
 
         Texture2D pixel = _game.Pixel;
         Viewport viewport = _game.Viewport;
@@ -624,8 +626,9 @@ public sealed class EditorScene : IScene
         _colorBlueBounds = new Rectangle(_colorGreenBounds.Right + swatchGap, swatchY, swatchSize, swatchSize);
     }
 
-    private void HandleCameraInput(bool mouseOverUi)
+    private void HandleCameraInput(bool mouseOverUi, GameTime gameTime)
     {
+        float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, 0.05f);
         bool canStartPanning = !_isCreating
             && !_isDragging
             && !_isDraggingGoal
@@ -659,25 +662,25 @@ public sealed class EditorScene : IScene
 
         if (!mouseOverUi && _game.Input.Navigation.IsGamepadActive && _game.Input.IsAnyGamepadConnected())
         {
-            Vector2 stick = _game.Input.GetMenuLeftStick();
-            float panThreshold = GamepadDefaults.EditorPanStickThreshold;
-            float stickMagnitude = stick.Length();
-            if (stickMagnitude >= panThreshold)
+            Vector2 stick = _game.Input.GetEditorLeftStick();
+            if (stick.LengthSquared() > GamepadDefaults.EditorPanStickThreshold * GamepadDefaults.EditorPanStickThreshold)
             {
-                float speedScale = stickMagnitude * 18f;
-                Vector2 pan = new Vector2(-stick.X, stick.Y) / stickMagnitude * speedScale;
-                _camera.PanByScreenDelta(new Point((int)MathF.Round(pan.X), (int)MathF.Round(pan.Y)));
+                Vector2 screenPan = new Vector2(-stick.X, stick.Y)
+                    * (GamepadDefaults.EditorPanSpeedPixelsPerSecond * dt);
+                _camera.PanByScreenDelta(screenPan);
             }
 
             if (_game.Input.EditorLeftTrigger > 0.1f)
             {
-                float zoomFactor = MathF.Pow(1.02f, _game.Input.EditorLeftTrigger * 4f);
+                float zoomFactor = MathF.Exp(
+                    GamepadDefaults.EditorZoomRatePerSecond * _game.Input.EditorLeftTrigger * dt);
                 _camera.ZoomAt(zoomFactor, UiPointer, _game.Viewport);
             }
 
             if (_game.Input.EditorRightTrigger > 0.1f)
             {
-                float zoomFactor = MathF.Pow(0.98f, _game.Input.EditorRightTrigger * 4f);
+                float zoomFactor = MathF.Exp(
+                    -GamepadDefaults.EditorZoomRatePerSecond * _game.Input.EditorRightTrigger * dt);
                 _camera.ZoomAt(zoomFactor, UiPointer, _game.Viewport);
             }
         }
@@ -1775,8 +1778,9 @@ public sealed class EditorScene : IScene
     {
         const int panelWidth = 330;
         const int panelHeight = 78;
-        const int margin = 20;
-        int top = 70;
+        const int gap = 10;
+        int margin = _colorPanelBounds.Left;
+        int top = _backButton.Bounds.Bottom + gap;
         _lavaSpeedPanelBounds = new Rectangle(margin, top, panelWidth, panelHeight);
 
         int button = 42;

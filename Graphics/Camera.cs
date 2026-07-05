@@ -70,7 +70,12 @@ public sealed class Camera
 
     public void PanByScreenDelta(Point screenDelta)
     {
-        Position -= new Vector2(screenDelta.X, screenDelta.Y) / Zoom;
+        PanByScreenDelta(new Vector2(screenDelta.X, screenDelta.Y));
+    }
+
+    public void PanByScreenDelta(Vector2 screenDelta)
+    {
+        Position -= screenDelta / Zoom;
     }
 
     public void ZoomAt(float zoomFactor, Point screenFocus, Viewport viewport)

@@ -14,6 +14,8 @@ public sealed class PartyManager
     private SteamLobbyService? _steamLobby;
     private SteamPartyService? _steamParty;
 
+    public string LocalSteamUsername { get; set; } = "Unavailable";
+
     public IReadOnlyList<PartyMember> Members => _members;
     public bool AssignmentsLocked { get; private set; }
     public bool IsInSteamLobby => _steamLobby?.IsInLobby == true;
@@ -62,7 +64,7 @@ public sealed class PartyManager
 
         ulong owningSteamId = _steamLobby?.LocalSteamId ?? 0;
         PartyMember keyboardMember = CreateMember(
-            "Player 1",
+            PartyDisplayNames.FormatLocalMemberName(LocalSteamUsername, 0),
             PartyMemberType.LocalKeyboard,
             PartyInputSource.Keyboard,
             owningSteamId: owningSteamId);
@@ -233,6 +235,7 @@ public sealed class PartyManager
             _members.Add(member);
         }
 
+        RefreshLocalDisplayNames();
         NotifyChanged();
     }
 
@@ -286,12 +289,13 @@ public sealed class PartyManager
 
         ulong owningSteamId = _steamLobby?.LocalSteamId ?? 0;
         PartyMember member = CreateMember(
-            $"Player {_members.Count + 1}",
+            string.Empty,
             PartyMemberType.LocalGamepad,
             PartyInputSource.Gamepad,
             controllerIndex,
             owningSteamId: owningSteamId);
         _members.Add(member);
+        RefreshLocalDisplayNames();
         PublishLocalState();
         NotifyChanged();
         return true;
@@ -315,7 +319,7 @@ public sealed class PartyManager
             }
 
             _members.RemoveAt(i);
-            RenumberDisplayNames();
+            RefreshLocalDisplayNames();
             PublishLocalState();
             NotifyChanged();
             return true;
@@ -534,15 +538,15 @@ public sealed class PartyManager
         return 0;
     }
 
-    private void RenumberDisplayNames()
+    private void RefreshLocalDisplayNames()
     {
-        int localIndex = 1;
+        int localOrdinal = 0;
         for (int i = 0; i < _members.Count; i++)
         {
             PartyMember member = _members[i];
             if (member.IsLocallyOwned && member.MemberType != PartyMemberType.SteamRemote)
             {
-                member.DisplayName = $"Player {localIndex++}";
+                member.DisplayName = PartyDisplayNames.FormatLocalMemberName(LocalSteamUsername, localOrdinal++);
             }
         }
     }

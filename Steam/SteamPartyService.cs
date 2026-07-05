@@ -130,14 +130,18 @@ public sealed class SteamPartyService
                 continue;
             }
 
+            int localSlotOrdinal = 0;
             foreach ((PartyMemberType type, int controllerId) slot in localSlots)
             {
+                string displayName = PartyDisplayNames.FormatLocalMemberName(
+                    lobbyMember.DisplayName,
+                    localSlotOrdinal++);
                 entries.Add(new PartyRosterEntry
                 {
                     MemberIndex = memberIndex++,
                     OwningSteamId = lobbyMember.SteamId,
                     SteamId = lobbyMember.SteamId,
-                    DisplayName = lobbyMember.DisplayName,
+                    DisplayName = displayName,
                     MemberType = slot.type,
                     ControllerId = slot.controllerId,
                     IsLeader = lobbyMember.IsOwner && slot.type == PartyMemberType.LocalKeyboard

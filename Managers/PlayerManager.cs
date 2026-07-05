@@ -24,15 +24,13 @@ public sealed class PlayerManager
 
     public IReadOnlyList<Player> SpawnFromParty(
         IReadOnlyList<PartyMember> members,
-        InputManager input,
-        string localSteamUsername)
+        InputManager input)
     {
         Players.Clear();
         _session.ClearPlayers();
 
         Dictionary<int, PartyMember> bindings = new();
         int spawnIndex = 0;
-        int localOrdinal = 0;
         for (int i = 0; i < members.Count; i++)
         {
             PartyMember member = members[i];
@@ -41,7 +39,7 @@ public sealed class PlayerManager
             bool isLocal = member.IsLocallyOwned;
             int ownerId = member.OwnerId != 0 ? member.OwnerId : _session.LocalOwnerId;
             bool isHostControlled = isLocal && _session.IsHost;
-            string indicatorLabel = BuildIndicatorLabel(member, localSteamUsername, ref localOrdinal);
+            string indicatorLabel = member.DisplayName;
 
             int networkId = member.NetworkPlayerId > 0
                 ? member.NetworkPlayerId
@@ -186,20 +184,6 @@ public sealed class PlayerManager
             3 => PlayerId.Player4,
             _ => PlayerId.Player1
         };
-    }
-
-    private static string BuildIndicatorLabel(PartyMember member, string localSteamUsername, ref int localOrdinal)
-    {
-        if (!member.IsLocallyOwned || member.MemberType == PartyMemberType.SteamRemote)
-        {
-            return member.DisplayName;
-        }
-
-        string label = localOrdinal == 0
-            ? localSteamUsername
-            : $"{localSteamUsername} {localOrdinal + 1}";
-        localOrdinal++;
-        return label;
     }
 
     private static InputDevice ToInputDevice(PartyMember member)

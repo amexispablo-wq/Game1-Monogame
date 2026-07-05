@@ -203,7 +203,33 @@ public sealed class InputManager : ILocalPlayerInputSource
         {
             if (_currentGamepads[i].IsConnected)
             {
-                return _currentGamepads[i].ThumbSticks.Right;
+                return GamepadDefaults.ProcessRightStick(_currentGamepads[i].ThumbSticks.Right);
+            }
+        }
+
+        return Vector2.Zero;
+    }
+
+    public Vector2 GetEditorLeftStick()
+    {
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            if (_currentGamepads[i].IsConnected)
+            {
+                return GamepadDefaults.ProcessEditorStick(_currentGamepads[i].ThumbSticks.Left);
+            }
+        }
+
+        return Vector2.Zero;
+    }
+
+    public Vector2 GetEditorRightStick()
+    {
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            if (_currentGamepads[i].IsConnected)
+            {
+                return GamepadDefaults.ProcessEditorStick(_currentGamepads[i].ThumbSticks.Right);
             }
         }
 

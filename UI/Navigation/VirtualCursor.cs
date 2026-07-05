@@ -1,22 +1,17 @@
 using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
 
 namespace ColorBlocks;
 
 public sealed class VirtualCursor
 {
-    private const float BaseSpeedPixelsPerSecond = 920f;
-    private const float Acceleration = 2.4f;
-    private const float DeadZone = 0.18f;
-
-    private Point _position;
+    private Vector2 _position;
     private Vector2 _velocity;
     private bool _initialized;
 
     public bool IsActive { get; private set; }
-    public Point Position => _position;
+    public Point Position => new((int)MathF.Round(_position.X), (int)MathF.Round(_position.Y));
 
     public void BeginFrame(Viewport viewport, InputManager input)
     {
@@ -31,7 +26,7 @@ public sealed class VirtualCursor
 
         if (!_initialized)
         {
-            _position = new Point(viewport.Width / 2, viewport.Height / 2);
+            _position = new Vector2(viewport.Width * 0.5f, viewport.Height * 0.5f);
             _initialized = true;
         }
     }
@@ -43,26 +38,25 @@ public sealed class VirtualCursor
             return;
         }
 
-        float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
-        Vector2 stick = input.GetMenuRightStick();
+        float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, 0.05f);
+        Vector2 stick = input.GetEditorRightStick();
         stick.Y = -stick.Y;
-        float magnitude = stick.Length();
-        if (magnitude < DeadZone)
+
+        if (stick.LengthSquared() <= 0.0001f)
         {
-            _velocity = Vector2.Lerp(_velocity, Vector2.Zero, 1f - MathF.Exp(-12f * dt));
+            _velocity = Vector2.Lerp(_velocity, Vector2.Zero, 1f - MathF.Exp(-10f * dt));
         }
         else
         {
-            Vector2 direction = stick / magnitude;
-            float speed = BaseSpeedPixelsPerSecond * MathF.Pow(magnitude, Acceleration);
-            _velocity = direction * speed;
+            _velocity = stick * GamepadDefaults.EditorCursorSpeedPixelsPerSecond;
         }
 
-        Vector2 next = new Vector2(_position.X, _position.Y) + (_velocity * dt);
-        int x = (int)MathF.Round(Math.Clamp(next.X, 0f, viewport.Width - 1));
-        int y = (int)MathF.Round(Math.Clamp(next.Y, 0f, viewport.Height - 1));
-        _position = new Point(x, y);
+        _position += _velocity * dt;
+        _position.X = Math.Clamp(_position.X, 0f, viewport.Width - 1f);
+        _position.Y = Math.Clamp(_position.Y, 0f, viewport.Height - 1f);
     }
+
+    public Vector2 PositionF => _position;
 
     public void Reset()
     {

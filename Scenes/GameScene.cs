@@ -63,7 +63,7 @@ public sealed class GameScene : IScene
         _playerManager = new PlayerManager(_session, _level);
         _game.Party.ApplyPreferredInputForPrimaryLocalMember(_game.Input);
         _game.Party.LockAssignments();
-        _playerManager.SpawnFromParty(_game.Party.Members, _game.Input, _game.Steam.Username);
+        _playerManager.SpawnFromParty(_game.Party.Members, _game.Input);
         _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled);
         _camera = new Camera(GetPlayersCenter());
         _game.SteamLobby.MemberLeft += OnLobbyMemberLeft;

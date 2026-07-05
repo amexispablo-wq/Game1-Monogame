@@ -17,7 +17,11 @@ public static class GamepadDefaults
     public const float MoveDeadZone = 0.28f;
     public const float FastFallProcessedThreshold = 0.45f;
     public const float MenuStickDirectionThreshold = 0.30f;
-    public const float EditorPanStickThreshold = 0.18f;
+    public const float EditorPanStickThreshold = 0.08f;
+    public const float EditorStickDeadZone = 0.12f;
+    public const float EditorPanSpeedPixelsPerSecond = 1100f;
+    public const float EditorCursorSpeedPixelsPerSecond = 780f;
+    public const float EditorZoomRatePerSecond = 0.65f;
     public const float PullRopeTriggerThreshold = 0.35f;
 
     // Raw-axis edge threshold for binding capture prompts.
@@ -37,6 +41,12 @@ public static class GamepadDefaults
 
     public static Vector2 ProcessLeftStick(Vector2 raw) =>
         new(ProcessAxis(raw.X), ProcessAxis(raw.Y));
+
+    public static Vector2 ProcessRightStick(Vector2 raw) =>
+        new(ProcessAxis(raw.X), ProcessAxis(raw.Y));
+
+    public static Vector2 ProcessEditorStick(Vector2 raw) =>
+        new(ProcessAxis(raw.X, EditorStickDeadZone), ProcessAxis(raw.Y, EditorStickDeadZone));
 
     public static float ProcessHorizontalAxis(float rawX) => ProcessAxis(rawX);
 

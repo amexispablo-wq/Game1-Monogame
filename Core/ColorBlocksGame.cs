@@ -172,6 +172,7 @@ public class ColorBlocksGame : Game
         }
 
         _input = new InputManager();
+        Party.LocalSteamUsername = _steam.Username;
         Party.EnsureDefaultParty();
         base.Initialize();
     }
