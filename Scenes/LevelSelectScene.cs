@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ColorBlocks.Replay;
 
 namespace ColorBlocks;
 
@@ -17,6 +18,7 @@ public sealed class LevelSelectScene : IScene
 {
     private static RopeGameplayMode s_selectedRopeMode = RopeGameplayMode.ColoredPhysics;
     private static bool s_lavaRiseEnabled;
+    private static bool s_ghostBestRunEnabled;
 
     private readonly ColorBlocksGame _game;
     private readonly LevelSelectMode _mode;
@@ -37,12 +39,16 @@ public sealed class LevelSelectScene : IScene
     private FocusableButton? _quaternaryFocus;
     private FocusableCycleSelector<RopeGameplayMode>? _ropeModeFocus;
     private FocusableCheckbox? _lavaRiseFocus;
+    private FocusableCheckbox? _ghostBestRunFocus;
     private Button? _primaryButton;
     private Button? _secondaryButton;
     private Button? _tertiaryButton;
     private Button? _quaternaryButton;
     private CycleSelector<RopeGameplayMode>? _ropeModeSelector;
     private Checkbox? _lavaRiseCheckbox;
+    private Checkbox? _ghostBestRunCheckbox;
+    private Button? _watchReplayButton;
+    private FocusableButton? _watchReplayFocus;
     private Rectangle _ropeModePanelBounds;
     private Rectangle _ropeModeLabelBounds;
     private Rectangle _ropeModeDescriptionBounds;
@@ -50,6 +56,14 @@ public sealed class LevelSelectScene : IScene
     private Level? _selectedLevel;
     private Texture2D? _selectedLevelPreview;
     private string? _selectedLevelId;
+    private string _detailsLevelName = "";
+    private string _detailsPlayersText = "";
+    private string _detailsRopeText = "";
+    private string _detailsFeaturesText = "";
+    private string _detailsBestTimeText = "--";
+    private string _detailsUnofficialBestText = "";
+    private bool _detailsHasUnofficialBest;
+    private bool _detailsHasBestReplay;
 
     // Constants
     private const int CellWidth = 200;
@@ -132,8 +146,18 @@ public sealed class LevelSelectScene : IScene
                 IsChecked = s_lavaRiseEnabled
             };
 
+            _ghostBestRunCheckbox = new Checkbox
+            {
+                Label = "Ghost Best Run",
+                IsChecked = s_ghostBestRunEnabled
+            };
+
+            _watchReplayButton = new Button("Watch Replay");
+            _watchReplayFocus = new FocusableButton(_watchReplayButton);
+
             _ropeModeFocus = new FocusableCycleSelector<RopeGameplayMode>(_ropeModeSelector);
             _lavaRiseFocus = new FocusableCheckbox(_lavaRiseCheckbox);
+            _ghostBestRunFocus = new FocusableCheckbox(_ghostBestRunCheckbox);
         }
     }
 
@@ -175,6 +199,18 @@ public sealed class LevelSelectScene : IScene
         if (_lavaRiseCheckbox != null)
         {
             s_lavaRiseEnabled = _lavaRiseCheckbox.IsChecked;
+        }
+
+        if (_ghostBestRunCheckbox != null)
+        {
+            s_ghostBestRunEnabled = _detailsHasBestReplay && _ghostBestRunCheckbox.IsChecked;
+        }
+
+        if (_watchReplayFocus?.WasActivated == true && _selectedLevelId is not null
+            && _detailsHasBestReplay)
+        {
+            _game.ChangeScene(new ReplayViewerScene(_game, _selectedLevelId));
+            return;
         }
 
         if (_primaryFocus?.WasActivated == true && _selectedIndex.HasValue && CanStartPlay())
@@ -252,6 +288,19 @@ public sealed class LevelSelectScene : IScene
             lavaIndex = _focus.Add(_lavaRiseFocus, "LavaRise");
         }
 
+        int? ghostIndex = null;
+        if (_ghostBestRunFocus != null)
+        {
+            ghostIndex = _focus.Add(_ghostBestRunFocus, "GhostBestRun");
+        }
+
+        int? watchReplayIndex = null;
+        if (_watchReplayFocus != null && _selectedLevelId is not null)
+        {
+            _watchReplayFocus.IsEnabled = true;
+            watchReplayIndex = _focus.Add(_watchReplayFocus, "WatchReplay");
+        }
+
         int backIndex = _focus.Add(_backFocus, "Back");
         int? primaryIndex = _primaryFocus is not null ? _focus.Add(_primaryFocus, _mode == LevelSelectMode.PlayMode ? "Play" : "EditLevel") : null;
         int? secondaryIndex = _secondaryFocus is not null ? _focus.Add(_secondaryFocus, "LevelInfo") : null;
@@ -272,37 +321,65 @@ public sealed class LevelSelectScene : IScene
                 if (secondaryIndex is int secondary)
                 {
                     nav.LinkHorizontal(primary, secondary);
+                    nav.Link(secondary, NavigationDirection.Up, gridStart);
                 }
 
                 if (tertiaryIndex is int tertiary && secondaryIndex is int sec)
                 {
                     nav.LinkHorizontal(sec, tertiary);
+                    nav.Link(tertiary, NavigationDirection.Up, gridStart);
                 }
 
                 if (quaternaryIndex is int quaternary && tertiaryIndex is int ter)
                 {
                     nav.LinkHorizontal(ter, quaternary);
+                    nav.Link(quaternary, NavigationDirection.Up, gridStart);
                 }
             }
             else if (_mode == LevelSelectMode.PlayMode)
             {
-                // LEVEL GRID -> ROPE MODE -> (right) LAVA RISE, then ROPE/LAVA -> down -> PLAY
-                // PLAY: left -> BACK
                 int downTarget = ropeIndex ?? primaryIndex ?? backIndex;
                 NavigationGraphBuilder.LinkGridBottomRowTo(nav, gridStart, _gridFocusables.Count, _gridLayout.Columns, downTarget);
 
                 if (ropeIndex is int rope && lavaIndex is int lava)
                 {
                     nav.LinkHorizontal(rope, lava);
+
+                    if (ghostIndex is int ghost)
+                    {
+                        nav.LinkVertical(lava, ghost);
+
+                        if (primaryIndex is int playFromGhost)
+                        {
+                            nav.Link(ghost, NavigationDirection.Down, playFromGhost);
+                        }
+                    }
+
+                    if (watchReplayIndex is int watchFromLava)
+                    {
+                        nav.LinkHorizontal(lava, watchFromLava);
+                    }
+
                     if (primaryIndex is int play)
                     {
                         nav.LinkVertical(rope, play);
-                        nav.Link(lava, NavigationDirection.Down, play);
                     }
                 }
                 else if (ropeIndex is int ropeOnly && primaryIndex is int playOnly)
                 {
                     nav.LinkVertical(ropeOnly, playOnly);
+                }
+
+                if (watchReplayIndex is int watchReplay && _gridFocusables.Count > 0)
+                {
+                    int topRight = gridStart + Math.Min(_gridLayout.Columns - 1, _gridFocusables.Count - 1);
+                    nav.Link(topRight, NavigationDirection.Right, watchReplay);
+                    nav.Link(watchReplay, NavigationDirection.Left, topRight);
+
+                    if (primaryIndex is int playFromWatch)
+                    {
+                        nav.Link(watchReplay, NavigationDirection.Down, playFromWatch);
+                    }
                 }
 
                 if (primaryIndex is int playBtn)
@@ -337,8 +414,14 @@ public sealed class LevelSelectScene : IScene
         Viewport viewport = _game.Viewport;
         Texture2D pixel = _game.Pixel;
 
-        // Draw background
-        spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(29, 34, 45));
+        if (ReplayMenuBackground.IsActive(_game))
+        {
+            ReplayMenuBackground.DrawDimmingOverlay(spriteBatch, pixel, viewport);
+        }
+        else
+        {
+            spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(29, 34, 45));
+        }
 
         // Draw title
         string title = _mode == LevelSelectMode.PlayMode ? "SELECT A LEVEL TO PLAY" : "LEVEL EDITOR";
@@ -355,7 +438,10 @@ public sealed class LevelSelectScene : IScene
         }
 
         // Draw buttons
-        spriteBatch.Draw(pixel, new Rectangle(0, viewport.Height - 100, viewport.Width, 100), new Color(22, 26, 34));
+        spriteBatch.Draw(
+            pixel,
+            new Rectangle(0, viewport.Height - 100, viewport.Width, 100),
+            ReplayMenuBackground.IsActive(_game) ? new Color(22, 26, 34, 180) : new Color(22, 26, 34));
         if (_mode == LevelSelectMode.PlayMode && _game.SteamLobby.IsInLobby && !_game.Party.IsLeader)
         {
             Rectangle waitBounds = new(20, viewport.Height - 132, viewport.Width - 40, 24);
@@ -452,6 +538,15 @@ public sealed class LevelSelectScene : IScene
                 int checkboxY = _ropeModeSelector.Bounds.Y + ((selectorHeight - 24) / 2);
                 _lavaRiseCheckbox.Bounds = new Rectangle(checkboxX, checkboxY, 180, 24);
             }
+
+            if (_ghostBestRunCheckbox != null && _lavaRiseCheckbox != null)
+            {
+                _ghostBestRunCheckbox.Bounds = new Rectangle(
+                    _lavaRiseCheckbox.Bounds.X,
+                    _lavaRiseCheckbox.Bounds.Bottom + 8,
+                    220,
+                    24);
+            }
         }
 
         if (_mode == LevelSelectMode.PlayMode)
@@ -535,6 +630,7 @@ public sealed class LevelSelectScene : IScene
         {
             s_selectedRopeMode = _ropeModeSelector?.CurrentOption ?? s_selectedRopeMode;
             s_lavaRiseEnabled = _lavaRiseCheckbox?.IsChecked ?? s_lavaRiseEnabled;
+            s_ghostBestRunEnabled = _ghostBestRunCheckbox?.IsChecked ?? s_ghostBestRunEnabled;
 
             if (_game.SteamLobby.IsInLobby)
             {
@@ -546,7 +642,7 @@ public sealed class LevelSelectScene : IScene
                 _game.SteamLobby.BroadcastLevelStart(levelId, s_selectedRopeMode, s_lavaRiseEnabled);
             }
 
-            _game.ChangeScene(new GameScene(_game, levelId, s_selectedRopeMode, s_lavaRiseEnabled));
+            _game.ChangeScene(new GameScene(_game, levelId, s_selectedRopeMode, s_lavaRiseEnabled, s_ghostBestRunEnabled));
         }
         else
         {
@@ -582,7 +678,7 @@ public sealed class LevelSelectScene : IScene
             return;
         }
 
-        _game.ChangeScene(new GameScene(_game, message.LevelId, message.RopeMode, message.LavaRiseEnabled));
+        _game.ChangeScene(new GameScene(_game, message.LevelId, message.RopeMode, message.LavaRiseEnabled, s_ghostBestRunEnabled));
     }
 
     private void HandleSecondaryAction()
@@ -616,6 +712,7 @@ public sealed class LevelSelectScene : IScene
             _selectedLevel = null;
             _selectedLevelPreview = null;
             _selectedLevelId = null;
+            RefreshDetailsPanelCache();
             return;
         }
 
@@ -623,7 +720,39 @@ public sealed class LevelSelectScene : IScene
         _selectedLevelId = metadata.Id;
         _selectedLevel = LevelManager.LoadLevel(metadata.Id);
         _selectedLevelPreview = LevelPreviewManager.GetPreview(_game.GraphicsDevice, _game.Pixel, _selectedLevel, metadata.Id);
+        RefreshDetailsPanelCache();
         ApplyLevelPlayDefaults(_selectedLevel);
+    }
+
+    private void RefreshDetailsPanelCache()
+    {
+        if (_selectedLevel is null || string.IsNullOrEmpty(_selectedLevelId))
+        {
+            _detailsLevelName = "";
+            _detailsPlayersText = "";
+            _detailsRopeText = "";
+            _detailsFeaturesText = "";
+            _detailsBestTimeText = "--";
+            _detailsUnofficialBestText = "";
+            _detailsHasUnofficialBest = false;
+            _detailsHasBestReplay = false;
+            return;
+        }
+
+        _detailsLevelName = _selectedLevel.Name;
+        _detailsPlayersText = GetPlayerCompatibilityText(_selectedLevel);
+        string ropeText = GetRopeText(_selectedLevel);
+        _detailsRopeText = string.IsNullOrEmpty(ropeText) ? "None" : ropeText;
+        string featureText = GetFeatureText(_selectedLevel);
+        _detailsFeaturesText = string.IsNullOrEmpty(featureText) ? "None" : featureText;
+        _detailsBestTimeText = BestTimeStorage.TryGetBestTime(_selectedLevelId, out float bestTime)
+            ? BestTimeStorage.FormatTime(bestTime)
+            : "--";
+        _detailsHasUnofficialBest = BestTimeStorage.TryGetUnofficialBestTime(_selectedLevelId, out float unofficialBest);
+        _detailsUnofficialBestText = _detailsHasUnofficialBest
+            ? BestTimeStorage.FormatTime(unofficialBest)
+            : "";
+        _detailsHasBestReplay = ReplayStorage.HasValidBestReplay(_selectedLevelId);
     }
 
     private void ApplyLevelPlayDefaults(Level level)
@@ -652,6 +781,16 @@ public sealed class LevelSelectScene : IScene
 
             s_selectedRopeMode = LevelRules.ClampRopeMode(level, s_selectedRopeMode);
             _ropeModeSelector.CurrentOption = s_selectedRopeMode;
+        }
+
+        if (_ghostBestRunCheckbox != null)
+        {
+            _ghostBestRunCheckbox.IsEnabled = true;
+            if (!_detailsHasBestReplay)
+            {
+                _ghostBestRunCheckbox.IsChecked = false;
+                s_ghostBestRunEnabled = false;
+            }
         }
     }
 
@@ -734,6 +873,7 @@ public sealed class LevelSelectScene : IScene
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, description, _ropeModeDescriptionBounds, 1, new Color(180, 200, 220));
 
         _lavaRiseCheckbox?.Draw(spriteBatch, pixel);
+        _ghostBestRunCheckbox?.Draw(spriteBatch, pixel);
     }
 
     private void DrawLevelDetailsPanel(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
@@ -751,7 +891,7 @@ public sealed class LevelSelectScene : IScene
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "LEVEL DETAILS", headerBounds, 2, Color.White);
 
         var nameBounds = new Rectangle(panelX + 16, panelY + 56, panelWidth - 32, 24);
-        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, _selectedLevel.Name, nameBounds, 2, new Color(210, 220, 235));
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, _detailsLevelName, nameBounds, 2, new Color(210, 220, 235));
 
         var previewBounds = new Rectangle(panelX + 15, panelY + 86, panelWidth - 30, Math.Min(180, panelHeight / 4));
         spriteBatch.Draw(pixel, previewBounds, new Color(20, 26, 36));
@@ -773,34 +913,38 @@ public sealed class LevelSelectScene : IScene
 
         SimpleTextRenderer.DrawString(spriteBatch, pixel, "Players:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
         y += rowHeight;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, GetPlayerCompatibilityText(_selectedLevel!), new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsPlayersText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
         y += rowHeight + 4;
 
         SimpleTextRenderer.DrawString(spriteBatch, pixel, "Rope:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
         y += rowHeight;
-        string ropeText = GetRopeText(_selectedLevel!);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, string.IsNullOrEmpty(ropeText) ? "None" : ropeText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsRopeText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
         y += rowHeight + 4;
 
         SimpleTextRenderer.DrawString(spriteBatch, pixel, "Features:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
         y += rowHeight;
-        string featureText = GetFeatureText(_selectedLevel!);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, string.IsNullOrEmpty(featureText) ? "None" : featureText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsFeaturesText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
         y += rowHeight + 4;
 
         SimpleTextRenderer.DrawString(spriteBatch, pixel, "Best Time:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
         y += rowHeight;
-        string bestTimeText = BestTimeStorage.TryGetBestTime(_selectedLevelId ?? string.Empty, out float bestTime)
-            ? BestTimeStorage.FormatTime(bestTime)
-            : "--";
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, bestTimeText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsBestTimeText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
         y += rowHeight + 4;
 
-        if (BestTimeStorage.TryGetUnofficialBestTime(_selectedLevelId ?? string.Empty, out float unofficialBest))
+        if (_detailsHasUnofficialBest)
         {
             SimpleTextRenderer.DrawString(spriteBatch, pixel, "Unofficial Best:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
             y += rowHeight;
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, BestTimeStorage.FormatTime(unofficialBest), new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(200, 180, 140));
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsUnofficialBestText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(200, 180, 140));
+            y += rowHeight + 8;
+        }
+
+        if (_watchReplayButton != null)
+        {
+            _watchReplayButton.Bounds = new Rectangle(textX, y, textWidth, 44);
+            _watchReplayButton.FillColor = _detailsHasBestReplay ? new Color(52, 61, 80) : new Color(40, 46, 58);
+            _watchReplayButton.TextColor = _detailsHasBestReplay ? Color.White : new Color(140, 150, 165);
+            _watchReplayButton.Draw(spriteBatch, pixel);
         }
     }
 

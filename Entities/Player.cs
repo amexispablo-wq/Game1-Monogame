@@ -63,6 +63,16 @@ public sealed class Player : INetworkEntity
     public Vector2 Size { get; } = new(40f, 40f);
     public GameColor CurrentColor { get; private set; }
     public GameColor PlayerColor => CurrentColor;
+    private PlayerSkinData? _cosmeticSkin;
+    private string _cosmeticSkinId = string.Empty;
+
+    public void SetCosmeticSkin(PlayerSkinData? skin, string? skinId = null)
+    {
+        _cosmeticSkin = skin?.Clone();
+        _cosmeticSkinId = skinId ?? string.Empty;
+    }
+
+    internal PlayerSkinData? GetCosmeticSkinForDraw() => _cosmeticSkin;
     public bool IsGrounded { get; internal set; }
     public bool IsOnGround => IsGrounded;
     public bool IsFrozen { get; private set; }
@@ -121,7 +131,8 @@ public sealed class Player : INetworkEntity
             CurrentColor,
             State,
             IsGrounded,
-            IsFrozen);
+            IsFrozen,
+            _cosmeticSkinId);
     }
 
     public void ApplySnapshot(PlayerSnapshot snapshot)
@@ -140,6 +151,21 @@ public sealed class Player : INetworkEntity
         IsGrounded = snapshot.IsGrounded;
         IsFrozen = snapshot.IsFrozen;
         _forceAccumulator = Vector2.Zero;
+        ApplyCosmeticSkinFromSnapshot(snapshot);
+    }
+
+    private void ApplyCosmeticSkinFromSnapshot(PlayerSnapshot snapshot)
+    {
+        if (string.IsNullOrEmpty(snapshot.CosmeticSkinId))
+        {
+            return;
+        }
+
+        PlayerSkinEntry? entry = SkinLibraryStorage.FindSkin(snapshot.CosmeticSkinId);
+        if (entry is not null)
+        {
+            SetCosmeticSkin(entry.ToSkinData(), snapshot.CosmeticSkinId);
+        }
     }
 
     public void AddForce(Vector2 force)
@@ -208,8 +234,7 @@ public sealed class Player : INetworkEntity
         DrawEjectionFeedback(spriteBatch, pixel, bounds);
 
         Rectangle bodyBounds = GetVisualBodyBounds(bounds);
-        spriteBatch.Draw(pixel, bodyBounds, CurrentColor.ToXnaColor());
-        DrawHelper.DrawBorder(spriteBatch, pixel, bodyBounds, Color.Black, 3);
+        PlayerSkinRenderer.DrawBody(spriteBatch, pixel, bodyBounds, CurrentColor.ToXnaColor(), _cosmeticSkin);
 
         if (drawIndicator)
         {

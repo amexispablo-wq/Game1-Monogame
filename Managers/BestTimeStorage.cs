@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using ColorBlocks.Replay;
 
 namespace ColorBlocks;
 
@@ -86,6 +87,7 @@ public static class BestTimeStorage
 
         record.Official = null;
         SaveAll(bestTimes);
+        ReplayInvalidation.OnLevelEdited(levelId);
     }
 
     public static void DeleteLevelRecord(string levelId)

@@ -6,5 +6,6 @@ public enum EditorObjectKind
     Platform,
     Goal,
     CheckpointFlag,
-    LaunchPad
+    LaunchPad,
+    PlayerSpawn
 }

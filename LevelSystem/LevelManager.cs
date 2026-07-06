@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ColorBlocks.Replay;
 
 namespace ColorBlocks;
 
@@ -138,6 +139,8 @@ public static class LevelManager
             {
                 File.Delete(metadata.FilePath);
                 BestTimeStorage.DeleteLevelRecord(levelId);
+                ReplayStorage.DeleteBestReplay(levelId);
+                HighlightManager.InvalidateClipsForLevel(levelId);
             }
             catch (Exception ex)
             {

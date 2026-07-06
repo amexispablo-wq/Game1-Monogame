@@ -32,6 +32,15 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool ExitPressed { get; private set; }
     public bool EnterPressed { get; private set; }
     public bool DebugTogglePressed { get; private set; }
+    public bool ReplayForceSavePressed { get; private set; }
+    public bool ReplayBackgroundTogglePressed { get; private set; }
+    public bool ReplayViewerExitPressed { get; private set; }
+    public bool ReplayViewerPausePressed { get; private set; }
+    public bool ReplayViewerRestartPressed { get; private set; }
+    public bool ReplayViewerSpeedUpPressed { get; private set; }
+    public bool ReplayViewerSpeedDownPressed { get; private set; }
+    public bool ReplayViewerSpeedUpHeld { get; private set; }
+    public bool ReplayViewerSpeedDownHeld { get; private set; }
     public bool NavigationStepPressed { get; private set; }
     public bool GameplayPausePressed { get; private set; }
     public bool MenuMoveUpPressed { get; private set; }
@@ -123,6 +132,18 @@ public sealed class InputManager : ILocalPlayerInputSource
         Navigation.Update(this);
         RequestedColor = GetEditorColorRequest();
         _virtualLeftClickRequested = false;
+        UpdateReplayViewerInput();
+    }
+
+    private void UpdateReplayViewerInput()
+    {
+        ReplayViewerExitPressed = IsNewKeyPress(Keys.Escape) || GamepadBackPressed;
+        ReplayViewerPausePressed = IsNewKeyPress(Keys.Enter) || KeyboardMenuConfirmPressed || GamepadMenuConfirmPressed;
+        ReplayViewerRestartPressed = IsNewKeyPress(Keys.R);
+        ReplayViewerSpeedUpHeld = EditorRightTrigger > 0.35f;
+        ReplayViewerSpeedDownHeld = EditorLeftTrigger > 0.35f;
+        ReplayViewerSpeedUpPressed = ReplayViewerSpeedUpHeld;
+        ReplayViewerSpeedDownPressed = ReplayViewerSpeedDownHeld;
     }
 
     public void SetUiPointerOverride(Point? position)
@@ -357,6 +378,8 @@ public sealed class InputManager : ILocalPlayerInputSource
         ExitPressed = IsNewKeyPress(Keys.Escape);
         EnterPressed = IsNewKeyPress(Keys.Enter);
         DebugTogglePressed = IsNewKeyPress(Keys.F3);
+        ReplayForceSavePressed = IsNewKeyPress(Keys.F10);
+        ReplayBackgroundTogglePressed = IsNewKeyPress(Keys.F11);
 
         if (IsNewKeyPress(Keys.F8))
         {

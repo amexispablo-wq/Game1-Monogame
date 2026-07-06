@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ColorBlocks.Replay;
 
 namespace ColorBlocks;
 
@@ -160,7 +161,14 @@ public sealed class PartyScene : IScene
         Viewport viewport = _game.Viewport;
         Texture2D pixel = _game.Pixel;
 
-        spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), Background);
+        if (ReplayMenuBackground.IsActive(_game))
+        {
+            ReplayMenuBackground.DrawDimmingOverlay(spriteBatch, pixel, viewport);
+        }
+        else
+        {
+            spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), Background);
+        }
 
         Point titleSize = SimpleTextRenderer.MeasureString("PARTY", _titleScale);
         DrawCenteredText(spriteBatch, pixel, "PARTY", viewport.Width / 2, _titleY, _titleScale, Accent);

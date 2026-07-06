@@ -59,6 +59,7 @@ public sealed class EditorScene : IScene
     private Rectangle _goalSlotBounds;
     private Rectangle _checkpointSlotBounds;
     private Rectangle _launchPadSlotBounds;
+    private Rectangle _playerSpawnSlotBounds;
     private EditorObjectKind _toolbarDragKind = EditorObjectKind.None;
     private EditorObjectKind _hoveredToolbarKind = EditorObjectKind.None;
     private bool _snapToGrid = true;
@@ -66,7 +67,13 @@ public sealed class EditorScene : IScene
     private bool _goalSlotHovered;
     private bool _checkpointSlotHovered;
     private bool _launchPadSlotHovered;
+    private bool _playerSpawnSlotHovered;
     private bool _isDraggingGoalFromToolbar;
+    private bool _isDraggingPlayerSpawn;
+    private bool _playerSpawnSelected;
+    private bool _playerSpawnHovered;
+    private Point _playerSpawnDragStartMouse;
+    private Vector2 _playerSpawnDragStartPosition;
     private bool _isDirty;
     private bool _isDraggingLavaLine;
     private bool _lavaSelected;
@@ -233,6 +240,7 @@ public sealed class EditorScene : IScene
             || _isDraggingGoal
             || _isDraggingCheckpoint
             || _isDraggingLaunchPad
+            || _isDraggingPlayerSpawn
             || _isDraggingLavaLine;
         if (!canUseWorldMouse)
         {
@@ -376,6 +384,11 @@ public sealed class EditorScene : IScene
         _level.DrawLaunchPads(spriteBatch, pixel, debugDraw: false, isEditorMode: true);
         _level.DrawGoals(spriteBatch, pixel, debugDraw: false);
         _level.DrawCheckpointFlags(spriteBatch, pixel, debugDraw: false);
+        DrawPlayerSpawnMarker(spriteBatch, pixel, _level.PlayerStart, 1f);
+        if (_playerSpawnSelected || _playerSpawnHovered)
+        {
+            DrawHelper.DrawBorder(spriteBatch, pixel, GetPlayerSpawnBounds(), new Color(255, 220, 80), GetWorldLineThickness(3));
+        }
 
         if (_level.Lava is not null)
         {
@@ -476,6 +489,7 @@ public sealed class EditorScene : IScene
         DrawEditorUi(spriteBatch, pixel);
         DrawToolbar(spriteBatch, pixel);
         DrawLavaSpeedPanel(spriteBatch, pixel);
+        UpdateEditorChromeButtonHover();
         DrawApplyButton(spriteBatch, pixel);
         _backButton.Draw(spriteBatch, pixel);
         _uiFocus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
@@ -697,6 +711,7 @@ public sealed class EditorScene : IScene
         CheckpointFlag clickedCheckpoint = FindCheckpointAt(mouse);
         Goal clickedGoal = FindGoalAt(mouse);
         Platform clickedPlatform = FindPlatformAt(mouse);
+        bool clickedPlayerSpawn = HitTestPlayerSpawn(mouse);
 
         if (_game.Input.ShiftHeld)
         {
@@ -738,6 +753,14 @@ public sealed class EditorScene : IScene
                 StartResize(_selectedPlatform, selectedHandle, mouse);
                 return;
             }
+        }
+
+        if (clickedPlayerSpawn)
+        {
+            ClearSelection();
+            _playerSpawnSelected = true;
+            StartPlayerSpawnDrag(mouse);
+            return;
         }
 
         if (clickedLaunchPad is not null)
@@ -857,6 +880,12 @@ public sealed class EditorScene : IScene
             return;
         }
 
+        if (_isDraggingPlayerSpawn)
+        {
+            MovePlayerSpawn(mouse);
+            return;
+        }
+
         if (_isDraggingLavaLine)
         {
             MoveLavaLine(mouse);
@@ -891,6 +920,7 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
         _isDraggingLaunchPad = false;
+        _isDraggingPlayerSpawn = false;
         _isDraggingLavaLine = false;
         _isResizing = false;
         _activeHandle = ResizeHandle.None;
@@ -1250,6 +1280,14 @@ public sealed class EditorScene : IScene
                         _isDirty = true;
                         break;
                     }
+                case EditorObjectKind.PlayerSpawn:
+                    {
+                        _level.PlayerStart = new Vector2(_objectPreviewPosition.X, _objectPreviewPosition.Y);
+                        _playerSpawnSelected = true;
+                        _level.RecalculateWorldSize();
+                        _isDirty = true;
+                        break;
+                    }
             }
         }
 
@@ -1417,6 +1455,54 @@ public sealed class EditorScene : IScene
         _selectedLaunchPads.Clear();
         _selectedLaunchPad = null;
         _lavaSelected = false;
+        _playerSpawnSelected = false;
+    }
+
+    private Rectangle GetPlayerSpawnBounds()
+    {
+        return new Rectangle((int)_level.PlayerStart.X, (int)_level.PlayerStart.Y, 40, 40);
+    }
+
+    private bool HitTestPlayerSpawn(Point mouse) => GetPlayerSpawnBounds().Contains(mouse);
+
+    private void StartPlayerSpawnDrag(Point mouse)
+    {
+        _isDraggingPlayerSpawn = true;
+        _isDragging = false;
+        _isDraggingGoal = false;
+        _isDraggingCheckpoint = false;
+        _isDraggingLaunchPad = false;
+        _isResizing = false;
+        _isCreating = false;
+        _activeHandle = ResizeHandle.None;
+        _playerSpawnDragStartMouse = mouse;
+        _playerSpawnDragStartPosition = _level.PlayerStart;
+    }
+
+    private void MovePlayerSpawn(Point mouse)
+    {
+        Point delta = GetDelta(mouse, _playerSpawnDragStartMouse);
+        Vector2 next = _playerSpawnDragStartPosition + delta.ToVector2();
+        if (_snapToGrid)
+        {
+            next = new Vector2(SnapToGrid((int)next.X), SnapToGrid((int)next.Y));
+        }
+
+        if (_level.PlayerStart == next)
+        {
+            return;
+        }
+
+        _level.PlayerStart = next;
+        _level.RecalculateWorldSize();
+        _isDirty = true;
+    }
+
+    private static void DrawPlayerSpawnMarker(SpriteBatch spriteBatch, Texture2D pixel, Vector2 position, float alpha)
+    {
+        Rectangle bounds = new((int)position.X, (int)position.Y, 40, 40);
+        spriteBatch.Draw(pixel, bounds, Color.Red * alpha);
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, Color.Black, 2);
     }
 
     private void DeleteSelectedObjects()
@@ -1734,13 +1820,14 @@ public sealed class EditorScene : IScene
 
     private void UpdateHoverState(Point mouse)
     {
-        bool objectActionActive = _isCreating || _isDragging || _isDraggingGoal || _isDraggingCheckpoint || _isDraggingLaunchPad || _isDraggingLavaLine || _isResizing || IsDraggingToolbarObject;
+        bool objectActionActive = _isCreating || _isDragging || _isDraggingGoal || _isDraggingCheckpoint || _isDraggingLaunchPad || _isDraggingPlayerSpawn || _isDraggingLavaLine || _isResizing || IsDraggingToolbarObject;
         if (objectActionActive)
         {
             _hoveredPlatform = (_isCreating || _isDragging || _isResizing) ? _selectedPlatform : null;
             _hoveredGoal = _isDraggingGoal ? _selectedGoal : null;
             _hoveredCheckpoint = _isDraggingCheckpoint && _selectedCheckpoints.Count > 0 ? _selectedCheckpoints[0] : null;
             _hoveredLaunchPad = _isDraggingLaunchPad && _selectedLaunchPads.Count > 0 ? _selectedLaunchPads[0] : null;
+            _playerSpawnHovered = _isDraggingPlayerSpawn;
             _lavaHovered = _isDraggingLavaLine;
             return;
         }
@@ -1749,7 +1836,9 @@ public sealed class EditorScene : IScene
         _hoveredCheckpoint = _hoveredGoal is null ? FindCheckpointAt(mouse) : null;
         _hoveredLaunchPad = _hoveredGoal is null && _hoveredCheckpoint is null ? FindLaunchPadAt(mouse) : null;
         _hoveredPlatform = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null ? FindPlatformAt(mouse) : null;
-        _lavaHovered = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null && _hoveredPlatform is null
+        _playerSpawnHovered = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null && _hoveredPlatform is null
+            && HitTestPlayerSpawn(mouse);
+        _lavaHovered = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null && _hoveredPlatform is null && !_playerSpawnHovered
             && _level.Lava is not null && _level.Lava.HitTest(mouse);
     }
 
@@ -2085,6 +2174,9 @@ public sealed class EditorScene : IScene
                     DrawHelper.DrawBorder(spriteBatch, pixel, preview.Bounds, new Color(255, 220, 80) * 0.8f, GetWorldLineThickness(2));
                     break;
                 }
+            case EditorObjectKind.PlayerSpawn:
+                DrawPlayerSpawnMarker(spriteBatch, pixel, new Vector2(position.X, position.Y), 0.55f);
+                break;
         }
     }
 
@@ -2158,6 +2250,9 @@ public sealed class EditorScene : IScene
         // Draw Launch Pad slot
         DrawToolbarSlot(spriteBatch, pixel, _launchPadSlotBounds, _launchPadSlotHovered, _toolbarDragKind == EditorObjectKind.LaunchPad, "LAUNCH",
             (sb, px, bounds) => LaunchPad.DrawIcon(sb, px, bounds));
+
+        DrawToolbarSlot(spriteBatch, pixel, _playerSpawnSlotBounds, _playerSpawnSlotHovered, _toolbarDragKind == EditorObjectKind.PlayerSpawn, "SPAWN",
+            (sb, px, bounds) => sb.Draw(pixel, bounds, Color.Red));
     }
 
     private void DrawToolbarSlot(SpriteBatch spriteBatch, Texture2D pixel, Rectangle slotBounds, bool isHovered, bool isDragging, string label, Action<SpriteBatch, Texture2D, Rectangle> drawIcon)
@@ -2200,7 +2295,7 @@ public sealed class EditorScene : IScene
         int padding = Math.Clamp(slotSize / 4, 10, 18);
         int slotGap = Math.Clamp(slotSize / 8, 4, 8);
         int bottomMargin = Math.Max(8, (int)(viewport.Height * 0.025f));
-        int totalWidth = (padding * 2) + (slotSize * 3) + (slotGap * 2);
+        int totalWidth = (padding * 2) + (slotSize * 4) + (slotGap * 3);
         int panelHeight = (padding * 2) + slotSize;
 
         _toolbarPanelBounds = new Rectangle(
@@ -2227,9 +2322,16 @@ public sealed class EditorScene : IScene
             slotSize,
             slotSize);
 
+        _playerSpawnSlotBounds = new Rectangle(
+            _launchPadSlotBounds.Right + slotGap,
+            _toolbarPanelBounds.Top + padding,
+            slotSize,
+            slotSize);
+
         _goalSlotHovered = _goalSlotBounds.Contains(UiPointer);
         _checkpointSlotHovered = _checkpointSlotBounds.Contains(UiPointer);
         _launchPadSlotHovered = _launchPadSlotBounds.Contains(UiPointer);
+        _playerSpawnSlotHovered = _playerSpawnSlotBounds.Contains(UiPointer);
 
         // Update hovered toolbar kind
         if (_goalSlotHovered)
@@ -2243,6 +2345,10 @@ public sealed class EditorScene : IScene
         else if (_launchPadSlotHovered)
         {
             _hoveredToolbarKind = EditorObjectKind.LaunchPad;
+        }
+        else if (_playerSpawnSlotHovered)
+        {
+            _hoveredToolbarKind = EditorObjectKind.PlayerSpawn;
         }
         else
         {
@@ -2262,6 +2368,19 @@ public sealed class EditorScene : IScene
 
         _applyButton.Bounds = new Rectangle(x, y, applyWidth, height);
         _backButton.Bounds = new Rectangle(x, y + height + gap, backWidth, height);
+    }
+
+    private void UpdateEditorChromeButtonHover()
+    {
+        if (IsGamepadCursorMode())
+        {
+            _applyButton.SetPointerHover(_applyButton.Bounds.Contains(UiPointer));
+            _backButton.SetPointerHover(_backButton.Bounds.Contains(UiPointer));
+            return;
+        }
+
+        _applyButton.Update(_game.Input, _game.Input.Navigation);
+        _backButton.Update(_game.Input, _game.Input.Navigation);
     }
 
     private void DrawApplyButton(SpriteBatch spriteBatch, Texture2D pixel)

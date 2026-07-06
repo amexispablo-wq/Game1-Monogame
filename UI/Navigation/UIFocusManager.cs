@@ -701,11 +701,32 @@ public sealed class UIFocusManager
             return;
         }
 
-        int? neighbor = _navigation.GetNeighbor(_focusedIndex, direction);
-        if (neighbor is int index && index >= 0 && index < _items.Count && _items[index].IsEnabled)
+        if (TryMoveToEnabledNeighbor(_focusedIndex, direction))
+        {
+            return;
+        }
+    }
+
+    private bool TryMoveToEnabledNeighbor(int fromIndex, NavigationDirection direction, int depth = 0)
+    {
+        if (depth > _items.Count)
+        {
+            return false;
+        }
+
+        int? neighbor = _navigation.GetNeighbor(fromIndex, direction);
+        if (neighbor is not int index || index < 0 || index >= _items.Count)
+        {
+            return false;
+        }
+
+        if (_items[index].IsEnabled)
         {
             SetFocus(index);
+            return true;
         }
+
+        return TryMoveToEnabledNeighbor(index, direction, depth + 1);
     }
 
     private static bool ShouldConfirm(InputManager input, InputNavigationService navigation)

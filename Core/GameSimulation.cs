@@ -157,6 +157,9 @@ public sealed class GameSimulation
         _session.State = GameSessionState.Playing;
         _fixedTimeAccumulator = 0f;
         _latchedLocalInput.Clear();
+        CurrentTick = SimulationTick.Zero;
+        SnapshotCount = 0;
+        LastSnapshot = CreateSnapshot(SimulationTick.Zero);
     }
 
     public void ApplySnapshot(GameSnapshot snapshot)
@@ -216,7 +219,11 @@ public sealed class GameSimulation
         LastSnapshot = CreateSnapshot(tick);
         SnapshotCount++;
         _inputBuffer.TrimBefore(CurrentTick, InputBufferRetentionTicks);
+        FixedTickCompleted?.Invoke();
     }
+
+    /// <summary>Fired once per completed fixed simulation tick, after snapshot is produced.</summary>
+    public event Action? FixedTickCompleted;
 
     private void AccumulateLocalInput(ILocalPlayerInputSource localInputSource)
     {

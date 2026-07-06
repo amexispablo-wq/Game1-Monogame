@@ -556,6 +556,7 @@ public sealed class FocusableDropdown<T> : IFocusable where T : notnull
 public sealed class FocusableTextInput : IFocusable
 {
     private readonly TextInputComponent _input;
+    private bool _hasNavigationFocus;
 
     public FocusableTextInput(TextInputComponent input)
     {
@@ -588,9 +589,10 @@ public sealed class FocusableTextInput : IFocusable
 
     public void Update(InputManager input, InputNavigationService navigation, bool isFocused)
     {
-        if (isFocused)
+        _hasNavigationFocus = isFocused;
+        if (!isFocused)
         {
-            _input.IsFocused = true;
+            _input.IsFocused = false;
         }
 
         if (input.UiPointerPressed && Bounds.Contains(input.UiPointerPosition))
@@ -601,7 +603,7 @@ public sealed class FocusableTextInput : IFocusable
 
     public void DrawFocusHighlight(SpriteBatch spriteBatch, Texture2D pixel, GameTime gameTime)
     {
-        if (_input.IsFocused)
+        if (_hasNavigationFocus || _input.IsFocused)
         {
             FocusHighlight.Draw(spriteBatch, pixel, Bounds, gameTime.TotalGameTime.TotalSeconds);
         }

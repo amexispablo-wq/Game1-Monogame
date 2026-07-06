@@ -2,6 +2,7 @@
 using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ColorBlocks.Replay;
 
 namespace ColorBlocks;
 
@@ -82,11 +83,13 @@ public sealed class LevelInfoScene : IScene
         _focus.ResetFocus();
         _savedState = CaptureCurrentState();
         _hasUnsavedChanges = false;
+        SyncPlayerCompatibilityState();
     }
 
     public void Update(GameTime gameTime)
     {
         LayoutControls();
+        SyncPlayerCompatibilityState();
 
         if (_showUnsavedChangesPrompt)
         {
@@ -98,10 +101,6 @@ public sealed class LevelInfoScene : IScene
         int nameIdx = _focus.Add(_nameFocus, "LevelName");
         int musicIdx = _focus.Add(_musicFocus, "Music");
         int allPlayersIdx = _focus.Add(_allPlayersFocus, "AllPlayers");
-        int p1Idx = _focus.Add(_player1Focus, "Player1");
-        int p2Idx = _focus.Add(_player2Focus, "Player2");
-        int p3Idx = _focus.Add(_player3Focus, "Player3");
-        int p4Idx = _focus.Add(_player4Focus, "Player4");
         int coloredIdx = _focus.Add(_coloredRopeFocus, "ColoredRope");
         int regularIdx = _focus.Add(_regularRopeFocus, "RegularRope");
         int lavaIdx = _focus.Add(_lavaRiseFocus, "LavaRise");
@@ -111,13 +110,30 @@ public sealed class LevelInfoScene : IScene
         NavigationGraph nav = _focus.Navigation;
         nav.LinkVertical(nameIdx, musicIdx);
         nav.LinkVertical(musicIdx, allPlayersIdx);
-        nav.LinkVertical(allPlayersIdx, p1Idx);
-        nav.WireGrid(p1Idx, 4, 2);
-        NavigationGraphBuilder.LinkGridBottomRowTo(nav, p1Idx, 4, 2, coloredIdx);
         nav.LinkVertical(coloredIdx, regularIdx);
         nav.LinkVertical(regularIdx, lavaIdx);
         nav.LinkVertical(lavaIdx, backIdx);
         nav.LinkHorizontal(backIdx, applyIdx);
+
+        bool allPlayers = _allPlayersCheckbox.IsChecked;
+        if (allPlayers)
+        {
+            nav.LinkVertical(allPlayersIdx, coloredIdx);
+        }
+        else
+        {
+            int p1Idx = _focus.Add(_player1Focus, "Player1");
+            int p2Idx = _focus.Add(_player2Focus, "Player2");
+            int p3Idx = _focus.Add(_player3Focus, "Player3");
+            int p4Idx = _focus.Add(_player4Focus, "Player4");
+
+            nav.LinkVertical(allPlayersIdx, p1Idx);
+            nav.LinkHorizontal(p1Idx, p2Idx);
+            nav.LinkVertical(p1Idx, p3Idx);
+            nav.LinkHorizontal(p3Idx, p4Idx);
+            nav.LinkVertical(p2Idx, p4Idx);
+            nav.LinkVertical(p3Idx, coloredIdx);
+        }
 
         _focus.FinalizeFocus("LevelName");
         _focus.Update(gameTime, _game.Input);
@@ -155,7 +171,14 @@ public sealed class LevelInfoScene : IScene
         Viewport viewport = _game.Viewport;
         Texture2D pixel = _game.Pixel;
 
-        spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(29, 34, 45));
+        if (ReplayMenuBackground.IsActive(_game))
+        {
+            ReplayMenuBackground.DrawDimmingOverlay(spriteBatch, pixel, viewport);
+        }
+        else
+        {
+            spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(29, 34, 45));
+        }
 
         var titleBounds = new Rectangle(20, 20, viewport.Width - 40, 50);
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "LEVEL INFORMATION", titleBounds, 3, Color.White);
@@ -187,11 +210,12 @@ public sealed class LevelInfoScene : IScene
         y += 34;
 
         int rowX = contentArea.X + 18;
-        int rowWidth = (contentArea.Width - 54) / 2;
-        _player1Checkbox.Bounds = new Rectangle(rowX, y, rowWidth, 30);
-        _player2Checkbox.Bounds = new Rectangle(rowX + rowWidth + 18, y, rowWidth, 30);
-        _player3Checkbox.Bounds = new Rectangle(rowX, y + 36, rowWidth, 30);
-        _player4Checkbox.Bounds = new Rectangle(rowX + rowWidth + 18, y + 36, rowWidth, 30);
+        const int playerColWidth = 200;
+        const int playerColGap = 16;
+        _player1Checkbox.Bounds = new Rectangle(rowX, y, playerColWidth, 30);
+        _player2Checkbox.Bounds = new Rectangle(rowX + playerColWidth + playerColGap, y, playerColWidth, 30);
+        _player3Checkbox.Bounds = new Rectangle(rowX, y + 36, playerColWidth, 30);
+        _player4Checkbox.Bounds = new Rectangle(rowX + playerColWidth + playerColGap, y + 36, playerColWidth, 30);
         _player1Checkbox.Draw(spriteBatch, pixel);
         _player2Checkbox.Draw(spriteBatch, pixel);
         _player3Checkbox.Draw(spriteBatch, pixel);
@@ -215,10 +239,11 @@ public sealed class LevelInfoScene : IScene
         int buttonWidth = 140;
         int buttonGap = 16;
         int buttonX = contentArea.X + 18;
-        int buttonY = viewport.Height - 70;
+        const int buttonHeight = 44;
+        int buttonY = contentArea.Bottom - buttonHeight - 16;
 
-        _backButton.Bounds = new Rectangle(buttonX, buttonY, buttonWidth, 44);
-        _applyButton.Bounds = new Rectangle(buttonX + buttonWidth + buttonGap, buttonY, buttonWidth, 44);
+        _backButton.Bounds = new Rectangle(buttonX, buttonY, buttonWidth, buttonHeight);
+        _applyButton.Bounds = new Rectangle(buttonX + buttonWidth + buttonGap, buttonY, buttonWidth, buttonHeight);
 
         _backButton.Draw(spriteBatch, pixel);
         _applyButton.Draw(spriteBatch, pixel);
@@ -257,11 +282,12 @@ public sealed class LevelInfoScene : IScene
         y += 34;
 
         int rowX = contentArea.X + 18;
-        int rowWidth = (contentArea.Width - 54) / 2;
-        _player1Checkbox.Bounds = new Rectangle(rowX, y, rowWidth, 30);
-        _player2Checkbox.Bounds = new Rectangle(rowX + rowWidth + 18, y, rowWidth, 30);
-        _player3Checkbox.Bounds = new Rectangle(rowX, y + 36, rowWidth, 30);
-        _player4Checkbox.Bounds = new Rectangle(rowX + rowWidth + 18, y + 36, rowWidth, 30);
+        const int playerColWidth = 200;
+        const int playerColGap = 16;
+        _player1Checkbox.Bounds = new Rectangle(rowX, y, playerColWidth, 30);
+        _player2Checkbox.Bounds = new Rectangle(rowX + playerColWidth + playerColGap, y, playerColWidth, 30);
+        _player3Checkbox.Bounds = new Rectangle(rowX, y + 36, playerColWidth, 30);
+        _player4Checkbox.Bounds = new Rectangle(rowX + playerColWidth + playerColGap, y + 36, playerColWidth, 30);
         y += 36 * 2 + sectionSpacing;
 
         y += 32;
@@ -275,9 +301,29 @@ public sealed class LevelInfoScene : IScene
         int buttonWidth = 140;
         int buttonGap = 16;
         int buttonX = contentArea.X + 18;
-        int buttonY = viewport.Height - 70;
-        _backButton.Bounds = new Rectangle(buttonX, buttonY, buttonWidth, 44);
-        _applyButton.Bounds = new Rectangle(buttonX + buttonWidth + buttonGap, buttonY, buttonWidth, 44);
+        const int buttonHeight = 44;
+        int buttonY = contentArea.Bottom - buttonHeight - 16;
+        _backButton.Bounds = new Rectangle(buttonX, buttonY, buttonWidth, buttonHeight);
+        _applyButton.Bounds = new Rectangle(buttonX + buttonWidth + buttonGap, buttonY, buttonWidth, buttonHeight);
+    }
+
+    private void SyncPlayerCompatibilityState()
+    {
+        bool allPlayers = _allPlayersCheckbox.IsChecked;
+        _player1Checkbox.IsEnabled = !allPlayers;
+        _player2Checkbox.IsEnabled = !allPlayers;
+        _player3Checkbox.IsEnabled = !allPlayers;
+        _player4Checkbox.IsEnabled = !allPlayers;
+
+        if (!allPlayers)
+        {
+            return;
+        }
+
+        _player1Checkbox.IsChecked = false;
+        _player2Checkbox.IsChecked = false;
+        _player3Checkbox.IsChecked = false;
+        _player4Checkbox.IsChecked = false;
     }
 
     private void DrawSectionLabel(SpriteBatch spriteBatch, Texture2D pixel, string text, Vector2 position)

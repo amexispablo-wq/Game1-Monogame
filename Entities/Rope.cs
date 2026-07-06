@@ -144,6 +144,12 @@ public sealed class Rope : INetworkEntity
         LastTension = snapshot.Tension;
         LastPullIntensity = snapshot.PullIntensity;
         LastPulledNodeCount = snapshot.PulledNodeCount;
+        RefreshGameplayModeState();
+    }
+
+    public void RefreshVisualState()
+    {
+        RefreshGameplayModeState();
     }
 
     public void ResetBetweenPlayers()

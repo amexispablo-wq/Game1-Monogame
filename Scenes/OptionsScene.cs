@@ -4,12 +4,29 @@ using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using ColorBlocks.Replay;
 
 namespace ColorBlocks;
 
 public sealed class OptionsScene : IScene
 {
+    private enum OptionsSection
+    {
+        Display,
+        Audio,
+        Controls
+    }
+
     private readonly ColorBlocksGame _game;
+    private OptionsSection _activeSection = OptionsSection.Display;
+
+    // Section tabs
+    private readonly Button _displayTabButton = new("DISPLAY SETTINGS") { TextScale = 2 };
+    private readonly Button _audioTabButton = new("AUDIO") { TextScale = 2 };
+    private readonly Button _controlsTabButton = new("CONTROLS") { TextScale = 2 };
+    private readonly FocusableButton _displayTabFocus;
+    private readonly FocusableButton _audioTabFocus;
+    private readonly FocusableButton _controlsTabFocus;
 
     // Display settings
     private ResolutionDropdown _resolutionDropdown = new();
@@ -19,6 +36,7 @@ public sealed class OptionsScene : IScene
 
     // Audio settings
     private Slider _volumeSlider = new("Music Volume", 0.75f, 0f, 1f);
+    private readonly List<(string Key, Checkbox Checkbox, FocusableCheckbox Focus)> _soundEffectToggles = new();
 
     // Buttons
     private Button _applyButton = new("Apply");
@@ -130,6 +148,10 @@ public sealed class OptionsScene : IScene
         _fpsLimitSelector.CurrentOption = pending.FpsLimit;
         _colorModeSelector.CurrentOption = pending.ColorMode;
 
+        _displayTabFocus = new FocusableButton(_displayTabButton);
+        _audioTabFocus = new FocusableButton(_audioTabButton);
+        _controlsTabFocus = new FocusableButton(_controlsTabButton);
+
         _displayModeFocus = new FocusableCycleSelector<DisplayMode>(_displayModeSelector);
         _fpsLimitFocus = new FocusableCycleSelector<int>(_fpsLimitSelector);
         _colorModeFocus = new FocusableCycleSelector<ColorMode>(_colorModeSelector);
@@ -141,11 +163,35 @@ public sealed class OptionsScene : IScene
 
         _focus.ResetFocus();
         InitializeControlBindings();
+        InitializeSoundEffectToggles(pending);
+    }
+
+    private void InitializeSoundEffectToggles(GameSettings pending)
+    {
+        _soundEffectToggles.Clear();
+        (string key, string label)[] effects =
+        {
+            ("Jump", "JUMP"),
+            ("PullRope", "PULL ROPE"),
+            ("Red", "RED"),
+            ("Green", "GREEN"),
+            ("Blue", "BLUE"),
+            ("Checkpoint", "CHECKPOINT"),
+            ("MenuNavigation", "MENU NAVIGATION"),
+            ("Lava", "LAVA")
+        };
+
+        foreach ((string key, string label) in effects)
+        {
+            bool enabled = pending.SoundEffects.TryGetValue(key, out bool value) && value;
+            var checkbox = new Checkbox { Label = label, IsChecked = enabled };
+            _soundEffectToggles.Add((key, checkbox, new FocusableCheckbox(checkbox)));
+        }
     }
 
     private void InitializeControlBindings()
     {
-        var actions = new[] { "MoveLeft", "MoveRight", "Jump", "Respawn", "PullRope", "FastFall", "Red", "Blue", "Green" };
+        var actions = new[] { "MoveLeft", "MoveRight", "Jump", "Respawn", "PullRope", "FastFall", "Red", "Green", "Blue" };
         _controlBindings.Clear();
 
         foreach (string action in actions)
@@ -191,6 +237,19 @@ public sealed class OptionsScene : IScene
 
         RebuildFocus(gameTime);
 
+        if (_displayTabFocus.WasActivated)
+        {
+            _activeSection = OptionsSection.Display;
+        }
+        else if (_audioTabFocus.WasActivated)
+        {
+            _activeSection = OptionsSection.Audio;
+        }
+        else if (_controlsTabFocus.WasActivated)
+        {
+            _activeSection = OptionsSection.Controls;
+        }
+
         if (_backFocus.WasActivated)
         {
             SettingsManager.RevertPendingChanges();
@@ -221,80 +280,108 @@ public sealed class OptionsScene : IScene
         _bindingFocusables.Clear();
         _focus.Clear();
 
-        // Display column (visual order: MODE, RESOLUTION, FPS LIMIT)
-        int displayModeIndex = _focus.Add(_displayModeFocus, "DisplayMode");
-        int resolutionIndex = _focus.Add(_resolutionFocus, "Resolution");
-        int fpsIndex = _focus.Add(_fpsLimitFocus, "FpsLimit");
+        int displayTabIndex = _focus.Add(_displayTabFocus, "DisplayTab");
+        int audioTabIndex = _focus.Add(_audioTabFocus, "AudioTab");
+        int controlsTabIndex = _focus.Add(_controlsTabFocus, "ControlsTab");
+        _focus.Navigation.LinkHorizontal(displayTabIndex, audioTabIndex);
+        _focus.Navigation.LinkHorizontal(audioTabIndex, controlsTabIndex);
 
-        // Audio column (right of display)
-        int volumeIndex = _focus.Add(_volumeFocus, "MusicVolume");
-        int colorModeIndex = _focus.Add(_colorModeFocus, "ColorMode");
+        int sectionEntryIndex = -1;
+        int sectionExitIndex = -1;
 
-        // Control bindings: two focusable cells per action (keyboard, gamepad)
-        var keyIndices = new List<int>();
-        var padIndices = new List<int>();
-        for (int i = 0; i < _controlBindings.Count; i++)
+        if (_activeSection == OptionsSection.Display)
         {
-            int captured = i;
-            string action = _controlBindings[i].action;
+            int displayModeIndex = _focus.Add(_displayModeFocus, "DisplayMode");
+            int resolutionIndex = _focus.Add(_resolutionFocus, "Resolution");
+            int fpsIndex = _focus.Add(_fpsLimitFocus, "FpsLimit");
+            int colorModeIndex = _focus.Add(_colorModeFocus, "ColorMode");
+            _focus.Navigation.LinkVertical(displayTabIndex, displayModeIndex);
+            _focus.Navigation.LinkVertical(displayModeIndex, resolutionIndex);
+            _focus.Navigation.LinkVertical(resolutionIndex, fpsIndex);
+            _focus.Navigation.LinkVertical(fpsIndex, colorModeIndex);
+            sectionEntryIndex = displayModeIndex;
+            sectionExitIndex = colorModeIndex;
+        }
+        else if (_activeSection == OptionsSection.Audio)
+        {
+            int volumeIndex = _focus.Add(_volumeFocus, "MusicVolume");
+            _focus.Navigation.LinkVertical(audioTabIndex, volumeIndex);
+            sectionEntryIndex = volumeIndex;
+            sectionExitIndex = volumeIndex;
+            int previous = volumeIndex;
+            for (int i = 0; i < _soundEffectToggles.Count; i++)
+            {
+                int effectIndex = _focus.Add(_soundEffectToggles[i].Focus, $"SoundEffect{i}");
+                _focus.Navigation.LinkVertical(previous, effectIndex);
+                previous = effectIndex;
+                sectionExitIndex = effectIndex;
+            }
+        }
+        else
+        {
+            var keyIndices = new List<int>();
+            var padIndices = new List<int>();
+            for (int i = 0; i < _controlBindings.Count; i++)
+            {
+                int captured = i;
+                string action = _controlBindings[i].action;
 
-            var keyFocus = new FocusableAction(
-                () => GetBindingCellBounds(layout, captured, BindingCell.Keyboard),
-                () => BeginRebind(captured, RebindKind.Keyboard));
-            var padFocus = new FocusableAction(
-                () => GetBindingCellBounds(layout, captured, BindingCell.Gamepad),
-                () => BeginRebind(captured, RebindKind.Gamepad));
+                var keyFocus = new FocusableAction(
+                    () => GetBindingCellBounds(layout, captured, BindingCell.Keyboard),
+                    () => BeginRebind(captured, RebindKind.Keyboard));
+                var padFocus = new FocusableAction(
+                    () => GetBindingCellBounds(layout, captured, BindingCell.Gamepad),
+                    () => BeginRebind(captured, RebindKind.Gamepad));
 
-            _bindingFocusables.Add(keyFocus);
-            _bindingFocusables.Add(padFocus);
+                _bindingFocusables.Add(keyFocus);
+                _bindingFocusables.Add(padFocus);
 
-            keyIndices.Add(_focus.Add(keyFocus, $"{action}Keyboard"));
-            padIndices.Add(_focus.Add(padFocus, $"{action}Gamepad"));
+                keyIndices.Add(_focus.Add(keyFocus, $"{action}Keyboard"));
+                padIndices.Add(_focus.Add(padFocus, $"{action}Gamepad"));
+            }
+
+            if (keyIndices.Count > 0)
+            {
+                _focus.Navigation.LinkVertical(controlsTabIndex, keyIndices[0]);
+                sectionEntryIndex = keyIndices[0];
+                sectionExitIndex = padIndices[^1];
+                for (int i = 0; i < keyIndices.Count; i++)
+                {
+                    _focus.Navigation.LinkHorizontal(keyIndices[i], padIndices[i]);
+                    if (i < keyIndices.Count - 1)
+                    {
+                        _focus.Navigation.LinkVertical(keyIndices[i], keyIndices[i + 1]);
+                        _focus.Navigation.LinkVertical(padIndices[i], padIndices[i + 1]);
+                    }
+                }
+            }
         }
 
         int applyIndex = _focus.Add(_applyFocus, "Apply");
         int backIndex = _focus.Add(_backFocus, "Back");
-
-        NavigationGraph nav = _focus.Navigation;
-
-        // Display column: MODE -> RESOLUTION -> FPS -> AUDIO -> CONTROLS
-        nav.LinkVertical(displayModeIndex, resolutionIndex);
-        nav.LinkVertical(resolutionIndex, fpsIndex);
-        nav.LinkVertical(fpsIndex, colorModeIndex);
-        nav.LinkVertical(volumeIndex, colorModeIndex);
-        nav.LinkHorizontal(resolutionIndex, volumeIndex);
-
-        if (keyIndices.Count > 0)
+        _focus.Navigation.LinkHorizontal(backIndex, applyIndex);
+        if (sectionExitIndex >= 0)
         {
-            nav.LinkVertical(colorModeIndex, keyIndices[0]);
-
-            for (int i = 0; i < keyIndices.Count; i++)
-            {
-                nav.LinkHorizontal(keyIndices[i], padIndices[i]);
-
-                if (i < keyIndices.Count - 1)
-                {
-                    nav.LinkVertical(keyIndices[i], keyIndices[i + 1]);
-                    nav.LinkVertical(padIndices[i], padIndices[i + 1]);
-                }
-            }
-
-            int last = keyIndices.Count - 1;
-            nav.LinkVertical(keyIndices[last], applyIndex);
-            nav.LinkVertical(padIndices[last], applyIndex);
-            nav.Link(applyIndex, NavigationDirection.Up, keyIndices[last]);
-            nav.Link(backIndex, NavigationDirection.Up, padIndices[last]);
-            nav.Link(colorModeIndex, NavigationDirection.Down, keyIndices[0]);
+            _focus.Navigation.LinkVertical(sectionExitIndex, applyIndex);
         }
         else
         {
-            nav.LinkVertical(colorModeIndex, applyIndex);
+            _focus.Navigation.LinkVertical(controlsTabIndex, applyIndex);
         }
 
-        nav.LinkHorizontal(backIndex, applyIndex);
-
-        _focus.FinalizeFocus("DisplayMode");
+        string defaultFocus = _activeSection switch
+        {
+            OptionsSection.Audio => "MusicVolume",
+            OptionsSection.Controls => _controlBindings.Count > 0 ? $"{_controlBindings[0].action}Keyboard" : "ControlsTab",
+            _ => "DisplayMode"
+        };
+        _focus.FinalizeFocus(defaultFocus);
         _focus.Update(gameTime, _game.Input);
+
+        foreach ((string _, Checkbox checkbox, FocusableCheckbox _) in _soundEffectToggles)
+        {
+            checkbox.Update(_game.Input, _game.Input.Navigation);
+        }
     }
 
     private bool BeginRebind(int index, RebindKind kind)
@@ -328,9 +415,19 @@ public sealed class OptionsScene : IScene
         DrawMainPanel(spriteBatch, pixel, layout.PanelBounds);
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "OPTIONS", layout.TitleBounds, layout.TitleScale, Color.White);
 
-        DrawDisplaySettings(spriteBatch, pixel, layout);
-        DrawAudioSettings(spriteBatch, pixel, layout);
-        DrawControlSettings(spriteBatch, pixel, layout);
+        DrawSectionTabs(spriteBatch, pixel, layout);
+        if (_activeSection == OptionsSection.Display)
+        {
+            DrawDisplaySettings(spriteBatch, pixel, layout);
+        }
+        else if (_activeSection == OptionsSection.Audio)
+        {
+            DrawAudioSettings(spriteBatch, pixel, layout);
+        }
+        else
+        {
+            DrawControlSettings(spriteBatch, pixel, layout);
+        }
 
         DrawButtonTray(spriteBatch, pixel, layout);
         _backButton.Draw(spriteBatch, pixel);
@@ -361,6 +458,12 @@ public sealed class OptionsScene : IScene
 
     private void DrawBackground(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
     {
+        if (ReplayMenuBackground.IsActive(_game))
+        {
+            ReplayMenuBackground.DrawDimmingOverlay(spriteBatch, pixel, viewport);
+            return;
+        }
+
         spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), BackgroundBottom);
         spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height / 2), BackgroundTop);
 
@@ -384,6 +487,16 @@ public sealed class OptionsScene : IScene
         spriteBatch.Draw(pixel, new Rectangle(panel.Right - 10 - cornerLength, panel.Y + 10, cornerLength, 3), new Color(151, 173, 207));
     }
 
+    private void DrawSectionTabs(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
+    {
+        _displayTabButton.FillColor = _activeSection == OptionsSection.Display ? new Color(82, 94, 118) : new Color(48, 57, 74);
+        _audioTabButton.FillColor = _activeSection == OptionsSection.Audio ? new Color(82, 94, 118) : new Color(48, 57, 74);
+        _controlsTabButton.FillColor = _activeSection == OptionsSection.Controls ? new Color(82, 94, 118) : new Color(48, 57, 74);
+        _displayTabButton.Draw(spriteBatch, pixel);
+        _audioTabButton.Draw(spriteBatch, pixel);
+        _controlsTabButton.Draw(spriteBatch, pixel);
+    }
+
     private void DrawDisplaySettings(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
     {
         DrawSection(spriteBatch, pixel, layout, layout.DisplaySectionBounds, "DISPLAY SETTINGS");
@@ -391,9 +504,11 @@ public sealed class OptionsScene : IScene
         DrawSettingLabel(spriteBatch, pixel, "MODE", layout.DisplayLabelBounds, layout.DisplayModeBounds);
         DrawSettingLabel(spriteBatch, pixel, "RESOLUTION", layout.DisplayLabelBounds, layout.ResolutionBounds);
         DrawSettingLabel(spriteBatch, pixel, "FPS LIMIT", layout.DisplayLabelBounds, layout.FpsLimitBounds);
+        DrawSettingLabel(spriteBatch, pixel, "COLOR MODE", layout.ColorModeLabelBounds, layout.ColorModeBounds);
 
         _displayModeSelector.Draw(spriteBatch, pixel);
         _fpsLimitSelector.Draw(spriteBatch, pixel);
+        _colorModeSelector.Draw(spriteBatch, pixel);
 
         if (!_resolutionDropdown.IsExpanded)
         {
@@ -406,8 +521,15 @@ public sealed class OptionsScene : IScene
         DrawSection(spriteBatch, pixel, layout, layout.AudioSectionBounds, "AUDIO SETTINGS");
         DrawSettingLabel(spriteBatch, pixel, "MUSIC VOLUME", layout.AudioLabelBounds, layout.VolumeBounds);
         _volumeSlider.Draw(spriteBatch, pixel);
-        DrawSettingLabel(spriteBatch, pixel, "COLOR MODE", layout.ColorModeLabelBounds, layout.ColorModeBounds);
-        _colorModeSelector.Draw(spriteBatch, pixel);
+
+        int titleY = layout.VolumeBounds.Bottom + 24;
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, "SOUND EFFECTS", new Vector2(layout.AudioSectionBounds.X + layout.SectionPadding, titleY), SectionTitleScale, Accent);
+        int y = titleY + 36;
+        foreach ((string _, Checkbox checkbox, _) in _soundEffectToggles)
+        {
+            checkbox.Draw(spriteBatch, pixel);
+            y += 34;
+        }
     }
 
     private void DrawControlSettings(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
@@ -666,12 +788,24 @@ public sealed class OptionsScene : IScene
     {
         LayoutMetrics layout = GetLayoutMetrics(_game.Viewport);
 
+        int tabWidth = Math.Max(140, (layout.ContentBounds.Width - 24) / 3);
+        _displayTabButton.Bounds = new Rectangle(layout.ContentBounds.X, layout.ContentBounds.Y, tabWidth, 44);
+        _audioTabButton.Bounds = new Rectangle(_displayTabButton.Bounds.Right + 12, layout.ContentBounds.Y, tabWidth, 44);
+        _controlsTabButton.Bounds = new Rectangle(_audioTabButton.Bounds.Right + 12, layout.ContentBounds.Y, tabWidth, 44);
+
         _displayModeSelector.Bounds = layout.DisplayModeBounds;
         _resolutionDropdown.Bounds = layout.ResolutionBounds;
         _resolutionDropdown.OpenUpwards = false;
         _fpsLimitSelector.Bounds = layout.FpsLimitBounds;
         _volumeSlider.Bounds = layout.VolumeBounds;
         _colorModeSelector.Bounds = layout.ColorModeBounds;
+
+        int effectY = layout.VolumeBounds.Bottom + 60;
+        foreach ((string _, Checkbox checkbox, _) in _soundEffectToggles)
+        {
+            checkbox.Bounds = new Rectangle(layout.AudioSectionBounds.X + layout.SectionPadding + 8, effectY, layout.AudioSectionBounds.Width - (layout.SectionPadding * 2), 28);
+            effectY += 34;
+        }
 
         ControlWidth = layout.ControlSectionBounds.Width;
 
@@ -710,11 +844,20 @@ public sealed class OptionsScene : IScene
         int controlChromeHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing
             + controlHeaderHeight + controlHeaderGap;
 
-        int topBlockHeight = TitleHeight + titleToSectionsGap + topSectionHeight + sectionGap;
+        int topBlockHeight = TitleHeight + titleToSectionsGap + 56 + sectionGap;
         int buttonBlockHeight = ButtonHeight + sectionGap;
 
+        int displayRows = 4;
+        int displayContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing
+            + (rowHeight + 10) * (displayRows - 1) + rowHeight;
+        int soundEffectsTitleHeight = 36;
+        int audioContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing + rowHeight
+            + 24 + soundEffectsTitleHeight + (_soundEffectToggles.Count * 34) + sectionPadding;
+
         int comfortableDataHeight = (bindingCount * preferredRowHeight) + ((bindingCount - 1) * keyRowGap);
-        int desiredContentHeight = topBlockHeight + controlChromeHeight + comfortableDataHeight + buttonBlockHeight;
+        int estimatedControlSectionHeight = controlChromeHeight + comfortableDataHeight;
+        int maxSectionHeight = Math.Max(displayContentHeight, Math.Max(audioContentHeight, estimatedControlSectionHeight));
+        int desiredContentHeight = TitleHeight + titleToSectionsGap + 56 + maxSectionHeight + sectionGap + buttonBlockHeight;
         int desiredPanelHeight = desiredContentHeight + (panelPadding * 2);
         int panelHeight = Math.Clamp(desiredPanelHeight, 520, maxPanelHeight);
 
@@ -728,6 +871,13 @@ public sealed class OptionsScene : IScene
         int actualDataHeight = (bindingCount * keyRowHeight) + ((bindingCount - 1) * keyRowGap);
         int controlSectionHeight = controlChromeHeight + actualDataHeight;
 
+        int activeSectionHeight = _activeSection switch
+        {
+            OptionsSection.Audio => audioContentHeight,
+            OptionsSection.Controls => controlSectionHeight,
+            _ => displayContentHeight
+        };
+
         int panelX = (viewport.Width - panelWidth) / 2;
         int panelY = (viewport.Height - panelHeight) / 2;
         Rectangle panelBounds = new(panelX, panelY, panelWidth, panelHeight);
@@ -739,17 +889,15 @@ public sealed class OptionsScene : IScene
             contentHeight);
 
         Rectangle titleBounds = new(contentBounds.X, contentBounds.Y, contentBounds.Width, TitleHeight);
-        int topSectionY = titleBounds.Bottom + titleToSectionsGap;
-        int topSectionWidth = (contentBounds.Width - TopSectionGap) / 2;
-        Rectangle displaySectionBounds = new(contentBounds.X, topSectionY, topSectionWidth, topSectionHeight);
-        Rectangle audioSectionBounds = new(displaySectionBounds.Right + TopSectionGap, topSectionY, topSectionWidth, topSectionHeight);
-
-        int controlSectionY = displaySectionBounds.Bottom + sectionGap;
+        int topSectionY = titleBounds.Bottom + titleToSectionsGap + 56;
+        int topSectionWidth = contentBounds.Width;
+        Rectangle displaySectionBounds = new(contentBounds.X, topSectionY, topSectionWidth, activeSectionHeight);
+        Rectangle audioSectionBounds = displaySectionBounds;
         Rectangle controlSectionBounds = new(
             contentBounds.X,
-            controlSectionY,
+            topSectionY,
             contentBounds.Width,
-            controlSectionHeight);
+            activeSectionHeight);
 
         int buttonWidth = Math.Clamp(contentBounds.Width / 5, 128, 150);
         int buttonTotalWidth = (buttonWidth * 2) + ButtonGap;
@@ -765,10 +913,9 @@ public sealed class OptionsScene : IScene
         Rectangle displayModeBounds = new(displayControlBounds.X, rowStartY, displayControlBounds.Width, rowHeight);
         Rectangle resolutionBounds = new(displayControlBounds.X, rowStartY + rowHeight + 10, displayControlBounds.Width, rowHeight);
         Rectangle fpsLimitBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 2), displayControlBounds.Width, rowHeight);
+        Rectangle colorModeBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 3), displayControlBounds.Width, rowHeight);
+        Rectangle colorModeLabelBounds = new(displayLabelBounds.X, colorModeBounds.Y, displayLabelBounds.Width, rowHeight);
         Rectangle volumeBounds = new(audioControlBounds.X, rowStartY, audioControlBounds.Width, rowHeight);
-        int colorModeRowY = rowStartY + rowHeight + 10;
-        Rectangle colorModeBounds = new(audioControlBounds.X, colorModeRowY, audioControlBounds.Width, rowHeight);
-        Rectangle colorModeLabelBounds = new(audioLabelBounds.X, colorModeRowY, audioLabelBounds.Width, rowHeight);
 
         int controlRowsY = controlSectionBounds.Y + sectionPadding + sectionTitleHeight + sectionTitleSpacing;
         int controlRowsHeight = controlHeaderHeight + controlHeaderGap + actualDataHeight;
@@ -913,6 +1060,11 @@ public sealed class OptionsScene : IScene
         }
 
         ColorPaletteManager.ApplySettings(SettingsManager.PendingSettings.ColorMode);
+
+        foreach ((string key, Checkbox checkbox, _) in _soundEffectToggles)
+        {
+            SettingsManager.PendingSettings.SoundEffects[key] = checkbox.IsChecked;
+        }
     }
 
     private static void DrawFittedLeft(SpriteBatch spriteBatch, Texture2D pixel, string text, Rectangle bounds, int preferredScale, Color color)

@@ -639,8 +639,8 @@
     }
   ],
   "playerSpawn": {
-    "x": 0,
-    "y": 0
+    "x": -192,
+    "y": 352
   },
   "musicId": "default_track_02",
   "allPlayers": true,
@@ -648,7 +648,7 @@
   "player2": false,
   "player3": false,
   "player4": false,
-  "coloredRope": true,
+  "coloredRope": false,
   "regularRope": true,
   "lavaRise": true,
   "lavaLine": {

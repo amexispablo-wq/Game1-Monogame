@@ -2,6 +2,7 @@
 using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ColorBlocks.Replay;
 
 namespace ColorBlocks;
 
@@ -18,6 +19,7 @@ public class ColorBlocksGame : Game
     private readonly PartyHudOverlay _partyHud = new();
     private readonly MusicManager _music = new();
     private readonly PresentationManager _presentation = new();
+    private readonly ReplayBackgroundRenderer _replayBackground = new();
     private SpriteBatch _spriteBatch = null!;
     private Texture2D _pixel = null!;
     private InputManager _input = null!;
@@ -37,6 +39,7 @@ public class ColorBlocksGame : Game
         Window.Title = "Color Blocks";
 
         SettingsManager.Initialize();
+        SkinLibraryStorage.Initialize();
         var settings = SettingsManager.CurrentSettings;
         _graphics.PreferredBackBufferWidth = settings.ResolutionWidth;
         _graphics.PreferredBackBufferHeight = settings.ResolutionHeight;
@@ -60,6 +63,7 @@ public class ColorBlocksGame : Game
     public MusicManager Music => _music;
     public Viewport Viewport => _presentation.LogicalViewport;
     public PresentationManager Presentation => _presentation;
+    public IScene CurrentScene => _currentScene;
 
     public void ApplyGraphicsSettings(int width, int height, string? displayMode = null, bool applyChanges = true)
     {
@@ -199,6 +203,18 @@ public class ColorBlocksGame : Game
         _input.ConfigurePointerTransform(Window.ClientBounds, GraphicsDevice.Viewport, _presentation);
         _input.Update();
 
+        if (_input.ReplayBackgroundTogglePressed)
+        {
+            ReplayManager.MenuBackgroundEnabled = !ReplayManager.MenuBackgroundEnabled;
+        }
+
+        if (_input.DebugTogglePressed
+            && (ReplayManager.HasReplay() || ReplayDiagnostics.ActiveRecorder is not null))
+        {
+            ReplayDiagnostics.DebugOverlayVisible = !ReplayDiagnostics.DebugOverlayVisible;
+        }
+
+        _replayBackground.Update(this, gameTime);
         _currentScene.Update(gameTime);
 
         base.Update(gameTime);
@@ -208,10 +224,12 @@ public class ColorBlocksGame : Game
     {
         _presentation.BeginDraw(GraphicsDevice);
         GraphicsDevice.Clear(new Color(23, 27, 34));
+        _replayBackground.Draw(this, gameTime, _spriteBatch);
         _currentScene.Draw(gameTime, _spriteBatch);
 
         _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         _partyHud.Draw(_spriteBatch, _pixel, Viewport, Party);
+        ReplayDebugOverlay.Draw(_spriteBatch, _pixel, Viewport);
         _spriteBatch.End();
 
         _presentation.EndDraw(GraphicsDevice, _spriteBatch, _pixel, new Color(23, 27, 34));

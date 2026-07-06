@@ -31,6 +31,11 @@ public sealed class Button
         return WasClicked;
     }
 
+    public void SetPointerHover(bool hovered)
+    {
+        IsHovered = hovered;
+    }
+
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel)
     {
         // Subtle hover scale: render slightly larger when hovered, but don't modify logical Bounds

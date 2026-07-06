@@ -58,6 +58,12 @@ public sealed class PlayerManager
                 ownership,
                 indicatorLabel);
             Players.Add(player);
+            if (member.IsLocallyOwned)
+            {
+                string? skinId = SkinLibraryStorage.GetSelectedSkinId(member.Id);
+                player.SetCosmeticSkin(SkinLibraryStorage.GetSkinForMember(member.Id), skinId);
+            }
+
             bindings[networkId] = member;
 
             _session.RegisterPlayer(new PlayerSessionInfo(

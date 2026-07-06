@@ -43,4 +43,22 @@ public sealed class GameSettings
 
     [JsonPropertyName("ColorMode")]
     public ColorMode ColorMode { get; set; } = ColorMode.Normal;
+
+    [JsonPropertyName("SoundEffects")]
+    public Dictionary<string, bool> SoundEffects { get; set; } = CreateDefaultSoundEffects();
+
+    public static Dictionary<string, bool> CreateDefaultSoundEffects()
+    {
+        return new Dictionary<string, bool>
+        {
+            { "Jump", true },
+            { "PullRope", true },
+            { "Red", true },
+            { "Blue", true },
+            { "Green", true },
+            { "Checkpoint", true },
+            { "MenuNavigation", true },
+            { "Lava", true }
+        };
+    }
 }

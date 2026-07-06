@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ColorBlocks.Replay;
 
 namespace ColorBlocks;
 
@@ -31,22 +32,29 @@ public sealed class GameScene : IScene
     private Rectangle _deathRespawnStartBounds;
     private Rectangle _deathCheckpointBounds;
     private Rectangle _deathQuitBounds;
-    private readonly UIFocusManager _deathFocus = new();
+    private readonly UIFocusManager _deathFocus = new() { Name = "Death Menu" };
     private readonly List<FocusableGridCell> _deathOptionFocusables = new();
+    private bool _deathMenuFocusInitialized;
     private bool _disconnectPending;
     private float _disconnectTimer;
     private const float DisconnectReturnDelay = 2.5f;
+    private readonly ReplayRecorder _replayRecorder = new();
+    private readonly GhostPlayer? _ghostPlayer;
+    private readonly bool _ghostBestRunEnabled;
+    private bool _savedNewRecordReplay;
 
     public GameScene(
         ColorBlocksGame game,
         string levelId = "level_1",
         RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics,
-        bool lavaRiseEnabled = false)
+        bool lavaRiseEnabled = false,
+        bool ghostBestRunEnabled = false)
     {
         _game = game;
         _levelId = levelId;
         _ropeGameplayMode = ropeGameplayMode;
         _lavaRiseEnabled = lavaRiseEnabled;
+        _ghostBestRunEnabled = ghostBestRunEnabled;
         int localOwnerId = _game.SteamLobby.IsAvailable
             ? SteamOwnerId.FromSteamId(_game.SteamLobby.LocalSteamId)
             : NetworkOwners.HostOwnerId;
@@ -66,17 +74,59 @@ public sealed class GameScene : IScene
         _playerManager.SpawnFromParty(_game.Party.Members, _game.Input);
         _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled);
         _camera = new Camera(GetPlayersCenter());
+        _replayRecorder.StartRecording(
+            _levelId,
+            _ropeGameplayMode,
+            _lavaRiseEnabled,
+            _session.Settings.SimulationTicksPerSecond,
+            _simulation.LavaRiseSpeed,
+            _level.Lava?.SurfaceY ?? 0f,
+            ReplayRecordingMode.FullSession);
+        _simulation.FixedTickCompleted += OnSimulationFixedTick;
+        ReplayDiagnostics.ActiveRecorder = _replayRecorder;
+
+        if (_ghostBestRunEnabled)
+        {
+            _ghostPlayer = new GhostPlayer();
+            _ghostPlayer.TryLoadBestRun(_levelId);
+        }
+
         _game.SteamLobby.MemberLeft += OnLobbyMemberLeft;
         _game.Music.PlayLevelMusic(_level.MusicId);
     }
 
     public void OnExit()
     {
+        _simulation.FixedTickCompleted -= OnSimulationFixedTick;
+        ReplayDiagnostics.ActiveRecorder = null;
         _game.SteamLobby.MemberLeft -= OnLobbyMemberLeft;
         _game.Input.ClearGameplayBindings();
         _game.Party.UnlockAssignments();
         _game.GameNetwork.Reset();
         _game.Music.Stop();
+        _replayRecorder.StopRecording();
+        FinalizeSessionRecording();
+    }
+
+    private void FinalizeSessionRecording()
+    {
+        ReplayData? session = _replayRecorder.ExportReplay();
+        if (session is null)
+        {
+            return;
+        }
+
+        HighlightManager.ProcessSession(session);
+
+        if (_savedNewRecordReplay || (_simulation.NewRecord && _simulation.IsLevelComplete))
+        {
+            ReplayFile replayFile = ReplayFileSerializer.CreateFromSession(
+                session,
+                _levelId,
+                _simulation.FinalTime,
+                _playerManager.Players.Count);
+            ReplayStorage.SaveBestReplay(replayFile);
+        }
     }
 
     private void OnLobbyMemberLeft(ulong steamId)
@@ -97,6 +147,20 @@ public sealed class GameScene : IScene
     {
         float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, MaxSceneFrameTime);
         Viewport viewport = _game.Viewport;
+
+        if (_game.Input.ReplayForceSavePressed)
+        {
+            ReplayData? forced = _replayRecorder.ExportReplay();
+            if (forced is not null)
+            {
+                ReplayFile replayFile = ReplayFileSerializer.CreateFromSession(
+                    forced,
+                    _levelId,
+                    _simulation.ElapsedTime,
+                    _playerManager.Players.Count);
+                ReplayStorage.SaveBestReplay(replayFile);
+            }
+        }
 
         if (_disconnectPending)
         {
@@ -123,10 +187,23 @@ public sealed class GameScene : IScene
         if (_simulation.IsPlayerDead)
         {
             _game.Input.GameplayInputBlocked = true;
+            if (!_deathMenuFocusInitialized)
+            {
+                _deathFocus.ResetFocus();
+                if (_game.Input.IsAnyGamepadConnected())
+                {
+                    _game.Input.Navigation.PreferGamepad();
+                }
+
+                _deathMenuFocusInitialized = true;
+            }
+
             UpdateDeathUi(gameTime);
             UpdateCamera(gameTime);
             return;
         }
+
+        _deathMenuFocusInitialized = false;
 
         if (_simulation.IsLevelComplete)
         {
@@ -161,6 +238,8 @@ public sealed class GameScene : IScene
             if (network.TryConsumeClientSnapshot(out GameSnapshot snapshot))
             {
                 _simulation.ApplySnapshot(snapshot);
+                _replayRecorder.RecordFrame(_simulation, _camera);
+                _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
             }
 
             BeginCompletionUi();
@@ -169,7 +248,12 @@ public sealed class GameScene : IScene
         }
 
         _simulation.Advance(dt, _game.Input);
+        _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
         BeginCompletionUi();
+        if (_simulation.IsLevelComplete && _simulation.NewRecord)
+        {
+            _savedNewRecordReplay = true;
+        }
 
         if (_session.Role == GameSessionRole.Host)
         {
@@ -196,7 +280,7 @@ public sealed class GameScene : IScene
                 _simulation.SetPaused(false);
                 _pauseMenu.Close();
                 _game.Input.GameplayInputBlocked = false;
-                _simulation.RestartLevel();
+                ResetGameplaySession();
                 break;
             case PauseMenuChoice.BackToMenu:
                 _simulation.SetPaused(false);
@@ -213,41 +297,20 @@ public sealed class GameScene : IScene
     {
         Viewport viewport = _game.Viewport;
 
-        spriteBatch.Begin(samplerState: SamplerState.PointClamp);
-        spriteBatch.Draw(_game.Pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(36, 41, 52));
-        spriteBatch.End();
-
-        spriteBatch.Begin(
-            samplerState: SamplerState.PointClamp,
-            transformMatrix: _camera.GetTransform(viewport));
-
-        _level.Draw(spriteBatch, _game.Pixel, _debugDraw, _simulation.ElapsedTime, isEditorMode: false);
-        foreach (Rope rope in Ropes)
-        {
-            rope.Draw(spriteBatch, _game.Pixel, _debugDraw);
-        }
-
-        foreach (Player player in Players)
-        {
-            player.Draw(spriteBatch, _game.Pixel, _debugDraw);
-        }
-
-        if (_simulation.LavaActive)
-        {
-            // Drawn after players so anyone who sinks is covered by the molten body.
-            // Clipped to a padded view of the visible world (no need to fill the
-            // entire infinite plane), which keeps it cheap regardless of map size.
-            Rectangle lavaView = _camera.GetVisibleWorldRectangle(viewport, 96);
-            LavaLine.Draw(
-                spriteBatch,
-                _game.Pixel,
-                lavaView,
-                _simulation.LavaSurfaceY,
-                (float)gameTime.TotalGameTime.TotalSeconds,
-                drawParticles: true);
-        }
-
-        spriteBatch.End();
+        GameplayWorldRenderer.Draw(
+            spriteBatch,
+            _game.Pixel,
+            viewport,
+            _camera,
+            _level,
+            Ropes,
+            Players,
+            _simulation.LavaActive,
+            _simulation.LavaSurfaceY,
+            _simulation.ElapsedTime,
+            gameTime,
+            _debugDraw,
+            _ghostPlayer);
 
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         DrawTimer(spriteBatch, _game.Pixel, viewport);
@@ -286,90 +349,28 @@ public sealed class GameScene : IScene
         DrawCenteredText(spriteBatch, pixel, "Returning to Party...", viewport.Width / 2, viewport.Height / 2 + 20, 2, new Color(200, 210, 225));
     }
 
+    private void OnSimulationFixedTick()
+    {
+        _replayRecorder.RecordFrame(_simulation, _camera);
+    }
+
     private Vector2 GetPlayersCenter()
     {
-        int localCount = 0;
-        Vector2 total = Vector2.Zero;
-        foreach (Player player in Players)
-        {
-            if (!player.IsLocal)
-            {
-                continue;
-            }
-
-            localCount++;
-            total += player.Position + (player.Size * 0.5f);
-        }
-
-        if (localCount == 0)
-        {
-            return _level.PlayerStart;
-        }
-
-        return total / localCount;
+        return GameplayCameraHelper.GetPlayersCenter(Players, _level.PlayerStart);
     }
 
     private float GetTargetCameraZoom(Viewport viewport)
     {
-        int localCount = 0;
-        foreach (Player player in Players)
-        {
-            if (player.IsLocal)
-            {
-                localCount++;
-            }
-        }
-
-        if (localCount <= 1 || viewport.Width <= 0 || viewport.Height <= 0)
-        {
-            return 1f;
-        }
-
-        float minX = float.MaxValue;
-        float minY = float.MaxValue;
-        float maxX = float.MinValue;
-        float maxY = float.MinValue;
-
-        foreach (Player player in Players)
-        {
-            if (!player.IsLocal)
-            {
-                continue;
-            }
-
-            Vector2 center = player.Position + (player.Size * 0.5f);
-            minX = MathF.Min(minX, center.X);
-            minY = MathF.Min(minY, center.Y);
-            maxX = MathF.Max(maxX, center.X);
-            maxY = MathF.Max(maxY, center.Y);
-        }
-
-        foreach (Rope rope in Ropes)
-        {
-            foreach (RopeNode node in rope.Nodes)
-            {
-                minX = MathF.Min(minX, node.Position.X);
-                minY = MathF.Min(minY, node.Position.Y);
-                maxX = MathF.Max(maxX, node.Position.X);
-                maxY = MathF.Max(maxY, node.Position.Y);
-            }
-        }
-
-        const float cameraPadding = 360f;
-        float groupWidth = MathF.Max(1f, maxX - minX + cameraPadding);
-        float groupHeight = MathF.Max(1f, maxY - minY + cameraPadding);
-        float zoomX = viewport.Width / groupWidth;
-        float zoomY = viewport.Height / groupHeight;
-
-        return MathHelper.Clamp(MathF.Min(zoomX, zoomY), 0.55f, 1f);
+        return GameplayCameraHelper.GetTargetCameraZoom(Players, Ropes, viewport);
     }
 
     private void UpdateCamera(GameTime gameTime)
     {
-        float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
-        float smoothing = 1f - MathF.Exp(-6f * dt);
-        _camera.Position = Vector2.Lerp(_camera.Position, GetPlayersCenter(), smoothing);
-        _camera.SetZoom(MathHelper.Lerp(_camera.Zoom, GetTargetCameraZoom(_game.Viewport), smoothing));
+        GameplayCameraHelper.UpdateSmoothFollow(
+            _camera,
+            gameTime,
+            GetPlayersCenter(),
+            GetTargetCameraZoom(_game.Viewport));
     }
 
     private void BeginCompletionUi()
@@ -469,7 +470,17 @@ public sealed class GameScene : IScene
         _completionUiActive = false;
         _completionUiElapsed = 0f;
         _game.Input.GameplayInputBlocked = false;
+        ResetGameplaySession();
+    }
+
+    private void ResetGameplaySession()
+    {
         _simulation.RestartLevel();
+        _camera.Position = GetPlayersCenter();
+        _camera.SetZoom(GetTargetCameraZoom(_game.Viewport));
+        _ghostPlayer?.Reset();
+        _replayRecorder.ResetSession();
+        _savedNewRecordReplay = false;
     }
 
     private void ReturnToLevelSelect()
@@ -736,12 +747,12 @@ public sealed class GameScene : IScene
         LayoutDeathUi();
         _deathOptionFocusables.Clear();
         _deathFocus.Clear();
+
         _deathOptionFocusables.Add(new FocusableGridCell(_deathRespawnStartBounds, () => true));
-        var checkpointOption = new FocusableGridCell(_deathCheckpointBounds, () => _simulation.HasCheckpoint)
+        _deathOptionFocusables.Add(new FocusableGridCell(_deathCheckpointBounds, () => _simulation.HasCheckpoint)
         {
             IsEnabled = _simulation.HasCheckpoint
-        };
-        _deathOptionFocusables.Add(checkpointOption);
+        });
         _deathOptionFocusables.Add(new FocusableGridCell(_deathQuitBounds, () => true));
 
         var optionIndices = new List<int>();
@@ -784,40 +795,14 @@ public sealed class GameScene : IScene
 
             if (_deathOptionFocusables[i].WasActivated)
             {
-                switch (i)
-                {
-                    case 0:
-                        _simulation.RespawnFromStart();
-                        break;
-                    case 1 when _simulation.HasCheckpoint:
-                        _simulation.RespawnFromCheckpoint();
-                        break;
-                    case 2:
-                        _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
-                        break;
-                }
-
+                HandleDeathMenuChoice(i);
                 return;
             }
 
-            bool confirmed = _deathFocus.Focused == _deathOptionFocusables[i]
-                && ((input.Navigation.IsKeyboardActive && input.KeyboardMenuConfirmPressed)
-                    || (input.Navigation.IsGamepadActive && input.GamepadMenuConfirmPressed));
+            bool confirmed = _deathFocus.Focused == _deathOptionFocusables[i] && input.MenuConfirmPressed;
             if (confirmed)
             {
-                switch (i)
-                {
-                    case 0:
-                        _simulation.RespawnFromStart();
-                        break;
-                    case 1 when _simulation.HasCheckpoint:
-                        _simulation.RespawnFromCheckpoint();
-                        break;
-                    case 2:
-                        _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
-                        break;
-                }
-
+                HandleDeathMenuChoice(i);
                 return;
             }
         }
@@ -825,6 +810,22 @@ public sealed class GameScene : IScene
         if (input.ExitPressed || input.MenuCancelPressed)
         {
             _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+        }
+    }
+
+    private void HandleDeathMenuChoice(int optionIndex)
+    {
+        switch (optionIndex)
+        {
+            case 0:
+                _simulation.RespawnFromStart();
+                break;
+            case 1 when _simulation.HasCheckpoint:
+                _simulation.RespawnFromCheckpoint();
+                break;
+            default:
+                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+                break;
         }
     }
 
@@ -856,11 +857,10 @@ public sealed class GameScene : IScene
         DrawCenteredText(spriteBatch, pixel, title, viewport.Width / 2, titleY, titleScale, new Color(255, 96, 40));
 
         bool hasCheckpoint = _simulation.HasCheckpoint;
-        bool showFocus = _deathOptionFocusables.Count >= 3;
         DrawDeathButton(spriteBatch, pixel, _deathRespawnStartBounds, "RESPAWN START", enabled: true);
         DrawDeathButton(spriteBatch, pixel, _deathCheckpointBounds, "RESPAWN CHECKPOINT", enabled: hasCheckpoint);
         DrawDeathButton(spriteBatch, pixel, _deathQuitBounds, "QUIT", enabled: true);
-        if (showFocus)
+        if (_deathOptionFocusables.Count > 0)
         {
             _deathFocus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
         }

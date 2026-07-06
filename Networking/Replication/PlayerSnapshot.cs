@@ -11,4 +11,5 @@ public readonly record struct PlayerSnapshot(
     GameColor Color,
     PlayerState State,
     bool IsGrounded,
-    bool IsFrozen);
+    bool IsFrozen,
+    string CosmeticSkinId = "");

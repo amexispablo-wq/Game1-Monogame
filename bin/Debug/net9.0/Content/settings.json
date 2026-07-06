@@ -23,5 +23,15 @@
     "MoveLeft": "StickLeft",
     "MoveRight": "StickLeft"
   },
-  "ColorMode": "Normal"
+  "ColorMode": "Normal",
+  "SoundEffects": {
+    "Jump": true,
+    "PullRope": true,
+    "Red": true,
+    "Blue": true,
+    "Green": true,
+    "Checkpoint": true,
+    "MenuNavigation": true,
+    "Lava": true
+  }
 }
