@@ -39,7 +39,7 @@ public static class LevelPreviewManager
 
     public static Texture2D GenerateAndSavePreview(GraphicsDevice graphicsDevice, Texture2D pixel, Level level, string levelId)
     {
-        string previewsDir = GetPreviewDirectory();
+        string previewsDir = GetPreviewDirectory(levelId);
         Directory.CreateDirectory(previewsDir);
         string previewPath = GetPreviewPath(levelId, level.Name);
 
@@ -111,15 +111,16 @@ public static class LevelPreviewManager
         }
     }
 
-    private static string GetPreviewDirectory()
+    private static string GetPreviewDirectory(string levelId)
     {
-        return Path.Combine(AppContext.BaseDirectory, "Content", PreviewDirectoryName);
+        LevelSource source = LevelIdentity.GetSource(levelId);
+        return LevelContentPaths.GetPreviewsRoot(source);
     }
 
     private static string GetPreviewPath(string levelId, string levelName)
     {
         string fileName = GetPreviewFileName(levelId, levelName);
-        return Path.Combine(GetPreviewDirectory(), fileName);
+        return Path.Combine(GetPreviewDirectory(levelId), fileName);
     }
 
     private static string GetPreviewFileName(string levelId, string levelName)

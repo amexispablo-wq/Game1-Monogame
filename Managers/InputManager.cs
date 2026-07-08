@@ -73,6 +73,8 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool GamepadMenuMoveDownPressed { get; private set; }
     public bool GamepadMenuMoveLeftPressed { get; private set; }
     public bool GamepadMenuMoveRightPressed { get; private set; }
+    public bool GamepadMenuTabLeftPressed { get; private set; }
+    public bool GamepadMenuTabRightPressed { get; private set; }
     public InputNavigationService Navigation { get; } = new();
     private Point? _uiPointerOverride;
     private float _pointerScaleX = 1f;
@@ -381,12 +383,16 @@ public sealed class InputManager : ILocalPlayerInputSource
         ReplayForceSavePressed = IsNewKeyPress(Keys.F10);
         ReplayBackgroundTogglePressed = IsNewKeyPress(Keys.F11);
 
-        if (IsNewKeyPress(Keys.F8))
+        if (IsNewKeyPress(Keys.F8) && DeveloperSettings.DeveloperMode)
         {
             NavigationDebug.Enabled = !NavigationDebug.Enabled;
         }
+        else if (!DeveloperSettings.DeveloperMode)
+        {
+            NavigationDebug.Enabled = false;
+        }
 
-        NavigationStepPressed = IsNewKeyPress(Keys.F9);
+        NavigationStepPressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F9);
         ControlHeld = _currentKeyboard.IsKeyDown(Keys.LeftControl) || _currentKeyboard.IsKeyDown(Keys.RightControl);
         ShiftHeld = _currentKeyboard.IsKeyDown(Keys.LeftShift) || _currentKeyboard.IsKeyDown(Keys.RightShift);
 
@@ -443,6 +449,8 @@ public sealed class InputManager : ILocalPlayerInputSource
         GamepadMenuMoveDownPressed = false;
         GamepadMenuMoveLeftPressed = false;
         GamepadMenuMoveRightPressed = false;
+        GamepadMenuTabLeftPressed = false;
+        GamepadMenuTabRightPressed = false;
 
         MenuMoveUpPressed = KeyboardMenuMoveUpPressed;
         MenuMoveDownPressed = KeyboardMenuMoveDownPressed;
@@ -537,6 +545,20 @@ public sealed class InputManager : ILocalPlayerInputSource
             {
                 GamepadMenuMoveRightPressed = true;
                 MenuMoveRightPressed = true;
+                GamepadMenuActivityThisFrame = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (IsGamepadPressed(current, previous, Buttons.LeftShoulder))
+            {
+                GamepadMenuTabLeftPressed = true;
+                GamepadMenuActivityThisFrame = true;
+                GamepadActivityThisFrame = true;
+            }
+
+            if (IsGamepadPressed(current, previous, Buttons.RightShoulder))
+            {
+                GamepadMenuTabRightPressed = true;
                 GamepadMenuActivityThisFrame = true;
                 GamepadActivityThisFrame = true;
             }

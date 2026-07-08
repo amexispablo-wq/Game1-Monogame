@@ -93,3 +93,6 @@ C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\Levels\level_1.json
 C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\Levels\level_2.json
 C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Steam\controller_gamepad.vdf
 C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Steam\steam_input_manifest.vdf
+c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\OfficialLevels\Level01.json
+c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\OfficialLevels\Level02.json
+c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\developer_settings.json

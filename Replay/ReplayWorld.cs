@@ -42,7 +42,7 @@ public sealed class ReplayWorld
     }
 
     ReplayHeader header = data.Header;
-    Level level = LevelManager.LoadLevel(header.LevelId);
+    Level level = LevelLibrary.LoadLevel(header.LevelId);
     GameSession session = GameSession.CreateLocalTest(header.LevelId, header.RopeMode);
     session.LavaRiseEnabled = header.LavaRiseEnabled;
 

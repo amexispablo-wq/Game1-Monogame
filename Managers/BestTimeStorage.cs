@@ -25,7 +25,8 @@ public static class BestTimeStorage
 
     public static bool SaveIfRecord(string levelId, float elapsedSeconds)
     {
-        Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll();
+        LevelSource source = LevelIdentity.GetSource(levelId);
+        Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll(source);
         float roundedTime = RoundToCentiseconds(elapsedSeconds);
 
         if (!bestTimes.TryGetValue(levelId, out LevelBestTimesRecord? record))
@@ -40,14 +41,15 @@ public static class BestTimeStorage
         }
 
         record.Official = roundedTime;
-        SaveAll(bestTimes);
+        SaveAll(source, bestTimes);
         return true;
     }
 
     public static bool TryGetBestTime(string levelId, out float bestTime)
     {
         bestTime = 0f;
-        if (!LoadAll().TryGetValue(levelId, out LevelBestTimesRecord? record) || record.Official is not float official)
+        LevelSource source = LevelIdentity.GetSource(levelId);
+        if (!LoadAll(source).TryGetValue(levelId, out LevelBestTimesRecord? record) || record.Official is not float official)
         {
             return false;
         }
@@ -59,7 +61,8 @@ public static class BestTimeStorage
     public static bool TryGetUnofficialBestTime(string levelId, out float unofficialBestTime)
     {
         unofficialBestTime = 0f;
-        if (!LoadAll().TryGetValue(levelId, out LevelBestTimesRecord? record) || record.Unofficial is not float unofficial)
+        LevelSource source = LevelIdentity.GetSource(levelId);
+        if (!LoadAll(source).TryGetValue(levelId, out LevelBestTimesRecord? record) || record.Unofficial is not float unofficial)
         {
             return false;
         }
@@ -70,7 +73,8 @@ public static class BestTimeStorage
 
     public static void InvalidateOfficialOnLevelEdit(string levelId)
     {
-        Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll();
+        LevelSource source = LevelIdentity.GetSource(levelId);
+        Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll(source);
         if (!bestTimes.TryGetValue(levelId, out LevelBestTimesRecord? record) || record.Official is not float official)
         {
             return;
@@ -86,16 +90,66 @@ public static class BestTimeStorage
         }
 
         record.Official = null;
-        SaveAll(bestTimes);
+        SaveAll(source, bestTimes);
         ReplayInvalidation.OnLevelEdited(levelId);
     }
 
     public static void DeleteLevelRecord(string levelId)
     {
-        Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll();
+        LevelSource source = LevelIdentity.GetSource(levelId);
+        Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll(source);
         if (bestTimes.Remove(levelId))
         {
-            SaveAll(bestTimes);
+            SaveAll(source, bestTimes);
+        }
+    }
+
+    internal static void ImportLegacyBestTimesFile(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            Dictionary<string, LevelBestTimesRecord>? records = DeserializeRecords(json);
+            if (records is null || records.Count == 0)
+            {
+                return;
+            }
+
+            var grouped = new Dictionary<LevelSource, Dictionary<string, LevelBestTimesRecord>>();
+            foreach ((string legacyLevelId, LevelBestTimesRecord record) in records)
+            {
+                string normalizedId = LevelIdentity.NormalizeLegacyId(legacyLevelId);
+                LevelSource source = LevelIdentity.GetSource(normalizedId);
+                if (!grouped.TryGetValue(source, out Dictionary<string, LevelBestTimesRecord>? bucket))
+                {
+                    bucket = new Dictionary<string, LevelBestTimesRecord>(StringComparer.OrdinalIgnoreCase);
+                    grouped[source] = bucket;
+                }
+
+                bucket[normalizedId] = record;
+            }
+
+            foreach ((LevelSource source, Dictionary<string, LevelBestTimesRecord> bucket) in grouped)
+            {
+                Dictionary<string, LevelBestTimesRecord> existing = LoadAll(source);
+                foreach ((string levelId, LevelBestTimesRecord record) in bucket)
+                {
+                    existing[levelId] = record;
+                }
+
+                SaveAll(source, existing);
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        catch (IOException)
+        {
         }
     }
 
@@ -110,9 +164,9 @@ public static class BestTimeStorage
         return $"{ts.Minutes:00}:{ts.Seconds:00}:{(int)(ts.Milliseconds / 10):00}";
     }
 
-    private static Dictionary<string, LevelBestTimesRecord> LoadAll()
+    private static Dictionary<string, LevelBestTimesRecord> LoadAll(LevelSource source)
     {
-        foreach (string path in GetReadablePaths().Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string path in GetReadablePaths(source).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!File.Exists(path))
             {
@@ -174,23 +228,27 @@ public static class BestTimeStorage
         return records;
     }
 
-    private static void SaveAll(Dictionary<string, LevelBestTimesRecord> bestTimes)
+    private static void SaveAll(LevelSource source, Dictionary<string, LevelBestTimesRecord> bestTimes)
     {
-        string path = GetWritablePath();
+        string path = GetWritablePath(source);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
         string json = JsonSerializer.Serialize(bestTimes, JsonOptions);
         File.WriteAllText(path, json);
     }
 
-    private static string GetWritablePath()
+    private static string GetWritablePath(LevelSource source)
     {
-        return Path.Combine(AppContext.BaseDirectory, BestTimesFileName);
+        return LevelContentPaths.GetBestTimesPath(source);
     }
 
-    private static IEnumerable<string> GetReadablePaths()
+    private static IEnumerable<string> GetReadablePaths(LevelSource source)
     {
-        yield return Path.Combine(AppContext.BaseDirectory, BestTimesFileName);
-        yield return Path.Combine(Environment.CurrentDirectory, BestTimesFileName);
+        yield return LevelContentPaths.GetBestTimesPath(source);
+        if (source == LevelSource.Local)
+        {
+            yield return LevelContentPaths.GetLegacyBestTimesPath();
+            yield return Path.Combine(Environment.CurrentDirectory, BestTimesFileName);
+        }
     }
 }

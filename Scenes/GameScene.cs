@@ -67,7 +67,7 @@ public sealed class GameScene : IScene
                 _game.Steam.Username)
             : GameSession.CreateLocalTest(levelId, ropeGameplayMode);
         _session.LavaRiseEnabled = lavaRiseEnabled;
-        _level = LevelManager.LoadLevel(levelId);
+        _level = LevelLibrary.LoadLevel(levelId);
         _playerManager = new PlayerManager(_session, _level);
         _game.Party.ApplyPreferredInputForPrimaryLocalMember(_game.Input);
         _game.Party.LockAssignments();

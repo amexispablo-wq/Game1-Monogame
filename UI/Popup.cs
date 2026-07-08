@@ -55,6 +55,20 @@ public sealed class Popup
         _fadeInTime = 0;
     }
 
+    public Popup(string title, string message, string confirmLabel, string cancelLabel)
+    {
+        _type = PopupType.Confirmation;
+        _title = title;
+        _message = message;
+        _textInput = null;
+        _confirmButton = new Button(confirmLabel);
+        _cancelButton = new Button(cancelLabel);
+        _confirmFocus = new FocusableButton(_confirmButton);
+        _cancelFocus = new FocusableButton(_cancelButton);
+        _result = PopupResult.Pending;
+        _fadeInTime = 0;
+    }
+
     public Popup(string title, string message, string initialText)
     {
         _type = PopupType.TextInput;
@@ -143,7 +157,10 @@ public sealed class Popup
         LayoutButtons(popupX, popupY, popupWidth, popupHeight, _type);
         _confirmButton.Draw(spriteBatch, pixel);
         _cancelButton.Draw(spriteBatch, pixel);
-        _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _lastInput!);
+        if (_lastInput is not null)
+        {
+            _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _lastInput);
+        }
     }
 
     private void LayoutPopup(int viewportWidth, int viewportHeight)

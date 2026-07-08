@@ -10,7 +10,7 @@ public static class LevelContentHash
 {
   public static string ComputeForLevel(string levelId)
   {
-    LevelMetadata? metadata = LevelManager.GetLevel(levelId);
+    LevelMetadata? metadata = LevelLibrary.GetLevel(levelId);
     if (metadata is null || !File.Exists(metadata.FilePath))
     {
       return string.Empty;

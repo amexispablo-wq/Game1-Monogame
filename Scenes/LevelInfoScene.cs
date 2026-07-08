@@ -50,7 +50,7 @@ public sealed class LevelInfoScene : IScene
     {
         _game = game;
         _levelId = levelId;
-        _level = LevelManager.LoadLevel(levelId);
+        _level = LevelLibrary.LoadLevel(levelId);
         _nameInput = new TextInputComponent(_level.Name);
 
         _musicDropdown.Label = string.Empty;
@@ -373,7 +373,15 @@ public sealed class LevelInfoScene : IScene
 
     private void SaveLevel()
     {
-        LevelManager.SaveLevel(_level, _levelId);
+        if (!LevelLibrary.CanSaveLevel(_levelId))
+        {
+            return;
+        }
+
+        if (!LevelLibrary.SaveLevel(_level, _levelId))
+        {
+            return;
+        }
         BestTimeStorage.InvalidateOfficialOnLevelEdit(_levelId);
         LevelPreviewManager.GenerateAndSavePreview(_game.GraphicsDevice, _game.Pixel, _level, _levelId);
     }

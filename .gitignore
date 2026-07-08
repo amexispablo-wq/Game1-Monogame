@@ -17,3 +17,4 @@ Thumbs.db
 
 # User settings at repo root (runtime copy lives in bin/Content)
 Content/settings.json
+developer_settings.json

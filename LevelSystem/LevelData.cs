@@ -1,4 +1,5 @@
 #nullable enable
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
@@ -53,6 +54,30 @@ public sealed class LevelData
 
     [JsonPropertyName("lavaLine")]
     public LavaLineData? LavaLine { get; set; }
+
+    [JsonPropertyName("author")]
+    public string Author { get; set; } = string.Empty;
+
+    [JsonPropertyName("workshopId")]
+    public string WorkshopId { get; set; } = string.Empty;
+
+    [JsonPropertyName("createdDate")]
+    public DateTime? CreatedDate { get; set; }
+
+    [JsonPropertyName("modifiedDate")]
+    public DateTime? ModifiedDate { get; set; }
+
+    [JsonPropertyName("version")]
+    public int Version { get; set; } = 1;
+
+    [JsonPropertyName("ownerSteamId")]
+    public string OwnerSteamId { get; set; } = string.Empty;
+
+    [JsonPropertyName("downloadedVersion")]
+    public string DownloadedVersion { get; set; } = string.Empty;
+
+    [JsonPropertyName("lastSync")]
+    public DateTime? LastSync { get; set; }
 }
 
 public sealed class LavaLineData

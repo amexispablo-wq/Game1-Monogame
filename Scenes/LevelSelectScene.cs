@@ -16,6 +16,15 @@ public enum LevelSelectMode
 
 public sealed class LevelSelectScene : IScene
 {
+    private enum LevelSelectPopupKind
+    {
+        Delete,
+        CreateNew,
+        CreateOfficial,
+        OfficialReadOnly,
+        Info
+    }
+
     private static RopeGameplayMode s_selectedRopeMode = RopeGameplayMode.ColoredPhysics;
     private static bool s_lavaRiseEnabled;
     private static bool s_ghostBestRunEnabled;
@@ -26,6 +35,11 @@ public sealed class LevelSelectScene : IScene
     private GridLayout _gridLayout = null!;
     private int? _selectedIndex;
     private Popup? _popup;
+    private LevelSelectPopupKind _popupKind;
+    private LevelSource _activeTab;
+    private bool _importOfficialPickerOpen;
+    private double _importPickerOpenedAt = -1;
+    private string? _pendingOfficialLevelId;
     private bool _subscribedToLevelStart;
 
     // UI
@@ -37,6 +51,7 @@ public sealed class LevelSelectScene : IScene
     private FocusableButton? _secondaryFocus;
     private FocusableButton? _tertiaryFocus;
     private FocusableButton? _quaternaryFocus;
+    private FocusableButton? _quinaryFocus;
     private FocusableCycleSelector<RopeGameplayMode>? _ropeModeFocus;
     private FocusableCheckbox? _lavaRiseFocus;
     private FocusableCheckbox? _ghostBestRunFocus;
@@ -44,6 +59,16 @@ public sealed class LevelSelectScene : IScene
     private Button? _secondaryButton;
     private Button? _tertiaryButton;
     private Button? _quaternaryButton;
+    private Button? _quinaryButton;
+    private Button? _importOfficialButton;
+    private Button? _createOfficialButton;
+    private Button? _convertToOfficialButton;
+    private FocusableButton? _importOfficialFocus;
+    private FocusableButton? _createOfficialFocus;
+    private FocusableButton? _convertToOfficialFocus;
+    private readonly List<Rectangle> _tabBounds = new();
+    private Rectangle _leftShoulderHintBounds;
+    private Rectangle _rightShoulderHintBounds;
     private CycleSelector<RopeGameplayMode>? _ropeModeSelector;
     private Checkbox? _lavaRiseCheckbox;
     private Checkbox? _ghostBestRunCheckbox;
@@ -57,6 +82,7 @@ public sealed class LevelSelectScene : IScene
     private Texture2D? _selectedLevelPreview;
     private string? _selectedLevelId;
     private string _detailsLevelName = "";
+    private string _detailsAuthorText = "";
     private string _detailsPlayersText = "";
     private string _detailsRopeText = "";
     private string _detailsFeaturesText = "";
@@ -75,6 +101,8 @@ public sealed class LevelSelectScene : IScene
     {
         _game = game;
         _mode = mode;
+        DeveloperSettings.Reload();
+        _activeTab = mode == LevelSelectMode.PlayMode ? LevelSource.Official : LevelSource.Local;
         _backFocus = new FocusableButton(_backButton);
         _focus.ResetFocus();
         RefreshLevelList();
@@ -86,22 +114,102 @@ public sealed class LevelSelectScene : IScene
         }
     }
 
-    private void RefreshLevelList()
+    private void RefreshLevelList(bool preserveSelection = false)
     {
-        _levels = LevelManager.GetAllLevels();
-        if (_levels.Count == 0)
+        int? previousIndex = preserveSelection ? _selectedIndex : null;
+        string? previousLevelId = preserveSelection ? _selectedLevelId : null;
+
+        _levels = GetLevelsForActiveTab();
+        if (_mode == LevelSelectMode.EditMode && _activeTab == LevelSource.Local && _levels.Count == 0)
         {
-            // Create first level if none exist
-            LevelManager.CreateNewLevel("Level 1");
-            _levels = LevelManager.GetAllLevels();
+            LevelLibrary.CreateNewLevel("Level 1");
+            _levels = LevelLibrary.GetLocalLevels();
         }
 
-        _selectedIndex = null;
-        _selectedLevel = null;
-        _selectedLevelPreview = null;
-        _selectedLevelId = null;
+        if (previousLevelId is not null)
+        {
+            int restored = -1;
+            for (int i = 0; i < _levels.Count; i++)
+            {
+                if (_levels[i].Id == previousLevelId)
+                {
+                    restored = i;
+                    break;
+                }
+            }
 
-        _gridLayout = GridLayout.Create(_levels.Count, _game.Viewport.Width, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap);
+            _selectedIndex = restored >= 0 ? restored : null;
+        }
+        else
+        {
+            _selectedIndex = previousIndex is int index && index >= 0 && index < _levels.Count ? index : null;
+        }
+
+        if (_selectedIndex is null)
+        {
+            _selectedLevel = null;
+            _selectedLevelPreview = null;
+            _selectedLevelId = null;
+        }
+
+        _gridLayout = GridLayout.Create(_levels.Count, _game.Viewport.Width, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap, minStartY: 118);
+    }
+
+    private IReadOnlyList<LevelMetadata> GetLevelsForActiveTab()
+    {
+        if (_importOfficialPickerOpen)
+        {
+            return LevelLibrary.GetOfficialLevels();
+        }
+
+        if (_mode == LevelSelectMode.PlayMode)
+        {
+            return _activeTab switch
+            {
+                LevelSource.Official => LevelLibrary.GetOfficialLevels(),
+                LevelSource.Workshop => LevelLibrary.GetWorkshopLevels(),
+                _ => LevelLibrary.GetLocalLevels()
+            };
+        }
+
+        if (_activeTab == LevelSource.Workshop)
+        {
+            return LevelLibrary.GetWorkshopLevels();
+        }
+
+        if (DeveloperSettings.DeveloperMode && _activeTab == LevelSource.Official)
+        {
+            return LevelLibrary.GetOfficialLevels();
+        }
+
+        return LevelLibrary.GetLocalLevels();
+    }
+
+    private IReadOnlyList<LevelSource> GetVisibleTabs()
+    {
+        if (_mode == LevelSelectMode.PlayMode)
+        {
+            return new[] { LevelSource.Official, LevelSource.Workshop, LevelSource.Local };
+        }
+
+        if (DeveloperSettings.DeveloperMode)
+        {
+            return new[] { LevelSource.Local, LevelSource.Workshop, LevelSource.Official };
+        }
+
+        return new[] { LevelSource.Local, LevelSource.Workshop };
+    }
+
+    private void SwitchTab(LevelSource tab)
+    {
+        if (_activeTab == tab)
+        {
+            return;
+        }
+
+        _activeTab = tab;
+        _importOfficialPickerOpen = false;
+        RefreshLevelList();
     }
 
     private void InitializeButtons()
@@ -120,12 +228,20 @@ public sealed class LevelSelectScene : IScene
         };
 
         _tertiaryButton = _mode == LevelSelectMode.EditMode ? new Button("Delete") : null;
-        _quaternaryButton = _mode == LevelSelectMode.EditMode ? new Button("Create New") : null;
+        _quaternaryButton = _mode == LevelSelectMode.EditMode ? new Button("Create Copy") : null;
+        _quinaryButton = _mode == LevelSelectMode.EditMode ? new Button("Create New") : null;
+        _importOfficialButton = _mode == LevelSelectMode.EditMode ? new Button("Import Official") : null;
+        _createOfficialButton = _mode == LevelSelectMode.EditMode ? new Button("Create Official") : null;
+        _convertToOfficialButton = _mode == LevelSelectMode.EditMode ? new Button("Convert To Official") : null;
 
         _primaryFocus = _primaryButton is not null ? new FocusableButton(_primaryButton) : null;
         _secondaryFocus = _secondaryButton is not null ? new FocusableButton(_secondaryButton) : null;
         _tertiaryFocus = _tertiaryButton is not null ? new FocusableButton(_tertiaryButton) : null;
         _quaternaryFocus = _quaternaryButton is not null ? new FocusableButton(_quaternaryButton) : null;
+        _quinaryFocus = _quinaryButton is not null ? new FocusableButton(_quinaryButton) : null;
+        _importOfficialFocus = _importOfficialButton is not null ? new FocusableButton(_importOfficialButton) : null;
+        _createOfficialFocus = _createOfficialButton is not null ? new FocusableButton(_createOfficialButton) : null;
+        _convertToOfficialFocus = _convertToOfficialButton is not null ? new FocusableButton(_convertToOfficialButton) : null;
 
         if (_mode == LevelSelectMode.PlayMode)
         {
@@ -178,10 +294,19 @@ public sealed class LevelSelectScene : IScene
             else if (_popup.Result == PopupResult.Cancelled)
             {
                 _popup = null;
+                _pendingOfficialLevelId = null;
             }
 
             return;
         }
+
+        if (_importOfficialPickerOpen)
+        {
+            HandleImportOfficialPickerInput(gameTime);
+            return;
+        }
+
+        HandleTabInput();
 
         UpdateFocus(gameTime);
 
@@ -213,27 +338,51 @@ public sealed class LevelSelectScene : IScene
             return;
         }
 
-        if (_primaryFocus?.WasActivated == true && _selectedIndex.HasValue && CanStartPlay())
+        if (_primaryFocus?.WasActivated == true && _selectedIndex.HasValue && CanActivatePrimary())
         {
             HandlePrimaryAction();
             return;
         }
 
-        if (_secondaryFocus?.WasActivated == true && _selectedIndex.HasValue)
+        if (_secondaryFocus?.WasActivated == true && _selectedIndex.HasValue && CanOpenLevelInfo())
         {
             HandleSecondaryAction();
             return;
         }
 
-        if (_tertiaryFocus?.WasActivated == true && _selectedIndex.HasValue)
+        if (_tertiaryFocus?.WasActivated == true && _selectedIndex.HasValue && CanDeleteSelected())
         {
             HandleDeleteLevel();
             return;
         }
 
-        if (_quaternaryFocus?.WasActivated == true)
+        if (_quaternaryFocus?.WasActivated == true && _selectedIndex.HasValue)
+        {
+            HandleCreateCopy();
+            return;
+        }
+
+        if (_quinaryFocus?.WasActivated == true)
         {
             HandleCreateNew();
+            return;
+        }
+
+        if (_importOfficialFocus?.WasActivated == true)
+        {
+            OpenImportOfficialPicker(gameTime);
+            return;
+        }
+
+        if (_createOfficialFocus?.WasActivated == true && DeveloperSettings.DeveloperMode)
+        {
+            HandleCreateOfficialLevel();
+            return;
+        }
+
+        if (_convertToOfficialFocus?.WasActivated == true && _selectedIndex.HasValue && DeveloperSettings.DeveloperMode)
+        {
+            HandleConvertToOfficial();
             return;
         }
 
@@ -305,7 +454,15 @@ public sealed class LevelSelectScene : IScene
         int? primaryIndex = _primaryFocus is not null ? _focus.Add(_primaryFocus, _mode == LevelSelectMode.PlayMode ? "Play" : "EditLevel") : null;
         int? secondaryIndex = _secondaryFocus is not null ? _focus.Add(_secondaryFocus, "LevelInfo") : null;
         int? tertiaryIndex = _tertiaryFocus is not null ? _focus.Add(_tertiaryFocus, "DeleteLevel") : null;
-        int? quaternaryIndex = _quaternaryFocus is not null ? _focus.Add(_quaternaryFocus, "CreateNew") : null;
+        int? quaternaryIndex = _quaternaryFocus is not null ? _focus.Add(_quaternaryFocus, "CreateCopy") : null;
+        int? quinaryIndex = _quinaryFocus is not null ? _focus.Add(_quinaryFocus, "CreateNew") : null;
+        int? importIndex = _importOfficialFocus is not null ? _focus.Add(_importOfficialFocus, "ImportOfficial") : null;
+        int? createOfficialIndex = _createOfficialFocus is not null && DeveloperSettings.DeveloperMode
+            ? _focus.Add(_createOfficialFocus, "CreateOfficial")
+            : null;
+        int? convertOfficialIndex = _convertToOfficialFocus is not null && DeveloperSettings.DeveloperMode
+            ? _focus.Add(_convertToOfficialFocus, "ConvertToOfficial")
+            : null;
 
         NavigationGraph nav = _focus.Navigation;
         if (gridStart >= 0 && _gridFocusables.Count > 0)
@@ -334,6 +491,32 @@ public sealed class LevelSelectScene : IScene
                 {
                     nav.LinkHorizontal(ter, quaternary);
                     nav.Link(quaternary, NavigationDirection.Up, gridStart);
+                }
+
+                if (quinaryIndex is int quinary && quaternaryIndex is int quar)
+                {
+                    nav.LinkHorizontal(quar, quinary);
+                    nav.Link(quinary, NavigationDirection.Up, gridStart);
+                }
+
+                if (importIndex is int import && quinaryIndex is int quin)
+                {
+                    nav.Link(quin, NavigationDirection.Down, import);
+                    nav.Link(import, NavigationDirection.Up, quin);
+                }
+
+                if (createOfficialIndex is int createOfficial && importIndex is int importFromCreate)
+                {
+                    nav.LinkHorizontal(importFromCreate, createOfficial);
+                }
+
+                if (convertOfficialIndex is int convertOfficial && createOfficialIndex is int createFromConvert)
+                {
+                    nav.LinkHorizontal(createFromConvert, convertOfficial);
+                }
+                else if (convertOfficialIndex is int convertOnly && importIndex is int importFromConvert)
+                {
+                    nav.LinkHorizontal(importFromConvert, convertOnly);
                 }
             }
             else if (_mode == LevelSelectMode.PlayMode)
@@ -428,19 +611,35 @@ public sealed class LevelSelectScene : IScene
         Rectangle titleBounds = new(20, 20, viewport.Width - 40, 50);
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, title, titleBounds, 3, Color.White);
 
+        DrawSourceTabs(spriteBatch, pixel, viewport, gameTime);
+
         // Draw level grid
         DrawLevelGrid(spriteBatch, pixel);
         DrawRopeModeSelector(spriteBatch, pixel, viewport);
 
-        if (_mode == LevelSelectMode.PlayMode && _selectedLevel != null)
+        if (_selectedLevel != null)
         {
-            DrawLevelDetailsPanel(spriteBatch, pixel, viewport);
+            DrawLevelDetailsPanel(spriteBatch, pixel, viewport, showPlayStats: _mode == LevelSelectMode.PlayMode);
+        }
+
+        if (_importOfficialPickerOpen)
+        {
+            spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(0, 0, 0, 150));
+            Rectangle hintBounds = new(20, 110, viewport.Width - 40, 32);
+            SimpleTextRenderer.DrawCentered(
+                spriteBatch,
+                pixel,
+                "SELECT OFFICIAL LEVEL TO IMPORT  (Esc / B to cancel)",
+                hintBounds,
+                2,
+                new Color(230, 236, 245));
         }
 
         // Draw buttons
+        int bottomBarHeight = GetBottomBarHeight();
         spriteBatch.Draw(
             pixel,
-            new Rectangle(0, viewport.Height - 100, viewport.Width, 100),
+            new Rectangle(0, viewport.Height - bottomBarHeight, viewport.Width, bottomBarHeight),
             ReplayMenuBackground.IsActive(_game) ? new Color(22, 26, 34, 180) : new Color(22, 26, 34));
         if (_mode == LevelSelectMode.PlayMode && _game.SteamLobby.IsInLobby && !_game.Party.IsLeader)
         {
@@ -453,6 +652,13 @@ public sealed class LevelSelectScene : IScene
         _secondaryButton?.Draw(spriteBatch, pixel);
         _tertiaryButton?.Draw(spriteBatch, pixel);
         _quaternaryButton?.Draw(spriteBatch, pixel);
+        _quinaryButton?.Draw(spriteBatch, pixel);
+        _importOfficialButton?.Draw(spriteBatch, pixel);
+        if (DeveloperSettings.DeveloperMode)
+        {
+            _createOfficialButton?.Draw(spriteBatch, pixel);
+            _convertToOfficialButton?.Draw(spriteBatch, pixel);
+        }
         _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
 
         spriteBatch.End();
@@ -485,8 +691,15 @@ public sealed class LevelSelectScene : IScene
             int borderThickness = isSelected ? 4 : 2;
             DrawHelper.DrawBorder(spriteBatch, pixel, cellBounds, borderColor, borderThickness);
 
+            // Draw source badge
+            Rectangle badgeBounds = new(cellBounds.X + 8, cellBounds.Y + 8, 22, 22);
+            Color badgeColor = LevelSourceVisuals.GetBadgeColor(level.Source);
+            spriteBatch.Draw(pixel, badgeBounds, badgeColor);
+            DrawHelper.DrawBorder(spriteBatch, pixel, badgeBounds, Color.White, 1);
+            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, level.SourceIcon, badgeBounds, 1, Color.White);
+
             // Draw level name
-            Rectangle nameRect = new(cellBounds.X + 10, cellBounds.Y + 15, cellBounds.Width - 20, 40);
+            Rectangle nameRect = new(cellBounds.X + 10, cellBounds.Y + 34, cellBounds.Width - 20, 40);
             SimpleTextRenderer.DrawCentered(spriteBatch, pixel, level.Name, nameRect, 2, Color.White);
 
             // Draw best time (PlayMode only)
@@ -567,32 +780,271 @@ public sealed class LevelSelectScene : IScene
         }
         else
         {
-            // Edit Level | Level Info | Delete | Create New (centered)
-            var layout = ButtonRowLayout.Create(
-                new[] { "Edit Level", "Level Info", "Delete", "Create New" },
-                viewport.Width, viewport.Height,
-                buttonHeight, horizontalPadding, 12, buttonGap, bottomMargin);
+            const int secondRowBottomMargin = 22;
+            const int rowGap = 14;
+            int mainRowBottomMargin = secondRowBottomMargin + buttonHeight + rowGap;
 
-            if (layout.ButtonBounds.Length >= 4)
+            var mainRow = ButtonRowLayout.Create(
+                new[] { "Edit Level", "Level Info", "Delete", "Create Copy", "Create New" },
+                viewport.Width, viewport.Height,
+                buttonHeight, horizontalPadding, 12, buttonGap, mainRowBottomMargin);
+
+            if (mainRow.ButtonBounds.Length >= 5)
             {
-                _primaryButton!.Bounds = layout.ButtonBounds[0];
-                _secondaryButton!.Bounds = layout.ButtonBounds[1];
-                _tertiaryButton!.Bounds = layout.ButtonBounds[2];
-                _quaternaryButton!.Bounds = layout.ButtonBounds[3];
+                _primaryButton!.Bounds = mainRow.ButtonBounds[0];
+                _secondaryButton!.Bounds = mainRow.ButtonBounds[1];
+                _tertiaryButton!.Bounds = mainRow.ButtonBounds[2];
+                _quaternaryButton!.Bounds = mainRow.ButtonBounds[3];
+                _quinaryButton!.Bounds = mainRow.ButtonBounds[4];
+            }
+
+            var secondRowLabels = new List<string> { "Import Official" };
+            if (DeveloperSettings.DeveloperMode)
+            {
+                secondRowLabels.Add("Create Official");
+                secondRowLabels.Add("Convert To Official");
+            }
+
+            var secondRow = ButtonRowLayout.Create(
+                secondRowLabels.ToArray(),
+                viewport.Width,
+                viewport.Height,
+                buttonHeight,
+                horizontalPadding,
+                12,
+                buttonGap,
+                secondRowBottomMargin);
+
+            if (secondRow.ButtonBounds.Length >= 1 && _importOfficialButton is not null)
+            {
+                _importOfficialButton.Bounds = secondRow.ButtonBounds[0];
+            }
+
+            if (DeveloperSettings.DeveloperMode)
+            {
+                if (secondRow.ButtonBounds.Length >= 2 && _createOfficialButton is not null)
+                {
+                    _createOfficialButton.Bounds = secondRow.ButtonBounds[1];
+                }
+
+                if (secondRow.ButtonBounds.Length >= 3 && _convertToOfficialButton is not null)
+                {
+                    _convertToOfficialButton.Bounds = secondRow.ButtonBounds[2];
+                }
+            }
+
+            bool canEdit = CanEditSelected();
+            _primaryButton!.FillColor = canEdit ? new Color(52, 61, 80) : new Color(40, 46, 58);
+            _primaryButton.TextColor = canEdit ? Color.White : new Color(167, 178, 198);
+
+            bool canDelete = CanDeleteSelected();
+            if (_tertiaryButton is not null)
+            {
+                _tertiaryButton.FillColor = canDelete ? new Color(52, 61, 80) : new Color(40, 46, 58);
+                _tertiaryButton.TextColor = canDelete ? Color.White : new Color(167, 178, 198);
             }
         }
+    }
+
+    private void LayoutSourceTabs(Viewport viewport)
+    {
+        _tabBounds.Clear();
+        IReadOnlyList<LevelSource> tabs = GetVisibleTabs();
+        if (tabs.Count == 0)
+        {
+            return;
+        }
+
+        const int tabHeight = 34;
+        const int tabGap = 10;
+        int tabY = 72;
+        int totalWidth = 0;
+        int[] tabWidths = new int[tabs.Count];
+
+        for (int i = 0; i < tabs.Count; i++)
+        {
+            string label = LevelSourceVisuals.GetTabLabel(tabs[i]);
+            Point measured = SimpleTextRenderer.MeasureString(label, 2);
+            tabWidths[i] = Math.Max(120, measured.X + 28);
+            totalWidth += tabWidths[i];
+        }
+
+        totalWidth += tabGap * (tabs.Count - 1);
+        int startX = Math.Max(20, (viewport.Width - totalWidth) / 2);
+        int currentX = startX;
+
+        for (int i = 0; i < tabs.Count; i++)
+        {
+            _tabBounds.Add(new Rectangle(currentX, tabY, tabWidths[i], tabHeight));
+            currentX += tabWidths[i] + tabGap;
+        }
+
+        if (_tabBounds.Count > 0)
+        {
+            const int hintWidth = 50;
+            const int hintGap = 8;
+            Rectangle firstTab = _tabBounds[0];
+            Rectangle lastTab = _tabBounds[^1];
+            _leftShoulderHintBounds = new Rectangle(firstTab.X - hintWidth - hintGap, tabY, hintWidth, tabHeight);
+            _rightShoulderHintBounds = new Rectangle(lastTab.Right + hintGap, tabY, hintWidth, tabHeight);
+        }
+    }
+
+    private int GetBottomBarHeight()
+    {
+        if (_mode != LevelSelectMode.EditMode)
+        {
+            return 100;
+        }
+
+        const int buttonHeight = 50;
+        const int secondRowBottomMargin = 22;
+        const int rowGap = 14;
+        return buttonHeight * 2 + rowGap + secondRowBottomMargin + 16;
+    }
+
+    private void DrawSourceTabs(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, GameTime gameTime)
+    {
+        LayoutSourceTabs(viewport);
+        IReadOnlyList<LevelSource> tabs = GetVisibleTabs();
+        for (int i = 0; i < tabs.Count && i < _tabBounds.Count; i++)
+        {
+            Rectangle bounds = _tabBounds[i];
+            bool isActive = !_importOfficialPickerOpen && tabs[i] == _activeTab;
+            Color fill = isActive ? new Color(74, 120, 180) : new Color(45, 52, 68);
+            spriteBatch.Draw(pixel, bounds, fill);
+            DrawHelper.DrawBorder(spriteBatch, pixel, bounds, isActive ? new Color(120, 180, 255) : new Color(80, 90, 110), 2);
+            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, LevelSourceVisuals.GetTabLabel(tabs[i]), bounds, 2, Color.White);
+        }
+
+        DrawGamepadTabHints(spriteBatch, pixel, gameTime);
+    }
+
+    private void DrawGamepadTabHints(SpriteBatch spriteBatch, Texture2D pixel, GameTime gameTime)
+    {
+        if (!_game.Input.Navigation.IsGamepadActive || _tabBounds.Count == 0)
+        {
+            return;
+        }
+
+        double time = gameTime.TotalGameTime.TotalSeconds;
+        DrawShoulderHint(spriteBatch, pixel, _leftShoulderHintBounds, "< LB", time);
+        DrawShoulderHint(spriteBatch, pixel, _rightShoulderHintBounds, "RB >", time);
+    }
+
+    private static void DrawShoulderHint(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, string label, double totalSeconds)
+    {
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            return;
+        }
+
+        float pulse = 0.5f + (MathF.Sin((float)totalSeconds * 5.2f) * 0.5f);
+        int inflate = 1 + (int)MathF.Round(pulse * 2f);
+        Rectangle glowBounds = new(
+            bounds.X - inflate,
+            bounds.Y - inflate,
+            bounds.Width + inflate * 2,
+            bounds.Height + inflate * 2);
+
+        byte glowAlpha = (byte)Math.Clamp(40 + pulse * 90f, 40, 130);
+        spriteBatch.Draw(pixel, glowBounds, new Color((byte)80, (byte)150, (byte)230, glowAlpha));
+
+        var fill = new Color(
+            (byte)Math.Clamp(38 + pulse * 40f, 38, 78),
+            (byte)Math.Clamp(56 + pulse * 50f, 56, 106),
+            (byte)Math.Clamp(88 + pulse * 60f, 88, 148),
+            (byte)255);
+        spriteBatch.Draw(pixel, bounds, fill);
+
+        var border = new Color(
+            (byte)Math.Clamp(120 + pulse * 100f, 120, 220),
+            (byte)Math.Clamp(170 + pulse * 70f, 170, 240),
+            (byte)255,
+            (byte)Math.Clamp(170 + pulse * 85f, 170, 255));
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, border, 2);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, label, bounds, 1, Color.White);
+    }
+
+    private void HandleTabInput()
+    {
+        if (_importOfficialPickerOpen)
+        {
+            return;
+        }
+
+        LayoutSourceTabs(_game.Viewport);
+        IReadOnlyList<LevelSource> tabs = GetVisibleTabs();
+
+        if (_game.Input.GamepadMenuTabLeftPressed)
+        {
+            SwitchTabOffset(-1);
+            return;
+        }
+
+        if (_game.Input.GamepadMenuTabRightPressed)
+        {
+            SwitchTabOffset(1);
+            return;
+        }
+
+        if (_game.Input.MenuTabBackwardPressed)
+        {
+            SwitchTabOffset(-1);
+            return;
+        }
+
+        if (_game.Input.MenuTabPressed)
+        {
+            SwitchTabOffset(1);
+            return;
+        }
+
+        if (_game.Input.UiPointerPressed)
+        {
+            for (int i = 0; i < tabs.Count && i < _tabBounds.Count; i++)
+            {
+                if (_tabBounds[i].Contains(_game.Input.UiPointerPosition))
+                {
+                    SwitchTab(tabs[i]);
+                    return;
+                }
+            }
+        }
+    }
+
+    private void SwitchTabOffset(int delta)
+    {
+        IReadOnlyList<LevelSource> tabs = GetVisibleTabs();
+        if (tabs.Count == 0)
+        {
+            return;
+        }
+
+        int currentIndex = 0;
+        for (int i = 0; i < tabs.Count; i++)
+        {
+            if (tabs[i] == _activeTab)
+            {
+                currentIndex = i;
+                break;
+            }
+        }
+
+        int nextIndex = (currentIndex + delta + tabs.Count) % tabs.Count;
+        SwitchTab(tabs[nextIndex]);
     }
 
     private void RefreshGridLayout()
     {
         int availableWidth = _game.Viewport.Width;
-        if (_mode == LevelSelectMode.PlayMode && _selectedLevel != null)
+        if (_selectedLevel != null)
         {
             int panelWidth = Math.Min(420, Math.Max(320, _game.Viewport.Width / 4));
             availableWidth = Math.Max(1, _game.Viewport.Width - panelWidth - 40);
         }
 
-        _gridLayout = GridLayout.Create(_levels.Count, availableWidth, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap);
+        _gridLayout = GridLayout.Create(_levels.Count, availableWidth, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap, minStartY: 118);
     }
 
     private bool IsMouseOverButtons()
@@ -607,6 +1059,19 @@ public sealed class LevelSelectScene : IScene
             return true;
         if (_quaternaryButton?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
             return true;
+        if (_importOfficialButton?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
+            return true;
+        if (_createOfficialButton?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
+            return true;
+        if (_convertToOfficialButton?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
+            return true;
+        foreach (Rectangle tabBounds in _tabBounds)
+        {
+            if (tabBounds.Contains(_game.Input.UiPointerPosition))
+            {
+                return true;
+            }
+        }
         if (_ropeModePanelBounds.Contains(_game.Input.UiPointerPosition))
             return true;
         if (_ropeModeSelector?.Bounds.Contains(_game.Input.UiPointerPosition) ?? false)
@@ -646,8 +1111,78 @@ public sealed class LevelSelectScene : IScene
         }
         else
         {
-            _game.ChangeScene(new EditorScene(_game, levelId));
+            LevelMetadata metadata = _levels[_selectedIndex.Value];
+            if (!CanEditSelected())
+            {
+                ShowOfficialReadOnlyPopup(metadata);
+                return;
+            }
+
+            _game.ChangeScene(new EditorScene(_game, metadata.Id));
         }
+    }
+
+    private bool CanActivatePrimary()
+    {
+        if (_mode == LevelSelectMode.PlayMode)
+        {
+            return CanStartPlay();
+        }
+
+        return _selectedIndex.HasValue;
+    }
+
+    private bool CanOpenLevelInfo()
+    {
+        if (_mode != LevelSelectMode.EditMode || !_selectedIndex.HasValue)
+        {
+            return false;
+        }
+
+        LevelMetadata metadata = _levels[_selectedIndex.Value];
+        return metadata.Source != LevelSource.Workshop || DeveloperSettings.DeveloperMode;
+    }
+
+    private bool CanEditSelected()
+    {
+        if (_mode != LevelSelectMode.EditMode || !_selectedIndex.HasValue)
+        {
+            return false;
+        }
+
+        LevelMetadata metadata = _levels[_selectedIndex.Value];
+        if (metadata.Source == LevelSource.Workshop && !DeveloperSettings.DeveloperMode)
+        {
+            return false;
+        }
+
+        if (metadata.Source == LevelSource.Official && !DeveloperSettings.DeveloperMode)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool CanDeleteSelected()
+    {
+        if (_mode != LevelSelectMode.EditMode || !_selectedIndex.HasValue)
+        {
+            return false;
+        }
+
+        LevelMetadata metadata = _levels[_selectedIndex.Value];
+        if (metadata.Source == LevelSource.Official && !DeveloperSettings.DeveloperMode)
+        {
+            return false;
+        }
+
+        if (metadata.Source == LevelSource.Workshop && !DeveloperSettings.DeveloperMode)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private bool CanStartPlay()
@@ -696,13 +1231,201 @@ public sealed class LevelSelectScene : IScene
             return;
 
         LevelMetadata level = _levels[_selectedIndex.Value];
+        _popupKind = LevelSelectPopupKind.Delete;
         _popup = new Popup("Delete Level", $"Delete '{level.Name}' permanently?");
     }
 
     private void HandleCreateNew()
     {
-        // Show create new level dialog with text input
+        _popupKind = LevelSelectPopupKind.CreateNew;
         _popup = new Popup("Create New Level", "Enter level name:", "New Level");
+    }
+
+    private void HandleCreateCopy()
+    {
+        if (!_selectedIndex.HasValue || _selectedIndex.Value >= _levels.Count)
+            return;
+
+        LevelMetadata source = _levels[_selectedIndex.Value];
+        string newLevelId = source.Source == LevelSource.Official
+            ? LevelLibrary.ImportOfficialLevel(source.Id)
+            : LevelLibrary.DuplicateLevel(source.Id);
+        _activeTab = LevelSource.Local;
+        SelectLevelById(newLevelId);
+    }
+
+    private void ShowOfficialReadOnlyPopup(LevelMetadata metadata)
+    {
+        _pendingOfficialLevelId = metadata.Id;
+        _popupKind = LevelSelectPopupKind.OfficialReadOnly;
+        _popup = new Popup(
+            "Official Level",
+            "Official levels cannot be edited.\nCreate a copy to edit this level.",
+            "Create Copy",
+            "Cancel");
+    }
+
+    private void OpenImportOfficialPicker(GameTime gameTime)
+    {
+        IReadOnlyList<LevelMetadata> officials = LevelLibrary.GetOfficialLevels();
+        if (officials.Count == 0)
+        {
+            _popupKind = LevelSelectPopupKind.Info;
+            _popup = new Popup(
+                "Import Official",
+                "No official levels found.\nRebuild game or check Content/OfficialLevels.",
+                "OK",
+                "Close");
+            return;
+        }
+
+        _importOfficialPickerOpen = true;
+        _importPickerOpenedAt = gameTime.TotalGameTime.TotalSeconds;
+        _selectedIndex = null;
+        _selectedLevel = null;
+        _selectedLevelId = null;
+        RefreshLevelList();
+    }
+
+    private void HandleImportOfficialPickerInput(GameTime gameTime)
+    {
+        LayoutButtons();
+        RefreshGridLayout();
+        UpdateFocusForImportPicker(gameTime);
+
+        bool inGracePeriod = gameTime.TotalGameTime.TotalSeconds - _importPickerOpenedAt < 0.25;
+        if (!inGracePeriod
+            && (_game.Input.ExitPressed || _game.Input.MenuCancelPressed || _backFocus.WasActivated))
+        {
+            _importOfficialPickerOpen = false;
+            _activeTab = LevelSource.Local;
+            RefreshLevelList();
+            return;
+        }
+
+        if (_game.Input.UiPointerPressed)
+        {
+            for (int i = 0; i < _levels.Count && i < _gridLayout.CellBounds.Length; i++)
+            {
+                if (_gridLayout.CellBounds[i].Contains(_game.Input.UiPointerPosition))
+                {
+                    string newLevelId = LevelLibrary.ImportOfficialLevel(_levels[i].Id);
+                    _importOfficialPickerOpen = false;
+                    _activeTab = LevelSource.Local;
+                    SelectLevelById(newLevelId);
+                    return;
+                }
+            }
+        }
+
+        for (int i = 0; i < _gridFocusables.Count; i++)
+        {
+            if (_gridFocusables[i].WasActivated && i < _levels.Count)
+            {
+                string newLevelId = LevelLibrary.ImportOfficialLevel(_levels[i].Id);
+                _importOfficialPickerOpen = false;
+                _activeTab = LevelSource.Local;
+                SelectLevelById(newLevelId);
+                return;
+            }
+        }
+    }
+
+    private void UpdateFocusForImportPicker(GameTime gameTime)
+    {
+        _gridFocusables.Clear();
+        _focus.Clear();
+
+        int gridStart = -1;
+        for (int i = 0; i < _levels.Count && i < _gridLayout.CellBounds.Length; i++)
+        {
+            int captured = i;
+            var cell = new FocusableGridCell(_gridLayout.CellBounds[i], () =>
+            {
+                _selectedIndex = captured;
+                return true;
+            });
+            _gridFocusables.Add(cell);
+            if (gridStart < 0)
+            {
+                gridStart = _focus.Add(cell, $"Level{captured}");
+            }
+            else
+            {
+                _focus.Add(cell, $"Level{captured}");
+            }
+        }
+
+        int backIndex = _focus.Add(_backFocus, "Back");
+        if (gridStart >= 0)
+        {
+            _focus.Navigation.WireGrid(gridStart, _gridFocusables.Count, _gridLayout.Columns);
+            _focus.Navigation.Link(backIndex, NavigationDirection.Up, gridStart);
+        }
+
+        _focus.FinalizeFocus(gridStart >= 0 ? "Level0" : "Back");
+        _focus.Update(gameTime, _game.Input);
+    }
+
+    private void HandleCreateOfficialLevel()
+    {
+        _popupKind = LevelSelectPopupKind.CreateOfficial;
+        _popup = new Popup("Create Official Level", "Enter level name:", "Official Level");
+    }
+
+    private void HandleConvertToOfficial()
+    {
+        if (!_selectedIndex.HasValue || _selectedIndex.Value >= _levels.Count)
+        {
+            return;
+        }
+
+        LevelMetadata metadata = _levels[_selectedIndex.Value];
+        if (metadata.Source != LevelSource.Local)
+        {
+            return;
+        }
+
+        if (LevelLibrary.ConvertLocalToOfficial(metadata.Id))
+        {
+            _activeTab = LevelSource.Official;
+            RefreshLevelList();
+        }
+    }
+
+    private void SelectLevelById(string levelId)
+    {
+        _activeTab = LevelSource.Local;
+        RefreshLevelList(preserveSelection: true);
+
+        int newIndex = -1;
+        for (int i = 0; i < _levels.Count; i++)
+        {
+            if (_levels[i].Id == levelId)
+            {
+                newIndex = i;
+                break;
+            }
+        }
+
+        if (newIndex < 0)
+        {
+            _levels = LevelLibrary.GetLocalLevels();
+            for (int i = 0; i < _levels.Count; i++)
+            {
+                if (_levels[i].Id == levelId)
+                {
+                    newIndex = i;
+                    break;
+                }
+            }
+        }
+
+        if (newIndex >= 0)
+        {
+            _selectedIndex = newIndex;
+            UpdateSelectedLevelDetails();
+        }
     }
 
     private void UpdateSelectedLevelDetails()
@@ -718,7 +1441,7 @@ public sealed class LevelSelectScene : IScene
 
         LevelMetadata metadata = _levels[_selectedIndex.Value];
         _selectedLevelId = metadata.Id;
-        _selectedLevel = LevelManager.LoadLevel(metadata.Id);
+        _selectedLevel = LevelLibrary.LoadLevel(metadata.Id);
         _selectedLevelPreview = LevelPreviewManager.GetPreview(_game.GraphicsDevice, _game.Pixel, _selectedLevel, metadata.Id);
         RefreshDetailsPanelCache();
         ApplyLevelPlayDefaults(_selectedLevel);
@@ -729,6 +1452,7 @@ public sealed class LevelSelectScene : IScene
         if (_selectedLevel is null || string.IsNullOrEmpty(_selectedLevelId))
         {
             _detailsLevelName = "";
+            _detailsAuthorText = "";
             _detailsPlayersText = "";
             _detailsRopeText = "";
             _detailsFeaturesText = "";
@@ -740,6 +1464,8 @@ public sealed class LevelSelectScene : IScene
         }
 
         _detailsLevelName = _selectedLevel.Name;
+        LevelMetadata? metadata = LevelLibrary.GetLevel(_selectedLevelId);
+        _detailsAuthorText = metadata?.Author ?? string.Empty;
         _detailsPlayersText = GetPlayerCompatibilityText(_selectedLevel);
         string ropeText = GetRopeText(_selectedLevel);
         _detailsRopeText = string.IsNullOrEmpty(ropeText) ? "None" : ropeText;
@@ -797,44 +1523,71 @@ public sealed class LevelSelectScene : IScene
     private void HandlePopupConfirmed()
     {
         if (_popup == null)
-            return;
-
-        if (_mode == LevelSelectMode.EditMode)
         {
-            if (_popup.TextInput != null)
-            {
-                // Create new level
-                string levelName = _popup.InputValue.Trim();
-                if (!string.IsNullOrEmpty(levelName))
+            return;
+        }
+
+        switch (_popupKind)
+        {
+            case LevelSelectPopupKind.OfficialReadOnly:
+                if (_pendingOfficialLevelId is not null)
                 {
-                    string newLevelId = LevelManager.CreateNewLevel(levelName);
-                    RefreshLevelList();
+                    string newLevelId = LevelLibrary.ImportOfficialLevel(_pendingOfficialLevelId);
+                    SelectLevelById(newLevelId);
+                }
 
-                    // Auto-select the newly created level
-                    int newIndex = -1;
-                    for (int i = 0; i < _levels.Count; i++)
-                    {
-                        if (_levels[i].Id == newLevelId)
-                        {
-                            newIndex = i;
-                            break;
-                        }
-                    }
+                _pendingOfficialLevelId = null;
+                break;
 
-                    if (newIndex >= 0)
+            case LevelSelectPopupKind.CreateNew:
+                if (_popup.TextInput is not null)
+                {
+                    string levelName = _popup.InputValue.Trim();
+                    if (!string.IsNullOrEmpty(levelName))
                     {
-                        _selectedIndex = newIndex;
+                        string newLevelId = LevelLibrary.CreateNewLevel(levelName);
+                        SelectLevelById(newLevelId);
                     }
                 }
-            }
-            else if (_selectedIndex.HasValue)
-            {
-                // Delete level
-                LevelMetadata level = _levels[_selectedIndex.Value];
-                LevelManager.DeleteLevel(level.Id);
-                RefreshLevelList();
-                _selectedIndex = null;
-            }
+
+                break;
+
+            case LevelSelectPopupKind.CreateOfficial:
+                if (_popup.TextInput is not null && DeveloperSettings.DeveloperMode)
+                {
+                    string levelName = _popup.InputValue.Trim();
+                    if (!string.IsNullOrEmpty(levelName))
+                    {
+                        string newLevelId = LevelLibrary.CreateOfficialLevel(levelName);
+                        _activeTab = LevelSource.Official;
+                        RefreshLevelList();
+                        for (int i = 0; i < _levels.Count; i++)
+                        {
+                            if (_levels[i].Id == newLevelId)
+                            {
+                                _selectedIndex = i;
+                                UpdateSelectedLevelDetails();
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                break;
+
+            case LevelSelectPopupKind.Delete:
+                if (_selectedIndex.HasValue && _selectedIndex.Value < _levels.Count)
+                {
+                    LevelMetadata level = _levels[_selectedIndex.Value];
+                    LevelLibrary.DeleteLevel(level.Id);
+                    RefreshLevelList();
+                    _selectedIndex = null;
+                }
+
+                break;
+
+            case LevelSelectPopupKind.Info:
+                break;
         }
     }
 
@@ -849,9 +1602,9 @@ public sealed class LevelSelectScene : IScene
 
     private int GetGridLayoutHeight()
     {
-        return _mode == LevelSelectMode.PlayMode
-            ? Math.Max(240, _game.Viewport.Height - 160)
-            : _game.Viewport.Height;
+        int topOffset = _importOfficialPickerOpen ? 130 : 118;
+        int bottomReserved = _mode == LevelSelectMode.EditMode ? GetBottomBarHeight() + 20 : 160;
+        return Math.Max(220, _game.Viewport.Height - topOffset - bottomReserved);
     }
 
     private void DrawRopeModeSelector(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
@@ -876,7 +1629,7 @@ public sealed class LevelSelectScene : IScene
         _ghostBestRunCheckbox?.Draw(spriteBatch, pixel);
     }
 
-    private void DrawLevelDetailsPanel(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
+    private void DrawLevelDetailsPanel(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, bool showPlayStats)
     {
         int panelWidth = Math.Min(420, Math.Max(320, viewport.Width / 4));
         int panelX = viewport.Width - panelWidth - 20;
@@ -893,7 +1646,13 @@ public sealed class LevelSelectScene : IScene
         var nameBounds = new Rectangle(panelX + 16, panelY + 56, panelWidth - 32, 24);
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, _detailsLevelName, nameBounds, 2, new Color(210, 220, 235));
 
-        var previewBounds = new Rectangle(panelX + 15, panelY + 86, panelWidth - 30, Math.Min(180, panelHeight / 4));
+        if (!string.IsNullOrWhiteSpace(_detailsAuthorText))
+        {
+            var authorBounds = new Rectangle(panelX + 16, panelY + 82, panelWidth - 32, 20);
+            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, $"by {_detailsAuthorText}", authorBounds, 1, new Color(170, 180, 200));
+        }
+
+        var previewBounds = new Rectangle(panelX + 15, panelY + 108, panelWidth - 30, Math.Min(180, panelHeight / 4));
         spriteBatch.Draw(pixel, previewBounds, new Color(20, 26, 36));
         DrawHelper.DrawBorder(spriteBatch, pixel, previewBounds, new Color(85, 100, 120), 2);
 
@@ -924,6 +1683,12 @@ public sealed class LevelSelectScene : IScene
         SimpleTextRenderer.DrawString(spriteBatch, pixel, "Features:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
         y += rowHeight;
         SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsFeaturesText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+
+        if (!showPlayStats)
+        {
+            return;
+        }
+
         y += rowHeight + 4;
 
         SimpleTextRenderer.DrawString(spriteBatch, pixel, "Best Time:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));

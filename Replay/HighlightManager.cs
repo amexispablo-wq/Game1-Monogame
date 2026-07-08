@@ -16,7 +16,7 @@ public static class HighlightManager
     PropertyNameCaseInsensitive = true
   };
 
-  private static HighlightReplayFile? _cached;
+  private static readonly Dictionary<LevelSource, HighlightReplayFile> _cachedBySource = new();
   private static int _version;
 
   static HighlightManager()
@@ -25,6 +25,7 @@ public static class HighlightManager
   }
 
   public static int Version => _version;
+
   public static bool HasHighlights
   {
     get
@@ -36,18 +37,40 @@ public static class HighlightManager
 
   public static bool TryGetHighlightReplay(out HighlightReplayFile file)
   {
-    file = _cached ?? LoadFromDisk() ?? new HighlightReplayFile();
-    _cached = file;
+    var merged = new List<HighlightClipEntry>();
+    foreach (LevelSource source in Enum.GetValues<LevelSource>())
+    {
+      HighlightReplayFile? current = LoadFromDisk(source);
+      if (current is null || current.Clips.Length == 0)
+      {
+        continue;
+      }
+
+      merged.AddRange(current.Clips);
+    }
+
+    merged = merged
+      .OrderByDescending(entry => entry.Score)
+      .Take(ReplayConstants.MaxHighlightClips)
+      .ToList();
+
+    file = new HighlightReplayFile
+    {
+      FormatVersion = HighlightReplayFile.CurrentFormatVersion,
+      Clips = merged.ToArray()
+    };
+
     return file.Clips.Length > 0;
   }
 
   public static void ProcessSession(ReplayData session)
   {
-    if (session.Frames.Length == 0)
+    if (session.Frames.Length == 0 || string.IsNullOrWhiteSpace(session.Header.LevelId))
     {
       return;
     }
 
+    LevelSource source = LevelIdentity.GetSource(session.Header.LevelId);
     var detector = new HighlightEventDetector();
     List<HighlightEvent> events = detector.AnalyzeSession(session);
     List<ReplayClip> clips = HighlightClipBuilder.BuildClips(session, events);
@@ -56,7 +79,7 @@ public static class HighlightManager
       return;
     }
 
-    HighlightReplayFile current = LoadFromDisk() ?? new HighlightReplayFile();
+    HighlightReplayFile current = LoadFromDisk(source) ?? new HighlightReplayFile();
     var merged = new List<HighlightClipEntry>(current.Clips);
 
     foreach (ReplayClip clip in clips)
@@ -86,15 +109,16 @@ public static class HighlightManager
       Clips = merged.ToArray()
     };
 
-    SaveToDisk(updated);
-    _cached = updated;
+    SaveToDisk(source, updated);
+    _cachedBySource[source] = updated;
     _version++;
     ReplayManager.NotifyHighlightsChanged();
   }
 
   public static void InvalidateClipsForLevel(string levelId)
   {
-    HighlightReplayFile? current = LoadFromDisk();
+    LevelSource source = LevelIdentity.GetSource(levelId);
+    HighlightReplayFile? current = LoadFromDisk(source);
     if (current is null || current.Clips.Length == 0)
     {
       return;
@@ -115,15 +139,20 @@ public static class HighlightManager
       Clips = remaining
     };
 
-    SaveToDisk(updated);
-    _cached = updated;
+    SaveToDisk(source, updated);
+    _cachedBySource[source] = updated;
     _version++;
     ReplayManager.NotifyHighlightsChanged();
   }
 
-  private static HighlightReplayFile? LoadFromDisk()
+  private static HighlightReplayFile? LoadFromDisk(LevelSource source)
   {
-    string path = ReplayStorage.GetHighlightsPath();
+    if (_cachedBySource.TryGetValue(source, out HighlightReplayFile? cached))
+    {
+      return cached;
+    }
+
+    string path = ReplayStorage.GetHighlightsPath(source);
     if (!File.Exists(path))
     {
       return null;
@@ -132,7 +161,13 @@ public static class HighlightManager
     try
     {
       string json = File.ReadAllText(path);
-      return JsonSerializer.Deserialize<HighlightReplayFile>(json, JsonOptions);
+      HighlightReplayFile? file = JsonSerializer.Deserialize<HighlightReplayFile>(json, JsonOptions);
+      if (file is not null)
+      {
+        _cachedBySource[source] = file;
+      }
+
+      return file;
     }
     catch
     {
@@ -140,9 +175,9 @@ public static class HighlightManager
     }
   }
 
-  private static void SaveToDisk(HighlightReplayFile file)
+  private static void SaveToDisk(LevelSource source, HighlightReplayFile file)
   {
-    string path = ReplayStorage.GetHighlightsPath();
+    string path = ReplayStorage.GetHighlightsPath(source);
     string? directory = Path.GetDirectoryName(path);
     if (!string.IsNullOrEmpty(directory))
     {

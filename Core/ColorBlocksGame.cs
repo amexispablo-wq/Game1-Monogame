@@ -177,6 +177,11 @@ public class ColorBlocksGame : Game
 
         _input = new InputManager();
         Party.LocalSteamUsername = _steam.Username;
+        LevelAuthorProvider.ResolveLocalAuthor = () =>
+            _steam.IsInitialized && !string.IsNullOrWhiteSpace(_steam.Username) && _steam.Username != "Unavailable"
+                ? _steam.Username
+                : Environment.UserName;
+        LevelLibrary.Initialize();
         Party.EnsureDefaultParty();
         base.Initialize();
     }

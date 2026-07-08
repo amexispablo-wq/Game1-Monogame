@@ -16,7 +16,7 @@ public sealed class GridLayout
     }
 
     public static GridLayout Create(int itemCount, int viewportWidth, int viewportHeight,
-        int cellWidth, int cellHeight, int horizontalGap = 20, int verticalGap = 20)
+        int cellWidth, int cellHeight, int horizontalGap = 20, int verticalGap = 20, int minStartY = 80)
     {
         var layout = new GridLayout();
 
@@ -43,8 +43,8 @@ public sealed class GridLayout
         // Center grid on screen
         int startX = (viewportWidth - gridWidth) / 2;
         int startY = (viewportHeight - gridHeight) / 2;
-        if (startY < 80)
-            startY = 80;
+        if (startY < minStartY)
+            startY = minStartY;
 
         // Calculate cell bounds
         layout.CellBounds = new Rectangle[itemCount];

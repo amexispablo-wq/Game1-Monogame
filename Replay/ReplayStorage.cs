@@ -75,16 +75,31 @@ public static class ReplayStorage
 
   public static string GetBestReplayPath(string levelId)
   {
-    return Path.Combine(GetReplaysDirectory(), $"{levelId}_Best.replay");
+    LevelSource source = LevelIdentity.GetSource(levelId);
+    string fileName = $"{SanitizeFileName(levelId)}_Best.replay";
+    return Path.Combine(GetReplaysDirectory(source), fileName);
   }
 
-  public static string GetHighlightsPath()
+  public static string GetHighlightsPath(LevelSource source)
   {
-    return Path.Combine(GetReplaysDirectory(), HighlightsFileName);
+    return Path.Combine(GetReplaysDirectory(source), HighlightsFileName);
+  }
+
+  public static string GetHighlightsPath(string levelId)
+  {
+    return GetHighlightsPath(LevelIdentity.GetSource(levelId));
+  }
+
+  public static string GetReplaysDirectory(LevelSource source)
+  {
+    return LevelContentPaths.GetReplaysRoot(source);
   }
 
   public static string GetReplaysDirectory()
   {
-    return Path.Combine(AppContext.BaseDirectory, "Content", ReplaysFolder);
+    return LevelContentPaths.GetReplaysRoot(LevelSource.Local);
   }
+
+  private static string SanitizeFileName(string levelId) =>
+      levelId.Replace(':', '_');
 }
