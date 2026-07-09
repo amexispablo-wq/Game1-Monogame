@@ -52,4 +52,31 @@ internal static class LevelContentPaths
 
     public static string GetWorkshopPreviewFile(string workshopId) =>
         Path.Combine(GetLevelsRoot(LevelSource.Workshop), workshopId, "preview.png");
+
+    /// <summary>
+    /// Project-source OfficialLevels folder (not bin output). Used so developer
+    /// create/delete/save of official levels survive rebuild CopyToOutputDirectory.
+    /// </summary>
+    public static string? TryGetProjectOfficialLevelsRoot()
+    {
+        string runtimeOfficial = Path.GetFullPath(GetLevelsRoot(LevelSource.Official));
+        string? directory = AppContext.BaseDirectory;
+
+        for (int i = 0; i < 8 && directory is not null; i++)
+        {
+            string candidate = Path.Combine(directory, "Content", OfficialLevelsFolder);
+            if (Directory.Exists(candidate))
+            {
+                string full = Path.GetFullPath(candidate);
+                if (!string.Equals(full, runtimeOfficial, StringComparison.OrdinalIgnoreCase))
+                {
+                    return full;
+                }
+            }
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        return null;
+    }
 }

@@ -172,11 +172,7 @@ public sealed class LevelSelectScene : IScene
             };
         }
 
-        if (_activeTab == LevelSource.Workshop)
-        {
-            return LevelLibrary.GetWorkshopLevels();
-        }
-
+        // Editor: Local (+ Official in developer mode). No Workshop — edit via Create Copy → Local.
         if (DeveloperSettings.DeveloperMode && _activeTab == LevelSource.Official)
         {
             return LevelLibrary.GetOfficialLevels();
@@ -192,12 +188,13 @@ public sealed class LevelSelectScene : IScene
             return new[] { LevelSource.Official, LevelSource.Workshop, LevelSource.Local };
         }
 
+        // Editor has no Workshop tab (browse/play only; edits go through Local copies).
         if (DeveloperSettings.DeveloperMode)
         {
-            return new[] { LevelSource.Local, LevelSource.Workshop, LevelSource.Official };
+            return new[] { LevelSource.Local, LevelSource.Official };
         }
 
-        return new[] { LevelSource.Local, LevelSource.Workshop };
+        return new[] { LevelSource.Local };
     }
 
     private void SwitchTab(LevelSource tab)
@@ -922,7 +919,7 @@ public sealed class LevelSelectScene : IScene
 
     private void DrawGamepadTabHints(SpriteBatch spriteBatch, Texture2D pixel, GameTime gameTime)
     {
-        if (!_game.Input.Navigation.IsGamepadActive || _tabBounds.Count == 0)
+        if (!_game.Input.Navigation.IsGamepadActive || _tabBounds.Count <= 1)
         {
             return;
         }

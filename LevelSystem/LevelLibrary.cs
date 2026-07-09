@@ -141,6 +141,11 @@ public static class LevelLibrary
             ApplyMetadataOnSave(data, metadata);
             string json = JsonSerializer.Serialize(data, JsonOptions);
             File.WriteAllText(metadata.FilePath, json);
+            if (metadata.Source == LevelSource.Official)
+            {
+                SyncOfficialFileToProject(metadata.FilePath);
+            }
+
             metadata.Name = data.Name;
             metadata.ModifiedDate = data.ModifiedDate ?? DateTime.UtcNow;
             metadata.Version = data.Version;
@@ -231,7 +236,12 @@ public static class LevelLibrary
             }
             else if (File.Exists(metadata.FilePath))
             {
-                File.Delete(metadata.FilePath);
+                string deletedPath = metadata.FilePath;
+                File.Delete(deletedPath);
+                if (metadata.Source == LevelSource.Official)
+                {
+                    DeleteOfficialFileFromProject(deletedPath);
+                }
             }
 
             BestTimeStorage.DeleteLevelRecord(levelId);
@@ -267,6 +277,7 @@ public static class LevelLibrary
             data.Author = "Game";
             data.ModifiedDate = DateTime.UtcNow;
             WriteLevelData(destinationPath, data);
+            SyncOfficialFileToProject(destinationPath);
             return true;
         }
         catch (Exception ex)
@@ -297,6 +308,7 @@ public static class LevelLibrary
         };
 
         WriteLevelData(filePath, levelData);
+        SyncOfficialFileToProject(filePath);
         return LevelIdentity.Compose(LevelSource.Official, fileStem);
     }
 
@@ -520,6 +532,48 @@ public static class LevelLibrary
 
         string json = JsonSerializer.Serialize(data, JsonOptions);
         File.WriteAllText(filePath, json);
+    }
+
+    private static void SyncOfficialFileToProject(string runtimeFilePath)
+    {
+        string? projectOfficialRoot = LevelContentPaths.TryGetProjectOfficialLevelsRoot();
+        if (projectOfficialRoot is null || !File.Exists(runtimeFilePath))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(projectOfficialRoot);
+            string destination = Path.Combine(projectOfficialRoot, Path.GetFileName(runtimeFilePath));
+            File.Copy(runtimeFilePath, destination, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to sync official level to project Content: {ex.Message}");
+        }
+    }
+
+    private static void DeleteOfficialFileFromProject(string runtimeFilePath)
+    {
+        string? projectOfficialRoot = LevelContentPaths.TryGetProjectOfficialLevelsRoot();
+        if (projectOfficialRoot is null)
+        {
+            return;
+        }
+
+        try
+        {
+            string destination = Path.Combine(projectOfficialRoot, Path.GetFileName(runtimeFilePath));
+            if (File.Exists(destination))
+            {
+                File.Delete(destination);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to delete official level from project Content: {ex.Message}");
+        }
     }
 
     private static void EnsureContentFolders()

@@ -27,7 +27,7 @@
   "SoundEffects": {
     "Jump": true,
     "PullRope": true,
-    "Red": true,
+    "Red": false,
     "Blue": true,
     "Green": true,
     "Checkpoint": true,
