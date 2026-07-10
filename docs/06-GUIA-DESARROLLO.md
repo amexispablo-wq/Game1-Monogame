@@ -45,13 +45,26 @@ Ver [`07-UI-NAVEGACION.md`](07-UI-NAVEGACION.md).
 
 | Tecla | Contexto | Qué muestra |
 |-------|----------|-------------|
-| **F3** | `GameScene` | HUD gameplay: tick, snapshots, input buffer, sesión, Steam, rol/autoridad, eyección |
-| **F8** | Global (InputManager) | Toggle overlay navegación UI: IDs, vecinos, líneas, panel |
-| **F9** | Global (InputManager) | Step foco al siguiente widget; log consola + cadena magenta en overlay |
+| **F3** | `GameScene`, `RopeSandboxScene` | HUD gameplay: tick, snapshots, input buffer, sesión, Steam, rol/autoridad, rope debug |
+| **F6** | Dev mode + gameplay/sandbox | Toggle `DeveloperTuningPanel` |
+| **F8** | Dev mode (global) | Toggle overlay navegación UI |
+| **F9** | Dev mode (global) | Step foco al siguiente widget |
+| **F10** | Dev mode (global) | Toggle benchmark overlay / correr suite |
+| **F11** | Dev mode (global) | Benchmark debug overlay |
+
+Ver [`09-HERRAMIENTAS-DEV.md`](09-HERRAMIENTAS-DEV.md) para CLI headless y checklist rope.
 
 - `Player.Draw(debugDraw)` — vectores velocidad/aceleración, eyección.
-- `Rope.Draw(debugDraw)` — nodos, tensión, pull.
+- `Rope.Draw(debugDraw)` — segmentos, nodos, métricas tensión/pull.
 - `Esc` — pantalla anterior; en menú principal, sale del juego.
+
+### Benchmark CLI (sin ventana)
+
+```bash
+dotnet run --project "Color Blocks.csproj" -- --benchmark rope
+```
+
+Requiere `developer_settings.json` con `"developerMode": true`.
 
 ## Convenciones de código
 
@@ -85,10 +98,11 @@ Ver [`07-UI-NAVEGACION.md`](07-UI-NAVEGACION.md).
 
 ## Riesgos / deuda técnica conocida
 
-- **Coop online sin transporte de gameplay** — lobby OK, simulación no sincronizada (doc 03, roadmap 08).
+- **Coop online v1 sin predicción/interpolación** — transporte OK; falta QA 2-client (doc 03, roadmap 08).
 - **Gamepad binding persistence** — posible bug en `SettingsManager`.
 - `LevelManager.RenameLevel` es placeholder.
 - Flags `LavaRise` / `PlayerN` persisten; gameplay puede estar incompleto.
 - Niveles en build output → fácil perder al limpiar `bin/`.
 - `bin`/`obj` parcialmente en git.
+- **Rope Sandbox** usa modo Neutral; no prueba colisión colored sin nivel real.
 - Leaderboards globales y Workshop: no iniciados — ver [`08-ROADMAP.md`](08-ROADMAP.md).

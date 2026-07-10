@@ -11,6 +11,8 @@ Este documento resume estado actual vs. pasos sugeridos. No es un compromiso de 
 | Área | Estado |
 |------|--------|
 | Gameplay local (1–4 jugadores) | ✅ Funcional |
+| Física de soga (rewrite Verlet 2026) | ✅ Funcional; regresiones en benchmark |
+| Dev: Rope Sandbox + tuning F6 + benchmarks | ✅ Funcional (requiere `developerMode`) |
 | Editor de niveles | ✅ Funcional (local) |
 | Mejores tiempos locales | ✅ `best_times.json` |
 | UI / navegación gamepad+teclado+mouse | ✅ Grafo explícito, debug F8/F9 |
@@ -19,11 +21,30 @@ Este documento resume estado actual vs. pasos sugeridos. No es un compromiso de 
 | Steam init + callbacks | ✅ `SteamManager` |
 | Steam lobby + invitaciones + roster | ✅ `SteamLobbyService`, `SteamPartyService` |
 | Sincronizar inicio de nivel vía lobby | ✅ Líder elige nivel, todos cargan |
-| Coop online (simulación sincronizada) | ❌ Sin transporte de red |
+| Coop online (simulación sincronizada) | 🟡 v1 host-authoritative; falta predicción + QA |
 | Highscores globales (Steam Leaderboards) | ❌ No implementado |
 | Steam Workshop (UGC) | ❌ No implementado |
 | Achievements / cloud saves | ❌ No implementado |
 | Empaquetado SteamPipe / depots | ❌ Fuera del repo |
+
+---
+
+## Fase 0 — Rope + QA dev (ahora)
+
+Objetivo: soga estable en niveles reales antes de más features Steam.
+
+| Item | Estado |
+|------|--------|
+| Rewrite Verlet + stretch-only constraints | ✅ |
+| Pull → acortar rest length + tensión al otro PJ | ✅ |
+| Colored collision + color mix extremos (R+G=amarillo) | ✅ |
+| Fix input sandbox (`GameplayInputBlocked`) | ✅ |
+| Benchmark suite rope (14 mecánicas × 2 modos) | ✅ |
+| Feel tuning en niveles diseñados (no solo sandbox) | 🟡 Manual QA pendiente |
+| Sandbox con selector `ColoredPhysics` | ❌ Opcional |
+| Fuzz testing estable en CI | ❌ Opcional |
+
+**Comando regresión:** `dotnet run -- --benchmark rope` (ver [`09-HERRAMIENTAS-DEV.md`](09-HERRAMIENTAS-DEV.md)).
 
 ---
 
@@ -161,10 +182,18 @@ Content/Workshop/        → niveles suscritos (por PublishedFileId)
 ## Orden sugerido de implementación
 
 ```
-[Fase 1 pulido] → [Fase 2 online] → [Fase 3 leaderboards] → [Fase 4 Workshop] → [Fase 5 release]
-                      ↑
-              bloqueador para coop online real
+[Fase 0 rope QA] → [Fase 1 pulido] → [Fase 2 online QA] → [Fase 3 leaderboards] → [Fase 4 Workshop] → [Fase 5 release]
+        ↑                    ↑
+   ahora (feel + niveles)   deuda settings/lava/gitignore
 ```
+
+### Qué hacer ahora (prioridad)
+
+1. **QA manual rope** — jugar 2–3 niveles oficiales en `ColoredPhysics`: pull, esquinas, cambio de color mid-air, 3–4 jugadores.
+2. **Benchmark en cada cambio de rope** — `--benchmark rope`; no mergear si FAIL.
+3. **Fase 1 rápida** — gamepad bindings persist, `.gitignore` bin/obj, niveles versionados en source tree.
+4. **Fase 2 QA** — 2 Steam clients, latencia 50–150 ms, verificar snapshots + desconexión.
+5. Después: leaderboards (Fase 3) o Workshop (Fase 4) según prioridad de marketing.
 
 Workshop y leaderboards pueden paralelizarse parcialmente después de online estable.
 
@@ -172,10 +201,12 @@ Leaderboards **sin** online son posibles antes (solo single-player trusted) — 
 
 ---
 
-## Referencias en código
+## Referencias en código (ampliado)
 
 | Tema | Archivos clave |
 |------|----------------|
+| Rope / física | `Entities/Rope.cs`, `Entities/RopeConstraint.cs`, `Managers/PhysicsWorld.cs`, `Gameplay/GameplayTuning.cs` |
+| Dev / benchmarks | `Developer/GameplayBenchmark/`, `Scenes/RopeSandboxScene.cs`, `docs/09-HERRAMIENTAS-DEV.md` |
 | Red / sesión | `Networking/GameSession.cs`, `Networking/Packets/`, `Networking/Replication/` |
 | Steam lobby | `Steam/SteamLobbyService.cs`, `Steam/SteamPartyService.cs` |
 | Party | `Party/PartyManager.cs`, `Scenes/PartyScene.cs` |

@@ -184,6 +184,11 @@ public sealed class Player : INetworkEntity
         }
     }
 
+    public void RestoreColor(GameColor color)
+    {
+        CurrentColor = color;
+    }
+
     public void RespawnAt(Vector2 position)
     {
         Position = position;

@@ -1,6 +1,6 @@
 # Color Blocks — Documentación de Desarrollo
 
-Plataformas 2D cooperativo hecho en **MonoGame (DesktopGL, .NET 9)**, con integración a **Steam** (Steamworks.NET). Aún sin lanzar. El coop **online** está diseñado a nivel de arquitectura pero todavía **no tiene transporte de red implementado** (ver `03-NETWORKING-COOP.md`).
+Plataformas 2D cooperativo hecho en **MonoGame (DesktopGL, .NET 9)**, con integración a **Steam** (Steamworks.NET). Aún sin lanzar. Coop **online v1** (transporte Steam + snapshots host-authoritative) **implementado**; falta predicción, interpolación y QA 2-clientes (ver `03-NETWORKING-COOP.md`).
 
 ## Índice
 
@@ -14,6 +14,7 @@ Plataformas 2D cooperativo hecho en **MonoGame (DesktopGL, .NET 9)**, con integr
 | [`06-GUIA-DESARROLLO.md`](06-GUIA-DESARROLLO.md) | Build, ejecución, convenciones de código, settings, debug |
 | [`07-UI-NAVEGACION.md`](07-UI-NAVEGACION.md) | Sistema de foco UI: grafo de navegación, gamepad/teclado/mouse, debug F8/F9, Options layout |
 | [`08-ROADMAP.md`](08-ROADMAP.md) | Roadmap hacia Steam: online, leaderboards globales, Workshop, release |
+| [`09-HERRAMIENTAS-DEV.md`](09-HERRAMIENTAS-DEV.md) | Dev mode, Rope Sandbox, tuning F6, benchmarks F10/CLI, checklist rope |
 
 > Doc legado en la raíz: `MULTI_LEVEL_SYSTEM.md` (parcialmente desactualizado; `04-NIVELES-Y-EDITOR.md` es la referencia vigente).
 
@@ -26,10 +27,12 @@ Plataformas 2D cooperativo hecho en **MonoGame (DesktopGL, .NET 9)**, con integr
 - **Simulación:** `Core/GameSimulation.cs` corre física con **tick fijo (60 Hz)** desacoplado del render.
 - **Física:** `Managers/PhysicsWorld.cs` (gravedad, colisiones AABB por color, sogas Verlet, launch pads).
 - **Jugador:** `Entities/Player.cs` (movimiento, salto, eyección de plataformas del color activo).
-- **Red:** `Networking/` (sesiones, ownership, snapshots, predicción) — andamiaje listo, sin sockets aún.
+- **Red:** `Networking/` + `SteamGameNetworkService` — transporte + snapshots v1; predicción pendiente.
+- **Dev:** `Developer/GameplayBenchmark/`, `RopeSandboxScene`, `GameplayTuning` — ver doc 09.
 - **Niveles:** `LevelSystem/` + `Managers/LevelStorage.cs` (JSON en `Content/Levels/level_N.json`).
 - **Steam:** `Steam/SteamManager.cs` + lobby/party (`SteamLobbyService`, `SteamPartyService`) + `steam_appid.txt`.
-- **Pendiente release:** coop online (transporte), leaderboards globales, Workshop — ver [`08-ROADMAP.md`](08-ROADMAP.md).
+- **Pendiente release:** QA online estable, leaderboards globales, Workshop — ver [`08-ROADMAP.md`](08-ROADMAP.md).
+- **Rope:** rewrite Verlet 2026; regresiones → `--benchmark rope`.
 
 ## Convenciones clave
 

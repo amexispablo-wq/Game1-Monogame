@@ -11,6 +11,7 @@ public sealed class EditorScene : IScene
     private const int GridSize = 32;
     private const int ResizeMargin = 8;
     private const int MinPlatformSize = GridSize; // Must be at least one grid cell
+    private const int MarqueeMinDragSize = 4;
 
     private readonly ColorBlocksGame _game;
     private readonly string _levelId;
@@ -23,6 +24,7 @@ public sealed class EditorScene : IScene
     private Platform _hoveredPlatform;
     private Goal _selectedGoal;
     private Goal _hoveredGoal;
+    private readonly List<Goal> _selectedGoals = new();
     private CheckpointFlag _selectedCheckpoint;
     private CheckpointFlag _hoveredCheckpoint;
     private LaunchPad _selectedLaunchPad;
@@ -41,6 +43,9 @@ public sealed class EditorScene : IScene
     private int _pasteCount;
     private Point _dragStartMouse;
     private bool _isCreating;
+    private bool _isMarqueeSelecting;
+    private Point _marqueeStart;
+    private Rectangle _marqueeBounds;
     private bool _isDragging;
     private bool _isDraggingGoal;
     private bool _isDraggingCheckpoint;
@@ -113,7 +118,7 @@ public sealed class EditorScene : IScene
 
     private bool IsDraggingToolbarObject => _toolbarDragKind != EditorObjectKind.None;
     private bool HasSelection => _selectedPlatforms.Count > 0
-        || _selectedGoal is not null
+        || _selectedGoals.Count > 0
         || _selectedCheckpoints.Count > 0
         || _selectedLaunchPads.Count > 0;
 
@@ -235,6 +240,7 @@ public sealed class EditorScene : IScene
 
         bool canUseWorldMouse = !IsMouseOverUi()
             || _isCreating
+            || _isMarqueeSelecting
             || _isDragging
             || _isResizing
             || _isDraggingGoal
@@ -424,7 +430,7 @@ public sealed class EditorScene : IScene
             DrawHelper.DrawBorder(spriteBatch, pixel, _hoveredPlatform.Bounds, Color.White, GetWorldLineThickness(2));
         }
 
-        if (_hoveredGoal is not null && _hoveredGoal != _selectedGoal)
+        if (_hoveredGoal is not null && !_selectedGoals.Contains(_hoveredGoal))
         {
             DrawHelper.DrawBorder(spriteBatch, pixel, _hoveredGoal.Bounds, Color.White, GetWorldLineThickness(2));
         }
@@ -444,9 +450,9 @@ public sealed class EditorScene : IScene
             DrawHelper.DrawBorder(spriteBatch, pixel, selectedPlatform.Bounds, new Color(255, 220, 80), GetWorldLineThickness(3));
         }
 
-        if (_selectedGoal is not null)
+        foreach (Goal selectedGoal in _selectedGoals)
         {
-            DrawHelper.DrawBorder(spriteBatch, pixel, _selectedGoal.Bounds, new Color(255, 220, 80), GetWorldLineThickness(3));
+            DrawHelper.DrawBorder(spriteBatch, pixel, selectedGoal.Bounds, new Color(255, 220, 80), GetWorldLineThickness(3));
         }
 
         foreach (CheckpointFlag selectedCheckpoint in _selectedCheckpoints)
@@ -476,6 +482,12 @@ public sealed class EditorScene : IScene
         {
             spriteBatch.Draw(pixel, _previewBounds, Color.White * 0.18f);
             DrawHelper.DrawBorder(spriteBatch, pixel, _previewBounds, _selectedColor.ToXnaColor(), GetWorldLineThickness(2));
+        }
+
+        if (_isMarqueeSelecting && _marqueeBounds.Width > 0 && _marqueeBounds.Height > 0)
+        {
+            spriteBatch.Draw(pixel, _marqueeBounds, new Color(120, 180, 255) * 0.14f);
+            DrawHelper.DrawBorder(spriteBatch, pixel, _marqueeBounds, new Color(120, 180, 255), GetWorldLineThickness(1));
         }
 
         if (IsDraggingToolbarObject)
@@ -644,6 +656,7 @@ public sealed class EditorScene : IScene
     {
         float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, 0.05f);
         bool canStartPanning = !_isCreating
+            && !_isMarqueeSelecting
             && !_isDragging
             && !_isDraggingGoal
             && !_isDraggingCheckpoint
@@ -730,6 +743,10 @@ public sealed class EditorScene : IScene
             else if (clickedGoal is not null)
             {
                 SelectSingleGoal(clickedGoal);
+            }
+            else if (!clickedPlayerSpawn && (_level.Lava is null || !_level.Lava.HitTest(mouse)))
+            {
+                StartMarqueeSelection(mouse);
             }
 
             return;
@@ -850,6 +867,12 @@ public sealed class EditorScene : IScene
 
     private void ContinueMouseAction(Point mouse)
     {
+        if (_isMarqueeSelecting)
+        {
+            _marqueeBounds = BuildRectangle(_marqueeStart, mouse);
+            return;
+        }
+
         if (_isCreating)
         {
             _previewBounds = BuildRectangle(_createStart, Snap(mouse));
@@ -906,6 +929,14 @@ public sealed class EditorScene : IScene
 
     private void EndMouseAction()
     {
+        if (_isMarqueeSelecting)
+        {
+            ApplyMarqueeSelection();
+            _isMarqueeSelecting = false;
+            _marqueeBounds = Rectangle.Empty;
+            return;
+        }
+
         if (_isCreating && _previewBounds.Width >= MinPlatformSize && _previewBounds.Height >= MinPlatformSize)
         {
             Rectangle snappedBounds = SnapRectangleToGrid(_previewBounds);
@@ -924,6 +955,69 @@ public sealed class EditorScene : IScene
         _isDraggingLavaLine = false;
         _isResizing = false;
         _activeHandle = ResizeHandle.None;
+    }
+
+    private void StartMarqueeSelection(Point mouse)
+    {
+        _isMarqueeSelecting = true;
+        _isCreating = false;
+        _isDragging = false;
+        _isDraggingGoal = false;
+        _isDraggingCheckpoint = false;
+        _isDraggingLaunchPad = false;
+        _isDraggingPlayerSpawn = false;
+        _isDraggingLavaLine = false;
+        _isResizing = false;
+        _activeHandle = ResizeHandle.None;
+        _marqueeStart = mouse;
+        _marqueeBounds = Rectangle.Empty;
+    }
+
+    private void ApplyMarqueeSelection()
+    {
+        if (_marqueeBounds.Width < MarqueeMinDragSize && _marqueeBounds.Height < MarqueeMinDragSize)
+        {
+            ClearSelection();
+            return;
+        }
+
+        ClearSelection();
+        foreach (Platform platform in _level.Platforms)
+        {
+            if (_marqueeBounds.Intersects(platform.Bounds))
+            {
+                _selectedPlatforms.Add(platform);
+            }
+        }
+
+        foreach (CheckpointFlag checkpoint in _level.CheckpointFlags)
+        {
+            if (_marqueeBounds.Intersects(checkpoint.Bounds))
+            {
+                _selectedCheckpoints.Add(checkpoint);
+            }
+        }
+
+        foreach (LaunchPad launchPad in _level.LaunchPads)
+        {
+            if (_marqueeBounds.Intersects(launchPad.Bounds))
+            {
+                _selectedLaunchPads.Add(launchPad);
+            }
+        }
+
+        foreach (Goal goal in _level.Goals)
+        {
+            if (_marqueeBounds.Intersects(goal.Bounds))
+            {
+                _selectedGoals.Add(goal);
+            }
+        }
+
+        _selectedPlatform = _selectedPlatforms.Count > 0 ? _selectedPlatforms[^1] : null;
+        _selectedCheckpoint = _selectedCheckpoints.Count > 0 ? _selectedCheckpoints[^1] : null;
+        _selectedLaunchPad = _selectedLaunchPads.Count > 0 ? _selectedLaunchPads[^1] : null;
+        _selectedGoal = _selectedGoals.Count > 0 ? _selectedGoals[^1] : null;
     }
 
     private void StartLavaDrag(Point mouse)
@@ -1026,6 +1120,8 @@ public sealed class EditorScene : IScene
         _selectedCheckpoint = null;
         _selectedLaunchPads.Clear();
         _selectedLaunchPad = null;
+        _selectedGoals.Clear();
+        _selectedGoals.Add(goal);
         _selectedGoal = goal;
     }
 
@@ -1047,6 +1143,7 @@ public sealed class EditorScene : IScene
     {
         _selectedPlatforms.Clear();
         _selectedPlatform = null;
+        _selectedGoals.Clear();
         _selectedGoal = null;
         _selectedLaunchPads.Clear();
         _selectedLaunchPad = null;
@@ -1081,6 +1178,7 @@ public sealed class EditorScene : IScene
     {
         _selectedPlatforms.Clear();
         _selectedPlatform = null;
+        _selectedGoals.Clear();
         _selectedGoal = null;
         _selectedCheckpoints.Clear();
         _selectedCheckpoint = null;
@@ -1381,6 +1479,7 @@ public sealed class EditorScene : IScene
         _selectedPlatforms.Clear();
         _selectedPlatforms.Add(platform);
         _selectedPlatform = platform;
+        _selectedGoals.Clear();
         _selectedGoal = null;
         _selectedCheckpoints.Clear();
         _selectedCheckpoint = null;
@@ -1390,6 +1489,7 @@ public sealed class EditorScene : IScene
 
     private void ToggleSelection(Platform platform)
     {
+        _selectedGoals.Clear();
         _selectedGoal = null;
         _selectedCheckpoints.Clear();
         _selectedCheckpoint = null;
@@ -1409,6 +1509,7 @@ public sealed class EditorScene : IScene
 
     private void ToggleSelection(CheckpointFlag checkpoint)
     {
+        _selectedGoals.Clear();
         _selectedGoal = null;
         _selectedPlatforms.Clear();
         _selectedPlatform = null;
@@ -1428,6 +1529,7 @@ public sealed class EditorScene : IScene
 
     private void ToggleSelection(LaunchPad launchPad)
     {
+        _selectedGoals.Clear();
         _selectedGoal = null;
         _selectedPlatforms.Clear();
         _selectedPlatform = null;
@@ -1449,6 +1551,7 @@ public sealed class EditorScene : IScene
     {
         _selectedPlatforms.Clear();
         _selectedPlatform = null;
+        _selectedGoals.Clear();
         _selectedGoal = null;
         _selectedCheckpoints.Clear();
         _selectedCheckpoint = null;
@@ -1522,11 +1625,12 @@ public sealed class EditorScene : IScene
             _level.RemoveLaunchPad(_selectedLaunchPads[i]);
         }
 
-        if (_selectedGoal is not null)
+        for (int i = _selectedGoals.Count - 1; i >= 0; i--)
         {
-            _level.RemoveGoal(_selectedGoal);
-            _hoveredGoal = null;
+            _level.RemoveGoal(_selectedGoals[i]);
         }
+
+        _hoveredGoal = null;
 
         _hoveredCheckpoint = null;
         _hoveredLaunchPad = null;
@@ -1575,9 +1679,9 @@ public sealed class EditorScene : IScene
                 0f));
         }
 
-        if (_selectedGoal is not null)
+        foreach (Goal selectedGoal in _selectedGoals)
         {
-            Rectangle bounds = _selectedGoal.Bounds;
+            Rectangle bounds = selectedGoal.Bounds;
             _clipboard.Add(new EditorClipboardItem(
                 EditorObjectKind.Goal,
                 bounds.X - _clipboardOrigin.X,
@@ -1655,6 +1759,7 @@ public sealed class EditorScene : IScene
                     {
                         Goal goal = new(position);
                         _level.AddGoal(goal);
+                        _selectedGoals.Add(goal);
                         _selectedGoal = goal;
                         break;
                     }
@@ -1695,9 +1800,9 @@ public sealed class EditorScene : IScene
             return true;
         }
 
-        if (_selectedGoal is not null)
+        if (_selectedGoals.Count > 0)
         {
-            origin = _selectedGoal.Bounds.Location;
+            origin = _selectedGoals[0].Bounds.Location;
             return true;
         }
 
@@ -1820,7 +1925,7 @@ public sealed class EditorScene : IScene
 
     private void UpdateHoverState(Point mouse)
     {
-        bool objectActionActive = _isCreating || _isDragging || _isDraggingGoal || _isDraggingCheckpoint || _isDraggingLaunchPad || _isDraggingPlayerSpawn || _isDraggingLavaLine || _isResizing || IsDraggingToolbarObject;
+        bool objectActionActive = _isCreating || _isMarqueeSelecting || _isDragging || _isDraggingGoal || _isDraggingCheckpoint || _isDraggingLaunchPad || _isDraggingPlayerSpawn || _isDraggingLavaLine || _isResizing || IsDraggingToolbarObject;
         if (objectActionActive)
         {
             _hoveredPlatform = (_isCreating || _isDragging || _isResizing) ? _selectedPlatform : null;

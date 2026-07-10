@@ -483,13 +483,6 @@
       "width": 288,
       "height": 160,
       "color": "Blue"
-    },
-    {
-      "x": -1952,
-      "y": 96,
-      "width": 1824,
-      "height": 64,
-      "color": "Red"
     }
   ],
   "goals": [
@@ -604,8 +597,8 @@
     }
   ],
   "playerSpawn": {
-    "x": -800,
-    "y": 0
+    "x": -288,
+    "y": 608
   },
   "musicId": "default_track_02",
   "allPlayers": true,
@@ -623,8 +616,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-05-11T14:59:53.7977532Z",
-  "modifiedDate": "2026-07-09T04:22:39.3944591Z",
-  "version": 6,
+  "modifiedDate": "2026-07-10T18:50:43.9856097Z",
+  "version": 7,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

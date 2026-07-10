@@ -19,7 +19,14 @@ Core/         Entry point, clase Game, bucle de simulación
 
 Scenes/       Pantallas (patrón IScene)
   IScene.cs, MenuScene, PartyScene, LevelSelectScene, GameScene, EditorScene,
-  OptionsScene, LevelInfoScene, EditorObjectKind, EditorClipboardItem
+  OptionsScene, LevelInfoScene, RopeSandboxScene (dev), CustomizationScene,
+  ReplayViewerScene, EditorObjectKind, EditorClipboardItem
+
+Gameplay/     Tuning en vivo
+  GameplayTuning, DeveloperTuningPanel
+
+Developer/    Herramientas dev (benchmarks, fuzz)
+  GameplayBenchmark/  BenchmarkRunner, RopeMechanicsSimulation, scenarios, CLI headless
 
 Party/        Coop local + roster Steam
   PartyManager, PartyMember, PartyMemberId, PartyInputSource
@@ -30,7 +37,7 @@ UI/           Widgets + navegación
               NavigationDebug, VirtualCursor, ResolutionCatalog
 
 Entities/     Objetos de juego
-  Player, Rope, RopeNode, RopeConstraint, RopeGameplayMode,
+  Player, Rope, RopeNode, RopeConstraint, RopeTensionPhase, RopeGameplayMode,
   Platform, Goal, CheckpointFlag, LaunchPad, PlayerState, PlayerIdentity
 
 Managers/     Servicios y estado
@@ -48,7 +55,7 @@ Networking/   Coop online (andamiaje)
 
 LevelSystem/  Niveles
   Level, LevelData, LevelMetadata, LevelManager, LevelMusicLibrary,
-  LevelPreviewManager
+  LevelPreviewManager, DeveloperSettings
 
 Graphics/     Camera, DrawHelper, SimpleTextRenderer
 Utils/        GameColor, CollisionHelper, GameSettings, GridLayout
@@ -115,6 +122,7 @@ MenuScene
 │                      ├─ Edit   → EditorScene(levelId)
 │                      ├─ Create → Popup texto → LevelManager.CreateNewLevel
 │                      └─ Delete → Popup confirmación → LevelManager.DeleteLevel
+├─ "Rope Sandbox"  → RopeSandboxScene (solo DeveloperMode)
 └─ "Options"       → OptionsScene (display, audio, rebinding teclado/gamepad)
 ```
 

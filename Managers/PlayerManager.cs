@@ -17,6 +17,7 @@ public sealed class PlayerManager
     }
 
     public List<Player> Players { get; } = new();
+    private readonly Dictionary<int, GameColor> _checkpointPlayerColors = new();
     public CheckpointFlag CurrentCheckpoint { get; private set; }
     public int? CurrentCheckpointId => CurrentCheckpoint?.Id;
     public bool HasCheckpoint => CurrentCheckpoint is not null;
@@ -87,6 +88,7 @@ public sealed class PlayerManager
         if (ReferenceEquals(CurrentCheckpoint, checkpoint))
         {
             checkpoint.IsActive = true;
+            CaptureCheckpointPlayerColors();
             return;
         }
 
@@ -97,11 +99,13 @@ public sealed class PlayerManager
 
         CurrentCheckpoint = checkpoint;
         CurrentCheckpoint.IsActive = true;
+        CaptureCheckpointPlayerColors();
     }
 
     public void RespawnPlayer(Player player)
     {
         player.RespawnAt(RespawnPosition);
+        ApplyCheckpointColor(player);
     }
 
     public void ReviveAllAtStart()
@@ -119,6 +123,8 @@ public sealed class PlayerManager
         {
             player.Revive(position);
         }
+
+        ApplyCheckpointPlayerColors();
     }
 
     public void ClearCheckpoint()
@@ -127,6 +133,33 @@ public sealed class PlayerManager
         {
             CurrentCheckpoint.IsActive = false;
             CurrentCheckpoint = null;
+        }
+
+        _checkpointPlayerColors.Clear();
+    }
+
+    private void CaptureCheckpointPlayerColors()
+    {
+        _checkpointPlayerColors.Clear();
+        foreach (Player player in Players)
+        {
+            _checkpointPlayerColors[player.NetworkId] = player.PlayerColor;
+        }
+    }
+
+    private void ApplyCheckpointPlayerColors()
+    {
+        foreach (Player player in Players)
+        {
+            ApplyCheckpointColor(player);
+        }
+    }
+
+    private void ApplyCheckpointColor(Player player)
+    {
+        if (_checkpointPlayerColors.TryGetValue(player.NetworkId, out GameColor color))
+        {
+            player.RestoreColor(color);
         }
     }
 

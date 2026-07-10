@@ -37,7 +37,7 @@ Ver también [`05-STEAM.md`](05-STEAM.md).
 - `IsHost` = `LocalTest || Host`. La autoridad de simulación vive en el host.
 - `Peers` (`SessionPeer`: OwnerId, DisplayName, ExternalUserId) y `Players` (`PlayerSessionInfo`).
 - `GameSessionSettings`: `SimulationTicksPerSecond=60`, `MaxPlayers=4`, `HostAuthoritativeRopes=true`.
-- Único factory implementado hoy: `CreateLocalTest(levelId, ropeMode)`. **Faltan** `CreateHost` / `CreateClient`.
+- Factories: `CreateLocalTest(levelId, ropeMode)` y `CreateOnline(role, levelId, ropeMode, ownerId, displayName)`.
 - `NetworkIdAllocator` asigna ids de red; `RegisterPlayer` los reserva.
 
 ### Ownership — `NetworkEntityOwnership` / `INetworkEntity`
@@ -68,7 +68,7 @@ Ver también [`05-STEAM.md`](05-STEAM.md).
 
 - `INetworkPacket` (`PacketType`, `Tick`). Tipos: `InputFrame, GameSnapshot, SessionState`.
 - `InputFramePacket(InputFrame)` y `GameSnapshotPacket(GameSnapshot)`.
-- **No hay serializador binario** (a bytes) ni deserializador implementado todavía.
+- Serialización binaria: `NetworkPacketCodec` + `PacketBuffer` (canal Steam 0=input, 1=snapshot).
 
 ## Qué FALTA para coop online v1 completo
 

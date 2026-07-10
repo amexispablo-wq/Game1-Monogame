@@ -60,22 +60,35 @@ Cuando el jugador se solapa con una plataforma sólida (por cambio de color o po
 
 ## Sogas / Rope (`Entities/Rope.cs`)
 
-Soga física **Verlet** que conecta pares de jugadores consecutivos. Con N jugadores hay N-1 sogas (`PhysicsWorld` constructor).
+Soga **Verlet** entre pares consecutivos de jugadores. Con N jugadores hay N−1 sogas (`PhysicsWorld` constructor).
 
-- 24 nodos por defecto; extremos "pinned" a los jugadores (`SyncPinnedNodesToPlayers`).
-- Integración Verlet + resolución de constraints (10 iteraciones) + colisión de nodos con plataformas.
-- Transfiere impulsos a los jugadores en los extremos según tensión (`ApplyEndpointImpulses`).
-- **Pull:** mantener tecla (default `Space`) tira de los nodos cercanos hacia el jugador (`ApplyPullForces`).
-- Sólo simula si `IsHostControlled` (preparado para autoridad de host).
+### Modelo actual (2026)
+
+- **Nodos:** default 24 (`GameplayTuning.NodeCount`); mínimo **40** en `ColoredPhysics` (`Rope.ColoredPhysicsMinNodeCount`).
+- **Integración:** Verlet + gravedad + damping; extremos acoplados por tangente del rope (no cuerda recta).
+- **Constraints** (`RopeConstraint`): **solo resisten stretch**; permiten sag/compresión suave. Solver configurable (`SolverIterations`, default 8).
+- **Rest length:** `_targetRestLength` acotado por `MinimumRopeLength` / `MaximumRopeLength`; path total no puede superar rest length (`EnforceMaximumPathLength`).
+- **Colisión colored:** nodos y segmentos vs plataformas cuyo color coincide con flags del rope; snap + eject + routing en esquinas.
+- **Pull:** acorta `_targetRestLength` (no arrastra nodos hacia el jugador); tensión transfiere fuerza al otro extremo.
+- **Draw:** color puro sin tint blanco al estirar; grosor sube levemente con `FeedbackIntensity`.
+- Solo simula si `IsHostControlled` (autoridad host en online).
+
+Parámetros tuneables vía `GameplayTuning` + panel F6 (dev). Ver [`09-HERRAMIENTAS-DEV.md`](09-HERRAMIENTAS-DEV.md).
 
 ### Modos de soga (`RopeGameplayMode`)
 
 | Modo | Comportamiento |
 |------|----------------|
-| `ColoredPhysics` (default) | la soga colisiona con plataformas de los colores presentes entre los jugadores; toma color mezclado |
-| `Neutral` | la soga ignora plataformas y se queda beige |
+| `ColoredPhysics` (default en play) | colisión con plataformas según colores de **los dos extremos** del segmento; color visual = mezcla de esos dos PJ |
+| `Neutral` | sin colisión con plataformas; color accent (`ColorType.Rope`); usado en Rope Sandbox |
 
-Se elige en `LevelSelectScene` (selector que persiste en `static`), y se pasa a `GameScene` → `GameSession.RopeGameplayMode`.
+Se elige en `LevelSelectScene` (campo `static` entre transiciones) → `GameScene` / `GameSession.RopeGameplayMode`.
+
+### Color de la soga
+
+- Flags de colisión: OR de `StartPlayer.PlayerColor` y `EndPlayer.PlayerColor` (ej. rojo + verde → colisiona rojo **y** verde).
+- Color dibujado: `ColorPaletteManager.MixFlags` — mismas reglas que plataformas superpuestas (R+G = amarillo, R+B = magenta, etc.).
+- Se recalcula cada tick en `RefreshGameplayModeState()` cuando un PJ cambia de color.
 
 ## Launch Pads (`Entities/LaunchPad.cs`)
 
@@ -102,12 +115,13 @@ Plataformas de impulso con rotación. Al tocarlas, lanzan al jugador en la direc
   - `GameSession.State = Completed`.
 - `GameScene` muestra UI de "LEVEL COMPLETE" con tiempo y "NEW RECORD", con delay de 3s antes de poder volver.
 
-## Input (`Managers/InputManager.cs`, `InputProfile`, `InputDevice`)
+## Input (`Managers/InputManager.cs`, `PartyManager`)
 
 - Hasta **4 jugadores locales** (`MaxLocalPlayers = 4`).
-- Perfiles activos = jugadores que se spawnean (`PlayerManager.SpawnLocalPlayers(input.ActiveProfiles)`).
-- Por ahora el teclado controla **un** jugador a la vez (`KeyboardControlledPlayerId`); se puede cambiar clickeando un jugador en `GameScene` (`HandlePlayerSelectionClick`).
-- `PlayerInputState` (lo que consume la simulación): `HorizontalMovement, JumpPressed, RespawnPressed, FastFallHeld, PullRopeHeld, RequestedColor?`.
+- Roster en `PartyManager`; cada `PartyMember` tiene `InputSource` (Keyboard / Gamepad / SteamRemote).
+- Al spawnear: `PlayerManager.SpawnFromParty(members, input)` registra bindings `networkId → PartyMember` en `InputManager`.
+- `GameplayInputBlocked`: cuando true (pause, muerte, level complete), no se leen inputs de gameplay. Se resetea en `ClearGameplayBindings()` al cambiar de escena.
+- `PlayerInputState`: `HorizontalMovement, JumpPressed, RespawnPressed, FastFallHeld, PullRopeHeld, RequestedColor?`.
 - Teclas configurables vía `SettingsManager` (ver `06-GUIA-DESARROLLO.md`).
 
 ### HUD / Debug
