@@ -301,6 +301,31 @@ public sealed class PartyManager
         return true;
     }
 
+    public void EnsureDevSandboxMembers()
+    {
+        EnsureDefaultParty();
+        if (_members.Count >= 2)
+        {
+            return;
+        }
+
+        if (TryJoinGamepad(0))
+        {
+            return;
+        }
+
+        ulong owningSteamId = _steamLobby?.LocalSteamId ?? 0;
+        PartyMember secondMember = CreateMember(
+            "P2",
+            PartyMemberType.LocalGamepad,
+            PartyInputSource.Gamepad,
+            0,
+            owningSteamId: owningSteamId);
+        _members.Add(secondMember);
+        RefreshLocalDisplayNames();
+        NotifyChanged();
+    }
+
     public bool TryLeaveGamepad(int controllerIndex)
     {
         if (AssignmentsLocked)

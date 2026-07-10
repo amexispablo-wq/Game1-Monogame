@@ -14,14 +14,14 @@ public sealed class RopeConstraint
 
     public RopeNode A { get; }
     public RopeNode B { get; }
-    public float RestLength { get; }
+    public float RestLength { get; set; }
     public float CurrentTension { get; private set; }
 
+    /// <summary>
+    /// Distance constraint: resist stretch strongly, allow soft compression (sag).
+    /// </summary>
     public void Solve(
-        float slackStiffness,
-        float tenseStiffness,
-        float slackStretchTolerance,
-        float tenseStretchRange,
+        float stiffness,
         float maxCorrection,
         out Vector2 pinnedACorrection,
         out Vector2 pinnedBCorrection)
@@ -38,63 +38,47 @@ public sealed class RopeConstraint
         }
 
         float error = distance - RestLength;
+        // Only fight stretch. Compression = slack/sag, leave alone.
         if (error <= 0f)
         {
             return;
         }
 
-        float allowedError = RestLength * MathHelper.Clamp(slackStretchTolerance, 0f, 0.65f);
-        if (error <= allowedError)
+        CurrentTension = error / RestLength;
+        float clampedStiffness = MathHelper.Clamp(stiffness, 0f, 1f);
+        Vector2 correction = (delta / distance) * error * clampedStiffness;
+        float maxSafe = MathF.Max(0.01f, maxCorrection);
+        if (correction.LengthSquared() > maxSafe * maxSafe)
         {
-            return;
-        }
-
-        float solvedError = error - allowedError;
-        CurrentTension = solvedError / RestLength;
-
-        float tenseRange = MathF.Max(0.001f, tenseStretchRange);
-        float tenseAmount = MathHelper.Clamp(CurrentTension / tenseRange, 0f, 1f);
-        tenseAmount = tenseAmount * tenseAmount * (3f - (2f * tenseAmount));
-        float stiffness = MathHelper.Lerp(
-            MathHelper.Clamp(slackStiffness, 0f, 1f),
-            MathHelper.Clamp(tenseStiffness, 0f, 1f),
-            tenseAmount);
-
-        Vector2 correction = (delta / distance) * solvedError * stiffness;
-        float maxSafeCorrection = MathF.Max(0.01f, maxCorrection);
-        if (correction.LengthSquared() > maxSafeCorrection * maxSafeCorrection)
-        {
-            correction = Vector2.Normalize(correction) * maxSafeCorrection;
+            correction = Vector2.Normalize(correction) * maxSafe;
         }
 
         float aWeight = A.IsPinned ? 0f : 1f;
         float bWeight = B.IsPinned ? 0f : 1f;
         float totalWeight = aWeight + bWeight;
-
-        if (totalWeight > 0f)
+        if (totalWeight <= 0f)
         {
-            if (!A.IsPinned)
-            {
-                A.Position += correction * (aWeight / totalWeight);
-            }
-            else
-            {
-                pinnedACorrection += correction;
-            }
-
-            if (!B.IsPinned)
-            {
-                B.Position -= correction * (bWeight / totalWeight);
-            }
-            else
-            {
-                pinnedBCorrection -= correction;
-            }
-
+            pinnedACorrection += correction * 0.5f;
+            pinnedBCorrection -= correction * 0.5f;
             return;
         }
 
-        pinnedACorrection += correction * 0.5f;
-        pinnedBCorrection -= correction * 0.5f;
+        if (!A.IsPinned)
+        {
+            A.Position += correction * (aWeight / totalWeight);
+        }
+        else
+        {
+            pinnedACorrection += correction;
+        }
+
+        if (!B.IsPinned)
+        {
+            B.Position -= correction * (bWeight / totalWeight);
+        }
+        else
+        {
+            pinnedBCorrection -= correction;
+        }
     }
 }

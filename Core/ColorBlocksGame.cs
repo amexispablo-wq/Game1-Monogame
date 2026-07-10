@@ -3,6 +3,7 @@ using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using ColorBlocks.Replay;
+using ColorBlocks.Developer.GameplayBenchmark;
 
 namespace ColorBlocks;
 
@@ -20,6 +21,7 @@ public class ColorBlocksGame : Game
     private readonly MusicManager _music = new();
     private readonly PresentationManager _presentation = new();
     private readonly ReplayBackgroundRenderer _replayBackground = new();
+    private readonly BenchmarkOverlay _benchmarkOverlay = new();
     private SpriteBatch _spriteBatch = null!;
     private Texture2D _pixel = null!;
     private InputManager _input = null!;
@@ -53,6 +55,7 @@ public class ColorBlocksGame : Game
     }
 
     public InputManager Input => _input;
+    public DeveloperTuningPanel? ActiveTuningPanel { get; set; }
     public PartyManager Party { get; } = new();
     public Texture2D Pixel => _pixel;
     public SteamManager Steam => _steam;
@@ -220,6 +223,12 @@ public class ColorBlocksGame : Game
         }
 
         _replayBackground.Update(this, gameTime);
+        BenchmarkManager.Update(gameTime, _input);
+        if (DeveloperSettings.DeveloperMode)
+        {
+            _benchmarkOverlay.HandleInput(_input, BenchmarkManager.Runner);
+        }
+
         _currentScene.Update(gameTime);
 
         base.Update(gameTime);
@@ -227,6 +236,7 @@ public class ColorBlocksGame : Game
 
     protected override void Draw(GameTime gameTime)
     {
+        System.Diagnostics.Stopwatch renderWatch = System.Diagnostics.Stopwatch.StartNew();
         _presentation.BeginDraw(GraphicsDevice);
         GraphicsDevice.Clear(new Color(23, 27, 34));
         _replayBackground.Draw(this, gameTime, _spriteBatch);
@@ -234,8 +244,18 @@ public class ColorBlocksGame : Game
 
         _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         _partyHud.Draw(_spriteBatch, _pixel, Viewport, Party);
+        ActiveTuningPanel?.Draw(_spriteBatch, _pixel, Viewport, Party);
+        if (DeveloperSettings.DeveloperMode)
+        {
+            _benchmarkOverlay.Draw(_spriteBatch, _pixel, Viewport, BenchmarkManager.Runner);
+            BenchmarkDebugOverlay.Draw(_spriteBatch, _pixel, Viewport, BenchmarkManager.Runner);
+        }
+
         ReplayDebugOverlay.Draw(_spriteBatch, _pixel, Viewport);
         _spriteBatch.End();
+
+        renderWatch.Stop();
+        BenchmarkManager.LastRenderMs = renderWatch.Elapsed.TotalMilliseconds;
 
         _presentation.EndDraw(GraphicsDevice, _spriteBatch, _pixel, new Color(23, 27, 34));
 

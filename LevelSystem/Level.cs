@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -78,6 +79,24 @@ public sealed class Level
         data.Goals.Add(new GoalData { X = 1216, Y = 356 });
 
         return FromData(data);
+    }
+
+    public static Level CreateRopeSandbox()
+    {
+        return new Level(
+            new Vector2(260f, 320f),
+            new[]
+            {
+                new Platform(new Rectangle(0, 420, 1800, 48), GameColor.Red),
+                new Platform(new Rectangle(120, 340, 520, 28), GameColor.Red),
+                new Platform(new Rectangle(760, 340, 520, 28), GameColor.Red)
+            },
+            Array.Empty<Goal>(),
+            name: "Rope Sandbox")
+        {
+            AllPlayers = true,
+            RegularRope = true
+        };
     }
 
     public static Level FromData(LevelData data)

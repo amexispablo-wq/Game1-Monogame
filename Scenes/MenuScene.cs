@@ -14,6 +14,7 @@ public sealed class MenuScene : IScene
     private readonly Button _optionsButton = new("Options");
     private readonly Button _customizationButton = new("Customization");
     private readonly Button _quitButton = new("Quit");
+    private readonly Button _sandboxButton = new("Rope Sandbox");
     private readonly UIFocusManager _focus = new();
     private readonly FocusableButton _playFocus;
     private readonly FocusableButton _partyFocus;
@@ -21,6 +22,8 @@ public sealed class MenuScene : IScene
     private readonly FocusableButton _optionsFocus;
     private readonly FocusableButton _customizationFocus;
     private readonly FocusableButton _quitFocus;
+    private readonly FocusableButton _sandboxFocus;
+    private readonly bool _showSandboxButton;
 
     public MenuScene(ColorBlocksGame game)
     {
@@ -31,6 +34,8 @@ public sealed class MenuScene : IScene
         _optionsFocus = new FocusableButton(_optionsButton);
         _customizationFocus = new FocusableButton(_customizationButton);
         _quitFocus = new FocusableButton(_quitButton);
+        _sandboxFocus = new FocusableButton(_sandboxButton);
+        _showSandboxButton = DeveloperSettings.DeveloperMode;
         _focus.ResetFocus();
     }
 
@@ -51,13 +56,26 @@ public sealed class MenuScene : IScene
         int optionsIndex = _focus.Add(_optionsFocus, "Options");
         int customizationIndex = _focus.Add(_customizationFocus, "Customization");
         int quitIndex = _focus.Add(_quitFocus, "Quit");
+        int? sandboxIndex = null;
+        if (_showSandboxButton)
+        {
+            sandboxIndex = _focus.Add(_sandboxFocus, "RopeSandbox");
+        }
 
         NavigationGraph nav = _focus.Navigation;
         nav.LinkVertical(playIndex, partyIndex);
         nav.LinkVertical(partyIndex, editorIndex);
         nav.LinkVertical(editorIndex, optionsIndex);
         nav.LinkVertical(optionsIndex, customizationIndex);
-        nav.LinkVertical(customizationIndex, quitIndex);
+        if (sandboxIndex.HasValue)
+        {
+            nav.LinkVertical(customizationIndex, sandboxIndex.Value);
+            nav.LinkVertical(sandboxIndex.Value, quitIndex);
+        }
+        else
+        {
+            nav.LinkVertical(customizationIndex, quitIndex);
+        }
 
         _focus.FinalizeFocus("Play");
         _focus.Update(gameTime, _game.Input);
@@ -81,6 +99,10 @@ public sealed class MenuScene : IScene
         else if (_customizationFocus.WasActivated)
         {
             _game.ChangeScene(new CustomizationScene(_game));
+        }
+        else if (_showSandboxButton && _sandboxFocus.WasActivated)
+        {
+            _game.ChangeScene(new RopeSandboxScene(_game));
         }
         else if (_quitFocus.WasActivated)
         {
@@ -116,6 +138,10 @@ public sealed class MenuScene : IScene
         _editorButton.Draw(spriteBatch, pixel);
         _optionsButton.Draw(spriteBatch, pixel);
         _customizationButton.Draw(spriteBatch, pixel);
+        if (_showSandboxButton)
+        {
+            _sandboxButton.Draw(spriteBatch, pixel);
+        }
         _quitButton.Draw(spriteBatch, pixel);
         _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
 
@@ -125,8 +151,11 @@ public sealed class MenuScene : IScene
     private void LayoutButtons()
     {
         Viewport viewport = _game.Viewport;
+        string[] labels = _showSandboxButton
+            ? new[] { "Play", "Party", "Level Editor", "Options", "Customization", "Rope Sandbox", "Quit" }
+            : new[] { "Play", "Party", "Level Editor", "Options", "Customization", "Quit" };
         var layout = ButtonColumnLayout.CreateAuto(
-            new[] { "Play", "Party", "Level Editor", "Options", "Customization", "Quit" },
+            labels,
             viewport.Width, viewport.Height,
             buttonHeight: 56,
             verticalGap: 20,
@@ -139,7 +168,15 @@ public sealed class MenuScene : IScene
             _editorButton.Bounds = layout.ButtonBounds[2];
             _optionsButton.Bounds = layout.ButtonBounds[3];
             _customizationButton.Bounds = layout.ButtonBounds[4];
-            _quitButton.Bounds = layout.ButtonBounds[5];
+            if (_showSandboxButton && layout.ButtonBounds.Length >= 7)
+            {
+                _sandboxButton.Bounds = layout.ButtonBounds[5];
+                _quitButton.Bounds = layout.ButtonBounds[6];
+            }
+            else
+            {
+                _quitButton.Bounds = layout.ButtonBounds[5];
+            }
         }
     }
 }

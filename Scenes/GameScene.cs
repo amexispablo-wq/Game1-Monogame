@@ -21,6 +21,7 @@ public sealed class GameScene : IScene
     private readonly Camera _camera;
     private readonly PauseMenuOverlay _pauseMenu = new();
     private bool _debugDraw;
+    private readonly DeveloperTuningPanel _tuningPanel = new();
     private bool _completionUiActive;
     private float _finalTime;
     private bool _newRecord;
@@ -69,6 +70,7 @@ public sealed class GameScene : IScene
         _session.LavaRiseEnabled = lavaRiseEnabled;
         _level = LevelLibrary.LoadLevel(levelId);
         _playerManager = new PlayerManager(_session, _level);
+        _game.ActiveTuningPanel = _tuningPanel;
         _game.Party.ApplyPreferredInputForPrimaryLocalMember(_game.Input);
         _game.Party.LockAssignments();
         _playerManager.SpawnFromParty(_game.Party.Members, _game.Input);
@@ -97,9 +99,11 @@ public sealed class GameScene : IScene
 
     public void OnExit()
     {
+        _game.ActiveTuningPanel = null;
         _simulation.FixedTickCompleted -= OnSimulationFixedTick;
         ReplayDiagnostics.ActiveRecorder = null;
         _game.SteamLobby.MemberLeft -= OnLobbyMemberLeft;
+        _game.Input.GameplayInputBlocked = false;
         _game.Input.ClearGameplayBindings();
         _game.Party.UnlockAssignments();
         _game.GameNetwork.Reset();
@@ -228,6 +232,13 @@ public sealed class GameScene : IScene
         {
             _debugDraw = !_debugDraw;
         }
+
+        if (_game.Input.TuningPanelTogglePressed)
+        {
+            _tuningPanel.Toggle();
+        }
+
+        _tuningPanel.Update(gameTime, _game.Input, viewport, _game.Party);
 
         GameNetworkCoordinator network = _game.GameNetwork;
         network.PumpIncoming(_session, _simulation);
@@ -616,14 +627,22 @@ public sealed class GameScene : IScene
         foreach (Player player in Players)
         {
             lines.Add(
+                $"PLAYER P{player.PlayerIndex + 1} SPD {player.Velocity.Length():0.#} FRIC {player.GroundFriction:0.#} VX {player.Velocity.X:0.#} VY {player.Velocity.Y:0.#}");
+            lines.Add(
                 $"PLAYER P{player.PlayerIndex + 1} PARTY{player.PartyMemberId.Value} N{player.NetworkId} INPUT {FormatInputDevice(player.AssignedInput)} {GetNetworkRoleText(player)} {GetAuthorityText(player)}");
         }
 
         foreach (Rope rope in Ropes)
         {
             int tension = (int)MathF.Round(rope.LastTension * 100f);
-            lines.Add($"ROPE N{rope.NetworkId} O{rope.OwnerId} {GetNetworkRoleText(rope)} {GetAuthorityText(rope)} T{tension}");
+            lines.Add(
+                $"ROPE LEN {rope.CurrentPathLength:0} TARGET {rope.TargetRestLength:0} SLACK {rope.SlackAmount:0} T{tension} {rope.TensionPhase}");
+            lines.Add(
+                $"ROPE PULL {rope.LastPullIntensity:0.00} FORCE {rope.LastEndpointForce:0} ITERS {rope.SolverIterations} NODES {rope.Nodes.Count} {(rope.IsPulling ? "PULLING" : "IDLE")}");
+            lines.Add($"ROPE N{rope.NetworkId} O{rope.OwnerId} {GetNetworkRoleText(rope)} {GetAuthorityText(rope)}");
         }
+
+        lines.Add($"SIM STEP {_simulation.PhysicsWorld.LastSimulationStepSeconds * 1000f:0.0}ms");
 
         int y = Math.Max(margin, viewport.Height - margin - (lines.Count * lineHeight));
         Color ropeModeColor = _ropeGameplayMode == RopeGameplayMode.Neutral

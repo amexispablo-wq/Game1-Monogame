@@ -32,8 +32,11 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool ExitPressed { get; private set; }
     public bool EnterPressed { get; private set; }
     public bool DebugTogglePressed { get; private set; }
+    public bool TuningPanelTogglePressed { get; private set; }
     public bool ReplayForceSavePressed { get; private set; }
     public bool ReplayBackgroundTogglePressed { get; private set; }
+    public bool BenchmarkTogglePressed { get; private set; }
+    public bool BenchmarkDebugTogglePressed { get; private set; }
     public bool ReplayViewerExitPressed { get; private set; }
     public bool ReplayViewerPausePressed { get; private set; }
     public bool ReplayViewerRestartPressed { get; private set; }
@@ -278,6 +281,7 @@ public sealed class InputManager : ILocalPlayerInputSource
     {
         _gameplayBindings.Clear();
         _gameplayInputByNetworkId.Clear();
+        GameplayInputBlocked = false;
     }
 
     public PlayerInputState GetPlayerInput(int networkId)
@@ -380,8 +384,15 @@ public sealed class InputManager : ILocalPlayerInputSource
         ExitPressed = IsNewKeyPress(Keys.Escape);
         EnterPressed = IsNewKeyPress(Keys.Enter);
         DebugTogglePressed = IsNewKeyPress(Keys.F3);
-        ReplayForceSavePressed = IsNewKeyPress(Keys.F10);
-        ReplayBackgroundTogglePressed = IsNewKeyPress(Keys.F11);
+        TuningPanelTogglePressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F6);
+        BenchmarkTogglePressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F10);
+        BenchmarkDebugTogglePressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F11);
+        ReplayForceSavePressed = DeveloperSettings.DeveloperMode
+            ? ControlHeld && IsNewKeyPress(Keys.F10)
+            : IsNewKeyPress(Keys.F10);
+        ReplayBackgroundTogglePressed = DeveloperSettings.DeveloperMode
+            ? ControlHeld && IsNewKeyPress(Keys.F11)
+            : IsNewKeyPress(Keys.F11);
 
         if (IsNewKeyPress(Keys.F8) && DeveloperSettings.DeveloperMode)
         {

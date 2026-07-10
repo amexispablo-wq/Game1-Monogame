@@ -4,6 +4,10 @@ using Microsoft.Xna.Framework;
 
 namespace ColorBlocks;
 
+/// <summary>
+/// Deterministic phased physics pipeline.
+/// Players are never fully integrated one-by-one before the next player starts.
+/// </summary>
 public sealed class PhysicsWorld
 {
     public const float FixedTimeStep = 1f / 60f;
@@ -11,6 +15,8 @@ public sealed class PhysicsWorld
 
     private readonly Level _level;
     private readonly Dictionary<int, float> _launchPadCooldowns = new();
+    private readonly List<Player> _simulationOrder = new();
+    private readonly List<Platform> _sortedPlatformsScratch = new();
 
     public PhysicsWorld(
         Level level,
@@ -31,12 +37,15 @@ public sealed class PhysicsWorld
                 RopeGameplayMode,
                 new NetworkEntityOwnership(session.AllocateNetworkId(), session.HostOwnerId, session.IsHost, true)));
         }
+
+        RefreshSimulationOrder();
     }
 
     public List<Player> Players { get; }
     public List<Rope> Ropes { get; } = new();
     public RopeGameplayMode RopeGameplayMode { get; }
     public Vector2 LastLaunchForce { get; private set; }
+    public float LastSimulationStepSeconds { get; private set; }
 
     public void UpdatePhysics(float dt, IReadOnlyDictionary<int, PlayerInputState> inputStates)
     {
@@ -45,26 +54,24 @@ public sealed class PhysicsWorld
             return;
         }
 
+        LastSimulationStepSeconds = dt;
+        RefreshSimulationOrder();
+        ApplyGameplayTuning();
         UpdateLaunchPadCooldowns(dt);
 
-        foreach (Player player in Players)
+        // Phase 1: read input and accumulate forces for every player.
+        foreach (Player player in _simulationOrder)
         {
             PrepareBody(player, GetInputFor(player, inputStates), dt);
         }
 
-        foreach (Player player in Players)
+        // Phase 2: integrate accumulated forces into velocity for every player.
+        foreach (Player player in _simulationOrder)
         {
             IntegrateBodyForces(player, dt);
         }
 
-        SolveConstraints(dt);
-
-        foreach (Player player in Players)
-        {
-            MoveAndSolveCollisions(player, dt);
-            ApplyLaunchPads(player);
-        }
-
+        // Phase 3: resolve rope constraints and compute endpoint coupling forces.
         foreach (Rope rope in Ropes)
         {
             rope.Simulate(
@@ -75,8 +82,23 @@ public sealed class PhysicsWorld
                 GetInputFor(rope.EndPlayer, inputStates).PullRopeHeld);
         }
 
-        foreach (Player player in Players)
+        // Phase 4: integrate horizontal movement and resolve horizontal collisions for every player.
+        foreach (Player player in _simulationOrder)
         {
+            MoveHorizontally(player, dt);
+        }
+
+        // Phase 5: integrate vertical movement and resolve vertical collisions for every player.
+        foreach (Player player in _simulationOrder)
+        {
+            MoveVertically(player, dt);
+        }
+
+        // Phase 6: launch pads and final velocity clamp for every player.
+        foreach (Player player in _simulationOrder)
+        {
+            ApplyLaunchPads(player);
+            player.ClampGroundedMoveSpeed();
             player.ClampVelocity();
         }
     }
@@ -105,6 +127,27 @@ public sealed class PhysicsWorld
         }
     }
 
+    private void RefreshSimulationOrder()
+    {
+        _simulationOrder.Clear();
+        _simulationOrder.AddRange(Players);
+        _simulationOrder.Sort(static (a, b) => a.NetworkId.CompareTo(b.NetworkId));
+    }
+
+    private void ApplyGameplayTuning()
+    {
+        GameplayTuning tuning = GameplayTuning.Active;
+        foreach (Player player in Players)
+        {
+            tuning.ApplyTo(player);
+        }
+
+        foreach (Rope rope in Ropes)
+        {
+            tuning.ApplyTo(rope);
+        }
+    }
+
     private void PrepareBody(Player player, PlayerInputState input, float dt)
     {
         if (!ShouldSimulate(player) || player.IsFrozen)
@@ -129,16 +172,9 @@ public sealed class PhysicsWorld
         }
 
         player.IntegrateForces(dt);
-        player.ClampVelocity();
     }
 
-    private void SolveConstraints(float dt)
-    {
-        _ = dt;
-        // Future rope constraints will apply forces and impulses here.
-    }
-
-    private void MoveAndSolveCollisions(Player player, float dt)
+    private void MoveHorizontally(Player player, float dt)
     {
         if (!ShouldSimulate(player) || player.IsFrozen)
         {
@@ -147,11 +183,18 @@ public sealed class PhysicsWorld
 
         player.IntegratePosition(new Vector2(player.Velocity.X * dt, 0f));
         ResolveHorizontalCollisions(player);
+    }
+
+    private void MoveVertically(Player player, float dt)
+    {
+        if (!ShouldSimulate(player) || player.IsFrozen)
+        {
+            return;
+        }
 
         player.IntegratePosition(new Vector2(0f, player.Velocity.Y * dt));
         player.IsGrounded = false;
         ResolveVerticalCollisions(player);
-
         player.FinishPhysicsStep(_level);
     }
 
@@ -162,6 +205,7 @@ public sealed class PhysicsWorld
             return;
         }
 
+        float launchMultiplier = MathF.Max(0f, GameplayTuning.Active.LaunchForceMultiplier);
         foreach (LaunchPad launchPad in _level.LaunchPads)
         {
             if (!CollisionHelper.Intersects(player.Position, player.Size, launchPad.TriggerBounds))
@@ -177,10 +221,10 @@ public sealed class PhysicsWorld
                 lateralVelocity = Vector2.Normalize(lateralVelocity) * maxLateralSpeed;
             }
 
-            Vector2 launchVelocity = (direction * LaunchPad.LaunchPadForce) + (lateralVelocity * 0.25f);
+            Vector2 launchVelocity = (direction * LaunchPad.LaunchPadForce * launchMultiplier) + (lateralVelocity * 0.25f);
             player.LaunchFromPad(launchVelocity);
             _launchPadCooldowns[player.NetworkId] = MathF.Max(0.01f, LaunchPad.LaunchPadCooldown);
-            LastLaunchForce = direction * LaunchPad.LaunchPadForce;
+            LastLaunchForce = direction * LaunchPad.LaunchPadForce * launchMultiplier;
             return;
         }
     }
@@ -220,7 +264,7 @@ public sealed class PhysicsWorld
 
     private void ResolveHorizontalCollisions(Player player)
     {
-        foreach (Platform platform in _level.GetCollidablePlatforms(player.CurrentColor))
+        foreach (Platform platform in GetSortedCollidablePlatforms(player))
         {
             if (player.IsEjectingFrom(platform))
             {
@@ -269,7 +313,7 @@ public sealed class PhysicsWorld
 
     private void ResolveVerticalCollisions(Player player)
     {
-        foreach (Platform platform in _level.GetCollidablePlatforms(player.CurrentColor))
+        foreach (Platform platform in GetSortedCollidablePlatforms(player))
         {
             if (player.IsEjectingFrom(platform))
             {
@@ -316,6 +360,23 @@ public sealed class PhysicsWorld
             player.ApplyCollisionCorrection(correction, normal);
             player.Velocity = new Vector2(player.Velocity.X, 0f);
         }
+    }
+
+    private IReadOnlyList<Platform> GetSortedCollidablePlatforms(Player player)
+    {
+        _sortedPlatformsScratch.Clear();
+        foreach (Platform platform in _level.GetCollidablePlatforms(player.CurrentColor))
+        {
+            _sortedPlatformsScratch.Add(platform);
+        }
+
+        _sortedPlatformsScratch.Sort(static (a, b) =>
+        {
+            int compareX = a.Bounds.X.CompareTo(b.Bounds.X);
+            return compareX != 0 ? compareX : a.Bounds.Y.CompareTo(b.Bounds.Y);
+        });
+
+        return _sortedPlatformsScratch;
     }
 
     private static PlayerInputState GetInputFor(

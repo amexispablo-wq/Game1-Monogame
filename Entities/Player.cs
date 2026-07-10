@@ -272,7 +272,7 @@ public sealed class Player : INetworkEntity
 
     internal void ApplyMovementForces(PlayerInputState input, float dt)
     {
-        float horizontalInput = MathHelper.Clamp(input.HorizontalMovement, -1f, 1f);
+        float horizontalInput = NormalizeMovementInput(MathHelper.Clamp(input.HorizontalMovement, -1f, 1f));
         float controlFactor = State == PlayerState.Ejecting
             ? MathHelper.Clamp(EjectionControlFactor, 0f, 1f)
             : 1f;
@@ -398,6 +398,32 @@ public sealed class Player : INetworkEntity
             Velocity,
             new Vector2(-MaxHorizontalVelocity, -MaxVerticalVelocity),
             new Vector2(MaxHorizontalVelocity, MaxVerticalVelocity));
+    }
+
+    internal void ClampGroundedMoveSpeed()
+    {
+        if (!IsGrounded)
+        {
+            return;
+        }
+
+        float absSpeed = MathF.Abs(Velocity.X);
+        if (absSpeed <= MaxMoveSpeed)
+        {
+            return;
+        }
+
+        Velocity = new Vector2(MathF.Sign(Velocity.X) * MaxMoveSpeed, Velocity.Y);
+    }
+
+    internal static float NormalizeMovementInput(float horizontalInput)
+    {
+        if (MathF.Abs(horizontalInput) >= 0.55f)
+        {
+            return MathF.Sign(horizontalInput);
+        }
+
+        return horizontalInput;
     }
 
     internal void FinishPhysicsStep(Level level)
