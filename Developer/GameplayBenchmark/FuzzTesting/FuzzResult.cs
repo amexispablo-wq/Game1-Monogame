@@ -56,6 +56,7 @@ public static class FuzzScenarioRunner
                 harness.Simulation.TickRate.TicksPerSecond,
                 harness.Simulation.LavaRiseSpeed,
                 harness.Simulation.LavaSurfaceY,
+                scenario.Level.ToData(),
                 ReplayRecordingMode.FullSession);
         }
 

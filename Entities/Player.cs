@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -9,6 +10,10 @@ public sealed class Player : INetworkEntity
     private const float MinMass = 0.01f;
     private const float DebugEscapeVectorSeconds = 0.5f;
     private const float MinimumEjectionFallbackLengthSquared = 0.0001f;
+    private const int MaxMotionTrailPoints = 18;
+    private const float MotionTrailSpacing = 7f;
+    private const float MotionTrailLifetimeSeconds = 0.4f;
+    private const float MotionTrailMaxAlpha = 0.42f;
 
     private bool _justLaunched;
     private float _launchControlRemaining;
@@ -27,6 +32,16 @@ public sealed class Player : INetworkEntity
     private float _ejectionCenterInfluence;
     private bool _ejectionPeakRaised;
     private float _mass = 1f;
+    private readonly List<MotionTrailPoint> _motionTrail = new(MaxMotionTrailPoints);
+    private Vector2 _lastTrailSampleCenter;
+    private bool _trailSampleInitialized;
+
+    private struct MotionTrailPoint
+    {
+        public Vector2 Position;
+        public GameColor Color;
+        public float Life;
+    }
 
     public Player(
         PlayerId playerId,
@@ -202,6 +217,7 @@ public sealed class Player : INetworkEntity
         _debugEscapeVectorStart = Vector2.Zero;
         _debugEscapeVector = Vector2.Zero;
         ClearTransientMotionState();
+        ClearMotionTrail();
     }
 
     public void LaunchFromPad(Vector2 launchVelocity)
@@ -236,6 +252,7 @@ public sealed class Player : INetworkEntity
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, bool drawIndicator = true)
     {
         Rectangle bounds = Bounds;
+        DrawMotionTrail(spriteBatch, pixel);
         DrawEjectionFeedback(spriteBatch, pixel, bounds);
 
         Rectangle bodyBounds = GetVisualBodyBounds(bounds);
@@ -388,6 +405,104 @@ public sealed class Player : INetworkEntity
     internal void IntegratePosition(Vector2 delta)
     {
         Position += delta;
+    }
+
+    /// <summary>Sample/fade motion trail after a fixed simulation step (or client snapshot).</summary>
+    internal void UpdateMotionTrail(float dt)
+    {
+        AgeMotionTrail(dt);
+
+        if (IsFrozen)
+        {
+            return;
+        }
+
+        Vector2 center = Position + (Size * 0.5f);
+        if (!_trailSampleInitialized)
+        {
+            _lastTrailSampleCenter = center;
+            _trailSampleInitialized = true;
+            return;
+        }
+
+        float moved = Vector2.Distance(center, _lastTrailSampleCenter);
+        if (moved < MotionTrailSpacing)
+        {
+            return;
+        }
+
+        int steps = Math.Clamp((int)(moved / MotionTrailSpacing), 1, 4);
+        for (int i = 1; i <= steps; i++)
+        {
+            float t = i / (float)steps;
+            AddMotionTrailPoint(Vector2.Lerp(_lastTrailSampleCenter, center, t));
+        }
+
+        _lastTrailSampleCenter = center;
+    }
+
+    private void ClearMotionTrail()
+    {
+        _motionTrail.Clear();
+        _trailSampleInitialized = false;
+        _lastTrailSampleCenter = Vector2.Zero;
+    }
+
+    private void AgeMotionTrail(float dt)
+    {
+        if (_motionTrail.Count == 0 || dt <= 0f)
+        {
+            return;
+        }
+
+        float decay = dt / MotionTrailLifetimeSeconds;
+        for (int i = _motionTrail.Count - 1; i >= 0; i--)
+        {
+            MotionTrailPoint point = _motionTrail[i];
+            point.Life -= decay;
+            if (point.Life <= 0f)
+            {
+                _motionTrail.RemoveAt(i);
+            }
+            else
+            {
+                _motionTrail[i] = point;
+            }
+        }
+    }
+
+    private void AddMotionTrailPoint(Vector2 center)
+    {
+        _motionTrail.Add(new MotionTrailPoint
+        {
+            Position = center,
+            Color = CurrentColor,
+            Life = 1f
+        });
+
+        while (_motionTrail.Count > MaxMotionTrailPoints)
+        {
+            _motionTrail.RemoveAt(0);
+        }
+    }
+
+    private void DrawMotionTrail(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        for (int i = 0; i < _motionTrail.Count; i++)
+        {
+            MotionTrailPoint point = _motionTrail[i];
+            float life = MathHelper.Clamp(point.Life, 0f, 1f);
+            float scale = 0.5f + (0.4f * life);
+            int width = Math.Max(1, (int)MathF.Round(Size.X * scale));
+            int height = Math.Max(1, (int)MathF.Round(Size.Y * scale));
+            var bounds = new Rectangle(
+                (int)MathF.Round(point.Position.X - (width * 0.5f)),
+                (int)MathF.Round(point.Position.Y - (height * 0.5f)),
+                width,
+                height);
+            Color trailColor = point.Color.ToXnaColor() * (MotionTrailMaxAlpha * life);
+            spriteBatch.Draw(pixel, bounds, trailColor);
+        }
     }
 
     internal void ApplyCollisionCorrection(Vector2 correction, Vector2 normal)

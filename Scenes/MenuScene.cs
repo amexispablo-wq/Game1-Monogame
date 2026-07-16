@@ -24,6 +24,9 @@ public sealed class MenuScene : IScene
     private readonly FocusableButton _quitFocus;
     private readonly FocusableButton _sandboxFocus;
     private readonly bool _showSandboxButton;
+    private ButtonColumnLayout _layout = null!;
+
+    private const string TitleText = "COLOR BLOCKS";
 
     public MenuScene(ColorBlocksGame game)
     {
@@ -133,6 +136,17 @@ public sealed class MenuScene : IScene
             new Rectangle(0, viewport.Height - 160, viewport.Width, 160),
             ReplayMenuBackground.IsActive(_game) ? new Color(22, 26, 34, 180) : new Color(22, 26, 34));
 
+        if (_layout.HasTitle)
+        {
+            SimpleTextRenderer.DrawCentered(
+                spriteBatch,
+                pixel,
+                TitleText,
+                _layout.TitleBounds,
+                _layout.TitleScale,
+                Color.White);
+        }
+
         _playButton.Draw(spriteBatch, pixel);
         _partyButton.Draw(spriteBatch, pixel);
         _editorButton.Draw(spriteBatch, pixel);
@@ -154,28 +168,28 @@ public sealed class MenuScene : IScene
         string[] labels = _showSandboxButton
             ? new[] { "Play", "Party", "Level Editor", "Options", "Customization", "Rope Sandbox", "Quit" }
             : new[] { "Play", "Party", "Level Editor", "Options", "Customization", "Quit" };
-        var layout = ButtonColumnLayout.CreateAuto(
+        _layout = ButtonColumnLayout.CreateAuto(
             labels,
             viewport.Width, viewport.Height,
             buttonHeight: 56,
             verticalGap: 20,
-            topMargin: 90);
+            titleText: TitleText);
 
-        if (layout.ButtonBounds.Length >= 6)
+        if (_layout.ButtonBounds.Length >= 6)
         {
-            _playButton.Bounds = layout.ButtonBounds[0];
-            _partyButton.Bounds = layout.ButtonBounds[1];
-            _editorButton.Bounds = layout.ButtonBounds[2];
-            _optionsButton.Bounds = layout.ButtonBounds[3];
-            _customizationButton.Bounds = layout.ButtonBounds[4];
-            if (_showSandboxButton && layout.ButtonBounds.Length >= 7)
+            _playButton.Bounds = _layout.ButtonBounds[0];
+            _partyButton.Bounds = _layout.ButtonBounds[1];
+            _editorButton.Bounds = _layout.ButtonBounds[2];
+            _optionsButton.Bounds = _layout.ButtonBounds[3];
+            _customizationButton.Bounds = _layout.ButtonBounds[4];
+            if (_showSandboxButton && _layout.ButtonBounds.Length >= 7)
             {
-                _sandboxButton.Bounds = layout.ButtonBounds[5];
-                _quitButton.Bounds = layout.ButtonBounds[6];
+                _sandboxButton.Bounds = _layout.ButtonBounds[5];
+                _quitButton.Bounds = _layout.ButtonBounds[6];
             }
             else
             {
-                _quitButton.Bounds = layout.ButtonBounds[5];
+                _quitButton.Bounds = _layout.ButtonBounds[5];
             }
         }
     }

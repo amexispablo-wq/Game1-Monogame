@@ -42,7 +42,7 @@ public sealed class ReplayWorld
     }
 
     ReplayHeader header = data.Header;
-    Level level = LevelLibrary.LoadLevel(header.LevelId);
+    Level level = ResolveLevel(header);
     GameSession session = GameSession.CreateLocalTest(header.LevelId, header.RopeMode);
     session.LavaRiseEnabled = header.LavaRiseEnabled;
 
@@ -138,6 +138,26 @@ public sealed class ReplayWorld
     }
 
     return null;
+  }
+
+  private static Level ResolveLevel(ReplayHeader header)
+  {
+    if (header.RecordedLevel is not null)
+    {
+      return Level.FromData(header.RecordedLevel);
+    }
+
+    return LevelLibrary.LoadLevel(header.LevelId);
+  }
+
+  public static bool HasResolvableLevel(ReplayHeader header)
+  {
+    if (header.RecordedLevel is not null)
+    {
+      return true;
+    }
+
+    return LevelLibrary.GetLevel(header.LevelId) is not null;
   }
 }
 

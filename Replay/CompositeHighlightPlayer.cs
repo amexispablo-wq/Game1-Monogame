@@ -151,8 +151,31 @@ public sealed class CompositeHighlightPlayer
       return;
     }
 
-    HighlightClipEntry clip = _highlights.Clips[_clipIndex];
-    LogHighlight($"Playing Clip {_clipIndex + 1}/{_highlights.Clips.Length} ({clip.Type})");
+    int attempts = 0;
+    while (attempts < _highlights.Clips.Length)
+    {
+      HighlightClipEntry clip = _highlights.Clips[_clipIndex];
+      if (TryLoadClip(clip))
+      {
+        return;
+      }
+
+      _clipIndex = (_clipIndex + 1) % _highlights.Clips.Length;
+      attempts++;
+    }
+
+    _clipPlayer.Unload();
+  }
+
+  private bool TryLoadClip(HighlightClipEntry clip)
+  {
+    if (!ReplayWorld.HasResolvableLevel(clip.ClipData.Header))
+    {
+      LogHighlight($"Skipping clip for missing level '{clip.LevelId}'");
+      return false;
+    }
+
+    LogHighlight($"Playing Clip {_clipIndex + 1}/{_highlights!.Clips.Length} ({clip.Type})");
     _clipPlayer.Load(clip.ClipData, ReplayCameraMode.Recorded, ReplayPlaybackEndMode.Stop);
     _clipPlayer.EndMode = ReplayPlaybackEndMode.Stop;
     _clipPlayer.Play();
@@ -162,6 +185,8 @@ public sealed class CompositeHighlightPlayer
       _camera.Position = clip.ClipData.Frames[0].CameraPosition.ToVector2();
       _camera.SetZoom(clip.ClipData.Frames[0].CameraZoom);
     }
+
+    return true;
   }
 
   private static void LogHighlight(string message)

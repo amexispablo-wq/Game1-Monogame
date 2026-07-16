@@ -246,7 +246,6 @@ public static class LevelLibrary
 
             BestTimeStorage.DeleteLevelRecord(levelId);
             ReplayStorage.DeleteBestReplay(levelId);
-            HighlightManager.InvalidateClipsForLevel(levelId);
         }
         catch (Exception ex)
         {

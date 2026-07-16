@@ -21,7 +21,8 @@ public static class GameplayWorldRenderer
     float elapsedTime,
     GameTime gameTime,
     bool debugDraw = false,
-    GhostPlayer? ghostPlayer = null)
+    GhostPlayer? ghostPlayer = null,
+    bool drawPlayerIndicators = true)
   {
     spriteBatch.Begin(samplerState: SamplerState.PointClamp);
     spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(36, 41, 52));
@@ -39,7 +40,7 @@ public static class GameplayWorldRenderer
 
     foreach (Player player in players)
     {
-      player.Draw(spriteBatch, pixel, debugDraw);
+      player.Draw(spriteBatch, pixel, debugDraw, drawPlayerIndicators);
     }
 
     ghostPlayer?.Draw(spriteBatch, pixel, debugDraw);

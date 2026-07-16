@@ -109,6 +109,14 @@ public sealed class GameSimulation
         IsPaused = paused;
     }
 
+    private void UpdateMotionTrails(float dt)
+    {
+        foreach (Player player in Players)
+        {
+            player.UpdateMotionTrail(dt);
+        }
+    }
+
     /// <summary>Pause-menu respawn: checkpoint if available, else spawn. Timer and lava unchanged.</summary>
     public void PauseMenuRespawn()
     {
@@ -170,6 +178,8 @@ public sealed class GameSimulation
             player?.ApplySnapshot(playerSnapshot);
         }
 
+        UpdateMotionTrails(TickRate.FixedDeltaSeconds);
+
         foreach (RopeSnapshot ropeSnapshot in snapshot.Ropes)
         {
             Rope? rope = FindRope(ropeSnapshot.NetworkId);
@@ -197,6 +207,7 @@ public sealed class GameSimulation
             IReadOnlyDictionary<int, PlayerInputState> inputs = _inputBuffer.GetInputs(tick);
             HandleRespawnInputs(inputs);
             PhysicsWorld.UpdatePhysics(TickRate.FixedDeltaSeconds, inputs);
+            UpdateMotionTrails(TickRate.FixedDeltaSeconds);
             UpdateCheckpointActivation();
             UpdateLava();
 

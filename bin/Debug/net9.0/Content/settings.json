@@ -2,8 +2,8 @@
   "displayMode": "Windowed",
   "resolutionWidth": 1920,
   "resolutionHeight": 1080,
-  "musicVolume": 0.27542374,
-  "fpsLimit": 0,
+  "musicVolume": 0.33580247,
+  "fpsLimit": 240,
   "Keybindings": {
     "MoveLeft": "A",
     "MoveRight": "D",
@@ -27,7 +27,7 @@
   "SoundEffects": {
     "Jump": true,
     "PullRope": true,
-    "Red": false,
+    "Red": true,
     "Blue": true,
     "Green": true,
     "Checkpoint": true,

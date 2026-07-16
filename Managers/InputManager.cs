@@ -45,6 +45,7 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool ReplayViewerSpeedUpHeld { get; private set; }
     public bool ReplayViewerSpeedDownHeld { get; private set; }
     public bool NavigationStepPressed { get; private set; }
+    public bool PhotoModeTogglePressed { get; private set; }
     public bool GameplayPausePressed { get; private set; }
     public bool MenuMoveUpPressed { get; private set; }
     public bool MenuMoveDownPressed { get; private set; }
@@ -384,6 +385,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         ExitPressed = IsNewKeyPress(Keys.Escape);
         EnterPressed = IsNewKeyPress(Keys.Enter);
         DebugTogglePressed = IsNewKeyPress(Keys.F3);
+        PhotoModeTogglePressed = IsNewKeyPress(Keys.F2);
         TuningPanelTogglePressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F6);
         BenchmarkTogglePressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F10);
         BenchmarkDebugTogglePressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F11);

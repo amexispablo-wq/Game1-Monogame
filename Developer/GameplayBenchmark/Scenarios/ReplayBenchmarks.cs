@@ -28,7 +28,8 @@ public sealed class ReplayDeterminismBenchmark : BenchmarkScenario
             lavaRiseEnabled: false,
             recordHarness.Simulation.TickRate.TicksPerSecond,
             recordHarness.Simulation.LavaRiseSpeed,
-            recordHarness.Simulation.LavaSurfaceY);
+            recordHarness.Simulation.LavaSurfaceY,
+            level.ToData());
 
         ScriptedInputSequence sequence = ScriptedInputSequence.CreateWalkJump(240);
         float maxPositionError = 0f;
@@ -116,7 +117,8 @@ public sealed class GhostDeterminismBenchmark : BenchmarkScenario
             false,
             recordHarness.Simulation.TickRate.TicksPerSecond,
             recordHarness.Simulation.LavaRiseSpeed,
-            recordHarness.Simulation.LavaSurfaceY);
+            recordHarness.Simulation.LavaSurfaceY,
+            level.ToData());
 
         ScriptedInputSequence sequence = ScriptedInputSequence.CreateWalkJump(180);
         for (int tick = 0; tick < 180; tick++)

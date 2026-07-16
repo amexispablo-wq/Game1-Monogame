@@ -43,6 +43,9 @@ public sealed class GameScene : IScene
     private readonly GhostPlayer? _ghostPlayer;
     private readonly bool _ghostBestRunEnabled;
     private bool _savedNewRecordReplay;
+    private bool _photoMode;
+
+    public bool IsPhotoModeActive => _photoMode;
 
     public GameScene(
         ColorBlocksGame game,
@@ -83,6 +86,7 @@ public sealed class GameScene : IScene
             _session.Settings.SimulationTicksPerSecond,
             _simulation.LavaRiseSpeed,
             _level.Lava?.SurfaceY ?? 0f,
+            _level.ToData(),
             ReplayRecordingMode.FullSession);
         _simulation.FixedTickCompleted += OnSimulationFixedTick;
         ReplayDiagnostics.ActiveRecorder = _replayRecorder;
@@ -106,6 +110,7 @@ public sealed class GameScene : IScene
         _game.Input.GameplayInputBlocked = false;
         _game.Input.ClearGameplayBindings();
         _game.Party.UnlockAssignments();
+        _photoMode = false;
         _game.GameNetwork.Reset();
         _game.Music.Stop();
         _replayRecorder.StopRecording();
@@ -188,6 +193,18 @@ public sealed class GameScene : IScene
             return;
         }
 
+        if (_photoMode)
+        {
+            _game.Input.GameplayInputBlocked = true;
+            if (_game.Input.PhotoModeTogglePressed)
+            {
+                _photoMode = false;
+                _game.Input.GameplayInputBlocked = false;
+            }
+
+            return;
+        }
+
         if (_simulation.IsPlayerDead)
         {
             _game.Input.GameplayInputBlocked = true;
@@ -220,6 +237,13 @@ public sealed class GameScene : IScene
         }
 
         _game.Input.GameplayInputBlocked = false;
+
+        if (_game.Input.PhotoModeTogglePressed)
+        {
+            _photoMode = true;
+            _game.Input.GameplayInputBlocked = true;
+            return;
+        }
 
         if (_game.Input.GameplayPausePressed)
         {
@@ -321,11 +345,16 @@ public sealed class GameScene : IScene
             _simulation.ElapsedTime,
             gameTime,
             _debugDraw,
-            _ghostPlayer);
+            _ghostPlayer,
+            drawPlayerIndicators: !_photoMode);
 
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
-        DrawTimer(spriteBatch, _game.Pixel, viewport);
-        if (_debugDraw)
+        if (!_photoMode)
+        {
+            DrawTimer(spriteBatch, _game.Pixel, viewport);
+        }
+
+        if (_debugDraw && !_photoMode)
         {
             DrawDebugHud(spriteBatch, _game.Pixel, viewport);
         }

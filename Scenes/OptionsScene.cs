@@ -377,11 +377,6 @@ public sealed class OptionsScene : IScene
         };
         _focus.FinalizeFocus(defaultFocus);
         _focus.Update(gameTime, _game.Input);
-
-        foreach ((string _, Checkbox checkbox, FocusableCheckbox _) in _soundEffectToggles)
-        {
-            checkbox.Update(_game.Input, _game.Input.Navigation);
-        }
     }
 
     private bool BeginRebind(int index, RebindKind kind)

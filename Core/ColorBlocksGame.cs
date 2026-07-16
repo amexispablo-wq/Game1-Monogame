@@ -243,7 +243,11 @@ public class ColorBlocksGame : Game
         _currentScene.Draw(gameTime, _spriteBatch);
 
         _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
-        _partyHud.Draw(_spriteBatch, _pixel, Viewport, Party);
+        if (_currentScene is not GameScene gameScene || !gameScene.IsPhotoModeActive)
+        {
+            _partyHud.Draw(_spriteBatch, _pixel, Viewport, Party);
+        }
+
         ActiveTuningPanel?.Draw(_spriteBatch, _pixel, Viewport, Party);
         if (DeveloperSettings.DeveloperMode)
         {

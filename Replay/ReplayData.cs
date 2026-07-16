@@ -18,6 +18,7 @@ public sealed class ReplayHeader
   public int TicksPerSecond { get; init; } = ReplayConstants.DefaultTicksPerSecond;
   public float LavaRiseSpeed { get; init; }
   public float LavaStartSurfaceY { get; init; }
+  public LevelData? RecordedLevel { get; init; }
 }
 
 /// <summary>Immutable per-frame snapshot stored in exported <see cref="ReplayData"/>.</summary>

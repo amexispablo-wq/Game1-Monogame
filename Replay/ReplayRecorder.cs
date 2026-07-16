@@ -38,6 +38,7 @@ public sealed class ReplayRecorder
     int ticksPerSecond,
     float lavaRiseSpeed,
     float lavaStartSurfaceY,
+    LevelData? recordedLevel = null,
     ReplayRecordingMode mode = ReplayRecordingMode.FullSession)
   {
     _ringBuffer.Clear();
@@ -50,7 +51,8 @@ public sealed class ReplayRecorder
       LavaRiseEnabled = lavaRiseEnabled,
       TicksPerSecond = ticksPerSecond,
       LavaRiseSpeed = lavaRiseSpeed,
-      LavaStartSurfaceY = lavaStartSurfaceY
+      LavaStartSurfaceY = lavaStartSurfaceY,
+      RecordedLevel = recordedLevel
     };
     _isRecording = true;
   }
