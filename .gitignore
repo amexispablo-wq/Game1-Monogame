@@ -1,6 +1,15 @@
 # Build output
 bin/
 obj/
+Publish/
+BuildReport.txt
+
+# SteamPipe staging (templates under SteamBuild/scripts/ are tracked)
+SteamBuild/content/**
+!SteamBuild/content/.gitignore
+SteamBuild/output/**
+!SteamBuild/output/.gitignore
+SteamBuild/BuildReport.txt
 
 # IDE
 .vs/

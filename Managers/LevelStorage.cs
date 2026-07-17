@@ -53,15 +53,13 @@ public static class LevelStorage
 
     public static string GetWritablePath()
     {
-        return Path.Combine(AppContext.BaseDirectory, "Content", LevelFileName);
+        return UserDataPaths.LegacyLevelSaveFile;
     }
 
     private static IEnumerable<string> GetReadablePaths()
     {
+        yield return UserDataPaths.LegacyLevelSaveFile;
         yield return Path.Combine(AppContext.BaseDirectory, "Content", LevelFileName);
-        yield return Path.Combine(AppContext.BaseDirectory, LevelFileName);
-        yield return Path.Combine(Environment.CurrentDirectory, "Content", LevelFileName);
-        yield return Path.Combine(Environment.CurrentDirectory, LevelFileName);
     }
 
     private static JsonSerializerOptions CreateJsonOptions()

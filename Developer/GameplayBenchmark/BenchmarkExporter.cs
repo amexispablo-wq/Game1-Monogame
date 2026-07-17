@@ -20,9 +20,8 @@ public static class BenchmarkExporter
 
     public static string Export(BenchmarkReport report)
     {
-        string directory = Path.Combine(AppContext.BaseDirectory, "Developer", "GameplayBenchmark");
-        Directory.CreateDirectory(directory);
-        string path = Path.Combine(directory, "GameplayBenchmarkReport.json");
+        Directory.CreateDirectory(UserDataPaths.Benchmarks);
+        string path = UserDataPaths.BenchmarkReportFile;
         File.WriteAllText(path, JsonSerializer.Serialize(report, JsonOptions));
         return path;
     }

@@ -505,20 +505,6 @@
   ],
   "launchPads": [
     {
-      "x": 1216,
-      "y": 384,
-      "width": 64,
-      "height": 32,
-      "rotation": 0
-    },
-    {
-      "x": 1344,
-      "y": 192,
-      "width": 64,
-      "height": 64,
-      "rotation": 0
-    },
-    {
       "x": 1376,
       "y": -64,
       "width": 96,
@@ -616,8 +602,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-05-11T14:59:53.7977532Z",
-  "modifiedDate": "2026-07-10T18:50:43.9856097Z",
-  "version": 7,
+  "modifiedDate": "2026-07-17T19:18:52.7994662Z",
+  "version": 8,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

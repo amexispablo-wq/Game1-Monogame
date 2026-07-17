@@ -57,6 +57,6 @@ public sealed class BenchmarkSettings
 
     private static string GetSettingsPath()
     {
-        return Path.Combine(AppContext.BaseDirectory, "Developer", "GameplayBenchmark", "settings.json");
+        return UserDataPaths.BenchmarkSettingsFile;
     }
 }

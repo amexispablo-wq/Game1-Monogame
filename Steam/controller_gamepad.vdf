@@ -1,21 +1,21 @@
 "controller_mappings"
 {
 	"version"		"3"
-	"game"		"Color Blocks"
-	"title"		"#Gamepad_Title"
-	"description"		"#Gamepad_Description"
+	"revision"		"1"
+	"title"		"#Title_Gamepad"
+	"description"		"#Description_Gamepad"
 	"controller_type"		"controller_generic"
 	"localization"
 	{
 		"english"
 		{
-			"Gamepad_Title"		"Gamepad"
-			"Gamepad_Description"		"Maps controller buttons to Xbox-style gamepad output."
+			"Title_Gamepad"		"Official Gamepad"
+			"Description_Gamepad"		"Default Color Blocks controller layout."
 		}
 		"spanish"
 		{
-			"Gamepad_Title"		"Mando"
-			"Gamepad_Description"		"Mapea botones del mando a salida estilo Xbox."
+			"Title_Gamepad"		"Mando oficial"
+			"Description_Gamepad"		"Disposición predeterminada de Color Blocks."
 		}
 	}
 	"group"
@@ -33,7 +33,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"gamepad_a"
+							"binding"		"game_action Gameplay Jump, Jump"
 						}
 					}
 				}
@@ -46,7 +46,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"gamepad_b"
+							"binding"		"game_action Gameplay ColorBlue, Color Blue"
 						}
 					}
 				}
@@ -59,7 +59,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"gamepad_x"
+							"binding"		"game_action Gameplay ColorRed, Color Red"
 						}
 					}
 				}
@@ -72,7 +72,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"gamepad_y"
+							"binding"		"game_action Gameplay ColorGreen, Color Green"
 						}
 					}
 				}
@@ -86,19 +86,6 @@
 		"name"		"D-Pad"
 		"inputs"
 		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"gamepad_dpad"
-						}
-					}
-				}
-			}
 		}
 	}
 	"group"
@@ -108,7 +95,7 @@
 		"name"		"Left Stick"
 		"inputs"
 		{
-			"click"
+			"edge"
 			{
 				"activators"
 				{
@@ -116,7 +103,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"gamepad_left_stick_click"
+							"binding"		"game_action Gameplay Move, Move"
 						}
 					}
 				}
@@ -130,19 +117,6 @@
 		"name"		"Right Stick"
 		"inputs"
 		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"gamepad_right_stick_click"
-						}
-					}
-				}
-			}
 		}
 	}
 	"group"
@@ -152,7 +126,7 @@
 		"name"		"Triggers"
 		"inputs"
 		{
-			"button_l"
+			"edge"
 			{
 				"activators"
 				{
@@ -160,20 +134,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"gamepad_left_shoulder"
-						}
-					}
-				}
-			}
-			"button_r"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"gamepad_right_shoulder"
+							"binding"		"game_action Gameplay PullRope, Pull Rope"
 						}
 					}
 				}
@@ -195,7 +156,8 @@
 					{
 						"bindings"
 						{
-							"binding"		"gamepad_start"
+							"binding"		"game_action Gameplay Pause, Pause"
+							"binding"		"game_action Gameplay MenuStart, Menu Start"
 						}
 					}
 				}
@@ -217,11 +179,84 @@
 					{
 						"bindings"
 						{
-							"binding"		"gamepad_back"
+							"binding"		"game_action Gameplay Respawn, Respawn"
+							"binding"		"game_action Gameplay MenuBack, Menu Back"
 						}
 					}
 				}
 			}
 		}
+	}
+	"group"
+	{
+		"id"		"7"
+		"mode"		"four_buttons"
+		"name"		"Menu Face"
+		"inputs"
+		{
+			"button_a"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"game_action Gameplay MenuAccept, Menu Accept"
+						}
+					}
+				}
+			}
+			"button_b"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"game_action Gameplay MenuCancel, Menu Cancel"
+						}
+					}
+				}
+			}
+		}
+	}
+	"group"
+	{
+		"id"		"8"
+		"mode"		"joystick_move"
+		"name"		"Menu Stick"
+		"inputs"
+		{
+			"edge"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"game_action Gameplay MenuNavigate, Menu Navigate"
+						}
+					}
+				}
+			}
+		}
+	}
+	"group_source_bindings"
+	{
+		"0"		"button_diamond active"
+		"1"		"dpad active"
+		"2"		"left_joystick active"
+		"3"		"right_joystick inactive"
+		"4"		"right_trigger active"
+		"5"		"start active"
+		"6"		"select active"
+		"7"		"button_diamond active"
+		"8"		"left_joystick active"
+	}
+	"settings"
+	{
 	}
 }

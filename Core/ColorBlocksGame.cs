@@ -12,7 +12,7 @@ public class ColorBlocksGame : Game
     private readonly GraphicsDeviceManager _graphics;
     private readonly SteamManager _steam = new();
     private readonly SteamCallbackManager _steamCallbacks = new();
-    private readonly SteamInputService _steamInput;
+    private readonly SteamInputManager _steamInput;
     private readonly SteamLobbyService _steamLobby;
     private readonly SteamPartyService _steamParty;
     private readonly SteamGameNetworkService _steamGameNetwork;
@@ -40,6 +40,8 @@ public class ColorBlocksGame : Game
         IsMouseVisible = true;
         Window.Title = "Color Blocks";
 
+        UserDataPaths.Initialize();
+        UserDataMigration.RunIfNeeded();
         SettingsManager.Initialize();
         SkinLibraryStorage.Initialize();
         var settings = SettingsManager.CurrentSettings;
@@ -48,7 +50,7 @@ public class ColorBlocksGame : Game
         ApplyFrameSettings(settings.FpsLimit, applyChanges: false);
         ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode, applyChanges: false);
         _steamLobby = new SteamLobbyService(_steam, _steamCallbacks);
-        _steamInput = new SteamInputService(_steam);
+        _steamInput = new SteamInputManager(_steam);
         _steamParty = new SteamPartyService(_steamLobby);
         _steamGameNetwork = new SteamGameNetworkService(_steam, _steamCallbacks);
         _gameNetwork = new GameNetworkCoordinator(_steamGameNetwork, _steamLobby);
@@ -60,7 +62,7 @@ public class ColorBlocksGame : Game
     public Texture2D Pixel => _pixel;
     public SteamManager Steam => _steam;
     public SteamLobbyService SteamLobby => _steamLobby;
-    public SteamInputService SteamInput => _steamInput;
+    public SteamInputManager SteamInput => _steamInput;
     public SteamPartyService SteamParty => _steamParty;
     public GameNetworkCoordinator GameNetwork => _gameNetwork;
     public MusicManager Music => _music;
@@ -179,6 +181,7 @@ public class ColorBlocksGame : Game
         }
 
         _input = new InputManager();
+        _input.BindSteamInput(_steamInput);
         Party.LocalSteamUsername = _steam.Username;
         LevelAuthorProvider.ResolveLocalAuthor = () =>
             _steam.IsInitialized && !string.IsNullOrWhiteSpace(_steam.Username) && _steam.Username != "Unavailable"
@@ -195,6 +198,7 @@ public class ColorBlocksGame : Game
         _spriteBatch = new SpriteBatch(GraphicsDevice);
         _pixel = new Texture2D(GraphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
+        _steamInput.Glyphs.BindGraphicsDevice(GraphicsDevice);
 
         var settings = SettingsManager.CurrentSettings;
         ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);
@@ -211,15 +215,27 @@ public class ColorBlocksGame : Game
         _input.ConfigurePointerTransform(Window.ClientBounds, GraphicsDevice.Viewport, _presentation);
         _input.Update();
 
+        if (_input.SteamInputOriginDumpPressed && _steamInput.IsInitialized)
+        {
+            _steamInput.DumpActionOriginsToConsole();
+        }
+
         if (_input.ReplayBackgroundTogglePressed)
         {
             ReplayManager.MenuBackgroundEnabled = !ReplayManager.MenuBackgroundEnabled;
         }
 
-        if (_input.DebugTogglePressed
-            && (ReplayManager.HasReplay() || ReplayDiagnostics.ActiveRecorder is not null))
+        if (_input.DebugTogglePressed)
         {
-            ReplayDiagnostics.DebugOverlayVisible = !ReplayDiagnostics.DebugOverlayVisible;
+            if (DeveloperSettings.DeveloperMode)
+            {
+                UserDataDebugOverlay.Visible = !UserDataDebugOverlay.Visible;
+            }
+
+            if (ReplayManager.HasReplay() || ReplayDiagnostics.ActiveRecorder is not null)
+            {
+                ReplayDiagnostics.DebugOverlayVisible = !ReplayDiagnostics.DebugOverlayVisible;
+            }
         }
 
         _replayBackground.Update(this, gameTime);
@@ -253,6 +269,7 @@ public class ColorBlocksGame : Game
         {
             _benchmarkOverlay.Draw(_spriteBatch, _pixel, Viewport, BenchmarkManager.Runner);
             BenchmarkDebugOverlay.Draw(_spriteBatch, _pixel, Viewport, BenchmarkManager.Runner);
+            UserDataDebugOverlay.Draw(_spriteBatch, _pixel, Viewport, _steamInput);
         }
 
         ReplayDebugOverlay.Draw(_spriteBatch, _pixel, Viewport);

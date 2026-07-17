@@ -21,8 +21,8 @@ internal static class LevelContentPaths
         source switch
         {
             LevelSource.Official => Path.Combine(ContentRoot, OfficialLevelsFolder),
-            LevelSource.Local => Path.Combine(ContentRoot, UserLevelsFolder),
-            LevelSource.Workshop => Path.Combine(ContentRoot, WorkshopLevelsFolder),
+            LevelSource.Local => UserDataPaths.GetUserLevelsRoot(),
+            LevelSource.Workshop => UserDataPaths.GetWorkshopRoot(),
             _ => throw new ArgumentOutOfRangeException(nameof(source), source, null)
         };
 
@@ -30,13 +30,13 @@ internal static class LevelContentPaths
         Path.Combine(ContentRoot, LegacyLevelsFolder);
 
     public static string GetReplaysRoot(LevelSource source) =>
-        Path.Combine(ContentRoot, ReplaysFolder, source.ToString());
+        UserDataPaths.GetReplaysRoot(source);
 
     public static string GetPreviewsRoot(LevelSource source) =>
-        Path.Combine(ContentRoot, PreviewsFolder, source.ToString());
+        UserDataPaths.GetLevelPreviewsRoot(source);
 
     public static string GetBestTimesPath(LevelSource source) =>
-        Path.Combine(ContentRoot, BestTimesFolder, $"{source}.json");
+        UserDataPaths.GetBestTimesPath(source);
 
     public static string GetLegacyBestTimesPath() =>
         Path.Combine(AppContext.BaseDirectory, BestTimeStorage.BestTimesFileName);
@@ -48,10 +48,10 @@ internal static class LevelContentPaths
         Path.Combine(ContentRoot, PreviewsFolder);
 
     public static string GetWorkshopLevelFile(string workshopId) =>
-        Path.Combine(GetLevelsRoot(LevelSource.Workshop), workshopId, "level.json");
+        UserDataPaths.GetWorkshopLevelFile(workshopId);
 
     public static string GetWorkshopPreviewFile(string workshopId) =>
-        Path.Combine(GetLevelsRoot(LevelSource.Workshop), workshopId, "preview.png");
+        UserDataPaths.GetWorkshopPreviewFile(workshopId);
 
     /// <summary>
     /// Project-source OfficialLevels folder (not bin output). Used so developer

@@ -159,6 +159,6 @@ public static class SkinLibraryStorage
 
     private static string GetWritablePath()
     {
-        return Path.Combine(AppContext.BaseDirectory, "Content", LibraryFileName);
+        return UserDataPaths.SkinLibraryFile;
     }
 }

@@ -77,12 +77,12 @@ public static class ReplayStorage
   {
     LevelSource source = LevelIdentity.GetSource(levelId);
     string fileName = $"{SanitizeFileName(levelId)}_Best.replay";
-    return Path.Combine(GetReplaysDirectory(source), fileName);
+    return Path.Combine(UserDataPaths.GetGhostsRoot(source), fileName);
   }
 
   public static string GetHighlightsPath(LevelSource source)
   {
-    return Path.Combine(GetReplaysDirectory(source), HighlightsFileName);
+    return Path.Combine(UserDataPaths.GetHighlightsRoot(source), HighlightsFileName);
   }
 
   public static string GetHighlightsPath(string levelId)

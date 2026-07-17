@@ -18,7 +18,7 @@ public static class FuzzReplay
 
     public static string SaveFailure(int seed, FuzzScenario scenario, FuzzResult result)
     {
-        string directory = Path.Combine(AppContext.BaseDirectory, "Developer", "FuzzFailures", $"Seed_{seed:D8}");
+        string directory = UserDataPaths.GetFuzzFailureRoot(seed);
         Directory.CreateDirectory(directory);
 
         FuzzFailureReport report = new()

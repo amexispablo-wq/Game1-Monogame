@@ -41,6 +41,7 @@ public sealed class OptionsScene : IScene
     // Buttons
     private Button _applyButton = new("Apply");
     private Button _backButton = new("Back");
+    private readonly Button _steamConfigButton = new("Steam Controller Configuration") { TextScale = 2 };
     private readonly UIFocusManager _focus = new();
     private readonly FocusableCycleSelector<DisplayMode> _displayModeFocus;
     private readonly FocusableCycleSelector<int> _fpsLimitFocus;
@@ -49,6 +50,7 @@ public sealed class OptionsScene : IScene
     private readonly FocusableResolutionDropdown _resolutionFocus;
     private readonly FocusableButton _applyFocus;
     private readonly FocusableButton _backFocus;
+    private FocusableButton? _steamConfigFocus;
 
     // Control bindings
     private List<(string action, string keyName, string gamepadName)> _controlBindings = new();
@@ -160,11 +162,22 @@ public sealed class OptionsScene : IScene
         _resolutionDropdown.RefreshSupportedResolutions(_game.GraphicsDevice);
         _applyFocus = new FocusableButton(_applyButton);
         _backFocus = new FocusableButton(_backButton);
+        _steamConfigFocus = new FocusableButton(_steamConfigButton);
+        _steamConfigButton.FillColor = new Color(55, 78, 118);
+        _steamConfigButton.HoverFillColor = new Color(70, 98, 148);
+        _steamConfigButton.BorderColor = new Color(130, 160, 210);
+        _steamConfigButton.HoverBorderColor = new Color(190, 215, 255);
 
         _focus.ResetFocus();
         InitializeControlBindings();
         InitializeSoundEffectToggles(pending);
     }
+
+    private bool IsSteamInputManagingControllers =>
+        _game.SteamInput.IsInitialized && _game.Steam.IsInitialized;
+
+    private bool CanOpenSteamControllerConfig =>
+        IsSteamInputManagingControllers && _game.Steam.IsOverlayEnabled;
 
     private void InitializeSoundEffectToggles(GameSettings pending)
     {
@@ -199,11 +212,45 @@ public sealed class OptionsScene : IScene
             string keyName = SettingsManager.PendingSettings.Keybindings.ContainsKey(action)
                 ? SettingsManager.PendingSettings.Keybindings[action]
                 : "Unknown";
-            string gamepadName = Enum.TryParse(action, out GameplayInputAction gameplayAction)
-                ? GamepadDefaults.GetGamepadDisplayName(gameplayAction, SettingsManager.PendingSettings.GamepadBindings)
-                : "—";
+            string gamepadName = ResolveGamepadColumnText(action);
             _controlBindings.Add((action, keyName, gamepadName));
         }
+    }
+
+    private void RefreshSteamGlyphLabels()
+    {
+        if (!IsSteamInputManagingControllers)
+        {
+            return;
+        }
+
+        for (int i = 0; i < _controlBindings.Count; i++)
+        {
+            var (action, keyName, _) = _controlBindings[i];
+            _controlBindings[i] = (action, keyName, ResolveGamepadColumnText(action));
+        }
+    }
+
+    private string ResolveGamepadColumnText(string action)
+    {
+        if (!Enum.TryParse(action, out GameplayInputAction gameplayAction))
+        {
+            return "—";
+        }
+
+        if (IsSteamInputManagingControllers)
+        {
+            InputGlyph glyph = _game.Input.GetActionGlyph(gameplayAction);
+            if (glyph.FromSteam && !string.IsNullOrWhiteSpace(glyph.Label))
+            {
+                return glyph.Label;
+            }
+
+            // Steam active but no origin yet — show action name (overlay remaps).
+            return FormatActionName(action);
+        }
+
+        return GamepadDefaults.GetGamepadDisplayName(gameplayAction, SettingsManager.PendingSettings.GamepadBindings);
     }
 
     public void Update(GameTime gameTime)
@@ -271,6 +318,19 @@ public sealed class OptionsScene : IScene
             return;
         }
 
+        if (_activeSection == OptionsSection.Controls
+            && CanOpenSteamControllerConfig
+            && _steamConfigFocus is not null
+            && _steamConfigFocus.WasActivated)
+        {
+            _game.Input.OpenSteamControllerConfiguration();
+        }
+
+        if (_activeSection == OptionsSection.Controls)
+        {
+            RefreshSteamGlyphLabels();
+        }
+
         SyncPendingSettings();
     }
 
@@ -331,7 +391,15 @@ public sealed class OptionsScene : IScene
                     () => BeginRebind(captured, RebindKind.Keyboard));
                 var padFocus = new FocusableAction(
                     () => GetBindingCellBounds(layout, captured, BindingCell.Gamepad),
-                    () => BeginRebind(captured, RebindKind.Gamepad));
+                    () =>
+                    {
+                        if (IsSteamInputManagingControllers)
+                        {
+                            return false;
+                        }
+
+                        return BeginRebind(captured, RebindKind.Gamepad);
+                    });
 
                 _bindingFocusables.Add(keyFocus);
                 _bindingFocusables.Add(padFocus);
@@ -354,6 +422,21 @@ public sealed class OptionsScene : IScene
                         _focus.Navigation.LinkVertical(padIndices[i], padIndices[i + 1]);
                     }
                 }
+            }
+
+            if (CanOpenSteamControllerConfig && _steamConfigFocus is not null)
+            {
+                int steamIndex = _focus.Add(_steamConfigFocus, "SteamControllerConfig");
+                if (sectionExitIndex >= 0)
+                {
+                    _focus.Navigation.LinkVertical(sectionExitIndex, steamIndex);
+                }
+                else
+                {
+                    _focus.Navigation.LinkVertical(controlsTabIndex, steamIndex);
+                }
+
+                sectionExitIndex = steamIndex;
             }
         }
 
@@ -383,6 +466,11 @@ public sealed class OptionsScene : IScene
     {
         if (kind == RebindKind.Gamepad)
         {
+            if (IsSteamInputManagingControllers)
+            {
+                return false;
+            }
+
             if (!Enum.TryParse(_controlBindings[index].action, out GameplayInputAction action)
                 || !GamepadDefaults.IsButtonRebindable(action))
             {
@@ -555,16 +643,32 @@ public sealed class OptionsScene : IScene
             DrawColumnDivider(spriteBatch, pixel, layout, rowBounds.Y, rowBounds.Height);
 
             string keyText = rebindingKey ? "PRESS KEY" : FormatKeyName(_controlBindings[i].keyName);
-            string padText = rebindingPad ? "PRESS BTN" : _controlBindings[i].gamepadName;
+            string padText = rebindingPad
+                ? "PRESS BTN"
+                : _controlBindings[i].gamepadName;
             DrawBindingBox(spriteBatch, pixel, keyBounds, rebindingKey, keyText);
             DrawBindingBox(spriteBatch, pixel, padBounds, rebindingPad, padText);
 
             string displayAction = FormatActionName(_controlBindings[i].action);
             DrawFittedLeft(spriteBatch, pixel, displayAction, labelBounds, 2, LabelColor);
         }
+
+        if (IsSteamInputManagingControllers)
+        {
+            Rectangle noteBounds = new(
+                layout.ControlSectionBounds.X + layout.SectionPadding,
+                layout.ControlRowsArea.Bottom + 8,
+                layout.ControlSectionBounds.Width - (layout.SectionPadding * 2),
+                22);
+            DrawFittedLeft(spriteBatch, pixel, "Managed by Steam Input", noteBounds, 1, MutedLabelColor);
+            if (CanOpenSteamControllerConfig)
+            {
+                _steamConfigButton.Draw(spriteBatch, pixel);
+            }
+        }
     }
 
-    private static void DrawControlTableHeader(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
+    private void DrawControlTableHeader(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
     {
         Rectangle header = layout.ControlHeaderBounds;
         spriteBatch.Draw(pixel, header, new Color(32, 42, 58));
@@ -576,7 +680,13 @@ public sealed class OptionsScene : IScene
 
         DrawFittedLeft(spriteBatch, pixel, "ACTION", actionHeader, 1, MutedLabelColor);
         DrawFittedCentered(spriteBatch, pixel, "KEYBOARD", keyboardHeader, 1, MutedLabelColor);
-        DrawFittedCentered(spriteBatch, pixel, "GAMEPAD", gamepadHeader, 1, MutedLabelColor);
+        DrawFittedCentered(
+            spriteBatch,
+            pixel,
+            IsSteamInputManagingControllers ? "STEAM" : "GAMEPAD",
+            gamepadHeader,
+            1,
+            MutedLabelColor);
 
         DrawColumnDivider(spriteBatch, pixel, layout, header.Y, header.Height);
     }
@@ -806,6 +916,20 @@ public sealed class OptionsScene : IScene
 
         _backButton.Bounds = layout.BackButtonBounds;
         _applyButton.Bounds = layout.ApplyButtonBounds;
+
+        if (CanOpenSteamControllerConfig)
+        {
+            int steamW = Math.Min(420, layout.ControlSectionBounds.Width - (layout.SectionPadding * 2));
+            _steamConfigButton.Bounds = new Rectangle(
+                layout.ControlSectionBounds.X + layout.SectionPadding,
+                layout.ControlRowsArea.Bottom + 34,
+                steamW,
+                36);
+        }
+        else
+        {
+            _steamConfigButton.Bounds = Rectangle.Empty;
+        }
     }
 
     private LayoutMetrics GetLayoutMetrics(Viewport viewport)

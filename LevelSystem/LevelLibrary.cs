@@ -22,8 +22,8 @@ public static class LevelLibrary
         }
 
         DeveloperSettings.Reload();
+        UserDataPaths.Initialize();
         EnsureContentFolders();
-        LevelMigration.RunIfNeeded();
         _initialized = true;
     }
 
@@ -109,6 +109,13 @@ public static class LevelLibrary
 
         if (metadata.Source == LevelSource.Official && !DeveloperSettings.DeveloperMode)
         {
+            return false;
+        }
+
+        if (metadata.Source == LevelSource.Official
+            && LevelContentPaths.TryGetProjectOfficialLevelsRoot() is null)
+        {
+            Console.WriteLine($"Save blocked: project OfficialLevels folder is unavailable for {levelId}.");
             return false;
         }
 
@@ -325,10 +332,18 @@ public static class LevelLibrary
 
     private static List<LevelMetadata> ListJsonLevels(LevelSource source)
     {
-        string root = LevelContentPaths.GetLevelsRoot(source);
-        Directory.CreateDirectory(root);
+        string root = GetLevelsRootForAccess(source);
+        if (source != LevelSource.Official)
+        {
+            Directory.CreateDirectory(root);
+        }
 
         var levels = new List<LevelMetadata>();
+        if (!Directory.Exists(root))
+        {
+            return levels;
+        }
+
         foreach (string filePath in Directory.GetFiles(root, "*.json").OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
         {
             LevelMetadata? metadata = TryCreateMetadataFromJsonFile(source, filePath);
@@ -423,7 +438,7 @@ public static class LevelLibrary
             return null;
         }
 
-        string filePath = Path.Combine(LevelContentPaths.GetLevelsRoot(source), $"{fileStem}.json");
+        string filePath = Path.Combine(GetLevelsRootForAccess(source), $"{fileStem}.json");
         if (!File.Exists(filePath))
         {
             return null;
@@ -450,7 +465,10 @@ public static class LevelLibrary
 
     private static string GetUniqueLevelPath(LevelSource source, string fileStem)
     {
-        string root = LevelContentPaths.GetLevelsRoot(source);
+        string root = source == LevelSource.Official
+            ? LevelContentPaths.TryGetProjectOfficialLevelsRoot()
+                ?? throw new InvalidOperationException("Project OfficialLevels folder is unavailable.")
+            : LevelContentPaths.GetLevelsRoot(source);
         Directory.CreateDirectory(root);
 
         string candidateStem = fileStem;
@@ -545,6 +563,14 @@ public static class LevelLibrary
         {
             Directory.CreateDirectory(projectOfficialRoot);
             string destination = Path.Combine(projectOfficialRoot, Path.GetFileName(runtimeFilePath));
+            if (string.Equals(
+                Path.GetFullPath(runtimeFilePath),
+                Path.GetFullPath(destination),
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
             File.Copy(runtimeFilePath, destination, overwrite: true);
         }
         catch (Exception ex)
@@ -577,7 +603,6 @@ public static class LevelLibrary
 
     private static void EnsureContentFolders()
     {
-        Directory.CreateDirectory(LevelContentPaths.GetLevelsRoot(LevelSource.Official));
         Directory.CreateDirectory(LevelContentPaths.GetLevelsRoot(LevelSource.Local));
         Directory.CreateDirectory(LevelContentPaths.GetLevelsRoot(LevelSource.Workshop));
         Directory.CreateDirectory(LevelContentPaths.GetReplaysRoot(LevelSource.Official));
@@ -586,7 +611,19 @@ public static class LevelLibrary
         Directory.CreateDirectory(LevelContentPaths.GetPreviewsRoot(LevelSource.Official));
         Directory.CreateDirectory(LevelContentPaths.GetPreviewsRoot(LevelSource.Local));
         Directory.CreateDirectory(LevelContentPaths.GetPreviewsRoot(LevelSource.Workshop));
-        Directory.CreateDirectory(Path.Combine(LevelContentPaths.ContentRoot, LevelContentPaths.BestTimesFolder));
+        Directory.CreateDirectory(UserDataPaths.BestTimes);
+    }
+
+    private static string GetLevelsRootForAccess(LevelSource source)
+    {
+        if (source == LevelSource.Official
+            && DeveloperSettings.DeveloperMode
+            && LevelContentPaths.TryGetProjectOfficialLevelsRoot() is string projectRoot)
+        {
+            return projectRoot;
+        }
+
+        return LevelContentPaths.GetLevelsRoot(source);
     }
 
     private static JsonSerializerOptions CreateJsonOptions()

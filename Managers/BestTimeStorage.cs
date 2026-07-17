@@ -136,6 +136,13 @@ public static class BestTimeStorage
 
             foreach ((LevelSource source, Dictionary<string, LevelBestTimesRecord> bucket) in grouped)
             {
+                string destinationPath = GetWritablePath(source);
+                if (File.Exists(destinationPath)
+                    && File.GetLastWriteTimeUtc(destinationPath) >= File.GetLastWriteTimeUtc(path))
+                {
+                    continue;
+                }
+
                 Dictionary<string, LevelBestTimesRecord> existing = LoadAll(source);
                 foreach ((string levelId, LevelBestTimesRecord record) in bucket)
                 {
@@ -245,10 +252,5 @@ public static class BestTimeStorage
     private static IEnumerable<string> GetReadablePaths(LevelSource source)
     {
         yield return LevelContentPaths.GetBestTimesPath(source);
-        if (source == LevelSource.Local)
-        {
-            yield return LevelContentPaths.GetLegacyBestTimesPath();
-            yield return Path.Combine(Environment.CurrentDirectory, BestTimesFileName);
-        }
     }
 }

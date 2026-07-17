@@ -612,6 +612,7 @@ public sealed class GameScene : IScene
         int lineHeight = SimpleTextRenderer.MeasureString("A", scale).Y + 3;
         SteamManager steam = _game.Steam;
         SteamLobbyService lobby = _game.SteamLobby;
+        SteamInputManager steamInput = _game.SteamInput;
         List<string> lines = new()
         {
             "PARTY",
@@ -635,15 +636,26 @@ public sealed class GameScene : IScene
             $"OWNER: {lobby.GetLobbyOwnerSteamId()}",
             $"OVERLAY ENABLED: {FormatDebugBool(steam.IsOverlayEnabled)}",
             $"STEAM STATUS: {steam.Status}",
-            $"STEAM INPUT: {FormatDebugBool(_game.SteamInput.IsInitialized)}"
+            $"STEAM INPUT: {(steamInput.IsInitialized ? "Enabled" : "Disabled")}",
+            $"STEAM ACTION SET: {steamInput.CurrentActionSetName}",
+            $"STEAM GLYPH SOURCE: {steamInput.GlyphSource}",
+            $"STEAM LAYOUT: {steamInput.ActiveLayoutLabel}",
+            $"STEAM LAYOUT REFRESH: {FormatLayoutRefresh(steamInput.LastLayoutRefreshUtc)}",
+            $"STEAM GLYPH CACHE: {steamInput.Glyphs.CachedGlyphCount} (v{steamInput.Glyphs.LayoutVersion})",
+            $"STEAM CONTROLLERS: {steamInput.ConnectedControllerCount}"
         };
 
         for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
         {
-            if (_game.Input.IsGamepadConnected(i))
+            ulong handle = steamInput.GetHandleForSlot(i).m_InputHandle;
+            if (!_game.Input.IsGamepadConnected(i) && handle == 0)
             {
-                lines.Add($"PAD{i + 1} {_game.SteamInput.GetControllerLabel(i)}");
+                continue;
             }
+
+            string assigned = FindAssignedPlayerLabel(i);
+            lines.Add(
+                $"PAD{i + 1} type={steamInput.GetControllerType(i)} label={steamInput.GetControllerLabel(i)} handle={handle} player={assigned}");
         }
 
         foreach (PartyMember member in _game.Party.Members)
@@ -705,6 +717,29 @@ public sealed class GameScene : IScene
     private static string FormatDebugBool(bool value)
     {
         return value ? "true" : "false";
+    }
+
+    private static string FormatLayoutRefresh(DateTime utc)
+    {
+        if (utc == DateTime.MinValue)
+        {
+            return "never";
+        }
+
+        return utc.ToLocalTime().ToString("HH:mm:ss");
+    }
+
+    private string FindAssignedPlayerLabel(int controllerSlot)
+    {
+        foreach (PartyMember member in _game.Party.Members)
+        {
+            if (member.InputSource == PartyInputSource.Gamepad && member.ControllerId == controllerSlot)
+            {
+                return member.DisplayName;
+            }
+        }
+
+        return "—";
     }
 
     private string FormatCheckpointDebugText()

@@ -134,15 +134,12 @@ public static class SettingsManager
 
     private static string GetWritablePath()
     {
-        return Path.Combine(AppContext.BaseDirectory, "Content", SettingsFileName);
+        return UserDataPaths.SettingsFile;
     }
 
     private static IEnumerable<string> GetReadablePaths()
     {
-        yield return Path.Combine(AppContext.BaseDirectory, "Content", SettingsFileName);
-        yield return Path.Combine(AppContext.BaseDirectory, SettingsFileName);
-        yield return Path.Combine(Environment.CurrentDirectory, "Content", SettingsFileName);
-        yield return Path.Combine(Environment.CurrentDirectory, SettingsFileName);
+        yield return UserDataPaths.SettingsFile;
     }
 
     private static JsonSerializerOptions CreateJsonOptions()
