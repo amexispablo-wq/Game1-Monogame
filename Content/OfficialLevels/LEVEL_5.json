@@ -1,0 +1,152 @@
+{
+  "name": "LEVEL 5",
+  "platforms": [
+    {
+      "x": 0,
+      "y": 64,
+      "width": 1056,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 0,
+      "y": 64,
+      "width": 1056,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": 0,
+      "y": 64,
+      "width": 1056,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 256,
+      "y": 0,
+      "width": 32,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 352,
+      "y": -64,
+      "width": 64,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 224,
+      "y": -352,
+      "width": 224,
+      "height": 416,
+      "color": "Green"
+    },
+    {
+      "x": 448,
+      "y": -448,
+      "width": 352,
+      "height": 320,
+      "color": "Blue"
+    },
+    {
+      "x": 640,
+      "y": -128,
+      "width": 288,
+      "height": 192,
+      "color": "Red"
+    },
+    {
+      "x": 512,
+      "y": -256,
+      "width": 32,
+      "height": 320,
+      "color": "Green"
+    },
+    {
+      "x": 512,
+      "y": -256,
+      "width": 32,
+      "height": 320,
+      "color": "Red"
+    },
+    {
+      "x": 512,
+      "y": -128,
+      "width": 32,
+      "height": 192,
+      "color": "Blue"
+    },
+    {
+      "x": 448,
+      "y": -128,
+      "width": 64,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 416,
+      "y": -128,
+      "width": 32,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": 224,
+      "y": -416,
+      "width": 32,
+      "height": 288,
+      "color": "Red"
+    },
+    {
+      "x": 288,
+      "y": -480,
+      "width": 32,
+      "height": 224,
+      "color": "Blue"
+    },
+    {
+      "x": 160,
+      "y": -448,
+      "width": 256,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 544,
+      "y": -64,
+      "width": 96,
+      "height": 128,
+      "color": "Red"
+    }
+  ],
+  "goals": [],
+  "checkpointFlags": [],
+  "launchPads": [],
+  "playerSpawn": {
+    "x": 0,
+    "y": 0
+  },
+  "musicId": "default_track_01",
+  "allPlayers": true,
+  "player1": false,
+  "player2": false,
+  "player3": false,
+  "player4": false,
+  "coloredRope": false,
+  "regularRope": false,
+  "lavaRise": false,
+  "lavaLine": {
+    "surfaceY": 640,
+    "riseSpeed": 70
+  },
+  "author": "Game",
+  "workshopId": "",
+  "createdDate": "2026-07-20T17:11:37.7277165Z",
+  "modifiedDate": "2026-07-20T17:32:01.5774228Z",
+  "version": 4,
+  "ownerSteamId": "",
+  "downloadedVersion": "",
+  "lastSync": null
+}

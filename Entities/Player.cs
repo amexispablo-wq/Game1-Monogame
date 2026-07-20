@@ -22,6 +22,7 @@ public sealed class Player : INetworkEntity
     private Vector2 _debugEscapeVector;
     private Vector2 _forceAccumulator;
     private Platform _ejectionPlatform;
+    private Player _ejectionPlayer;
     private Vector2 _ejectionBaseDirection;
     private Vector2 _ejectionForceDirection;
     private Vector2 _ejectionPlatformCenter;
@@ -272,24 +273,24 @@ public sealed class Player : INetworkEntity
         }
     }
 
-    internal void BeginPhysicsStep(float dt, Level level)
+    internal void BeginPhysicsStep(float dt, Level level, IReadOnlyList<Player> allPlayers)
     {
         LastCollisionNormal = Vector2.Zero;
         LastCollisionCorrection = Vector2.Zero;
         UpdateEjectionState(dt);
         UpdateLaunchState(dt);
         UpdateDebugEscapeVector(dt);
-        TryStartEjectionFromOverlaps(level);
+        TryStartEjectionFromOverlaps(level, allPlayers);
     }
 
-    internal void HandleInputState(PlayerInputState input, Level level)
+    internal void HandleInputState(PlayerInputState input, Level level, IReadOnlyList<Player> allPlayers)
     {
-        HandleColorChange(input, level);
+        HandleColorChange(input, level, allPlayers);
     }
 
-    internal void RefreshGroundedState(Level level)
+    internal void RefreshGroundedState(Level level, IReadOnlyList<Player> allPlayers)
     {
-        IsGrounded = HasGroundBelow(level);
+        IsGrounded = HasGroundBelow(level, allPlayers);
     }
 
     internal void ApplyMovementForces(PlayerInputState input, float dt)
@@ -362,7 +363,7 @@ public sealed class Player : INetworkEntity
 
     internal void ApplyEjectionForces()
     {
-        if (State != PlayerState.Ejecting || _ejectionPlatform == null)
+        if (State != PlayerState.Ejecting || (_ejectionPlatform == null && _ejectionPlayer == null))
         {
             _ejectionForce = 0f;
             return;
@@ -546,13 +547,13 @@ public sealed class Player : INetworkEntity
         return horizontalInput;
     }
 
-    internal void FinishPhysicsStep(Level level)
+    internal void FinishPhysicsStep(Level level, IReadOnlyList<Player> allPlayers)
     {
         UpdateGroundedLaunchEnd();
         if (State == PlayerState.Ejecting && !IsEjectionTargetStillSolidAndOverlapping())
         {
             FinishEjection();
-            IsGrounded = HasGroundBelow(level);
+            IsGrounded = HasGroundBelow(level, allPlayers);
         }
     }
 
@@ -588,7 +589,7 @@ public sealed class Player : INetworkEntity
         Velocity = new Vector2(Velocity.X - (sign * step), Velocity.Y);
     }
 
-    private void HandleColorChange(PlayerInputState input, Level level)
+    private void HandleColorChange(PlayerInputState input, Level level, IReadOnlyList<Player> allPlayers)
     {
         if (input.RequestedColor is not { } requestedColor || requestedColor == CurrentColor)
         {
@@ -602,7 +603,7 @@ public sealed class Player : INetworkEntity
             FinishEjection(enableLaunchControl: false);
         }
 
-        TryStartEjectionFromOverlaps(level);
+        TryStartEjectionFromOverlaps(level, allPlayers);
     }
 
     internal bool IsEjectingFrom(Platform platform)
@@ -610,7 +611,12 @@ public sealed class Player : INetworkEntity
         return State == PlayerState.Ejecting && ReferenceEquals(platform, _ejectionPlatform);
     }
 
-    private void TryStartEjectionFromOverlaps(Level level)
+    internal bool IsEjectingFrom(Player otherPlayer)
+    {
+        return State == PlayerState.Ejecting && ReferenceEquals(otherPlayer, _ejectionPlayer);
+    }
+
+    private void TryStartEjectionFromOverlaps(Level level, IReadOnlyList<Player> allPlayers)
     {
         if (State == PlayerState.Ejecting || IsFrozen)
         {
@@ -619,29 +625,40 @@ public sealed class Player : INetworkEntity
 
         if (!TryFindBestEjectionCandidate(
             level,
+            allPlayers,
             out Platform platform,
+            out Player player,
             out Vector2 direction,
-            out Vector2 platformCenter,
+            out Vector2 targetCenter,
             out float penetrationDepth,
             out float centerInfluence))
         {
             return;
         }
 
-        StartEjection(platform, direction, platformCenter, penetrationDepth, centerInfluence);
+        if (platform != null)
+        {
+            StartEjectionFromPlatform(platform, direction, targetCenter, penetrationDepth, centerInfluence);
+            return;
+        }
+
+        StartEjectionFromPlayer(player, direction, targetCenter, penetrationDepth, centerInfluence);
     }
 
     private bool TryFindBestEjectionCandidate(
         Level level,
+        IReadOnlyList<Player> allPlayers,
         out Platform bestPlatform,
+        out Player bestPlayer,
         out Vector2 bestDirection,
-        out Vector2 bestPlatformCenter,
+        out Vector2 bestTargetCenter,
         out float bestPenetrationDepth,
         out float bestCenterInfluence)
     {
         bestPlatform = null;
+        bestPlayer = null;
         bestDirection = Vector2.Zero;
-        bestPlatformCenter = Vector2.Zero;
+        bestTargetCenter = Vector2.Zero;
         bestPenetrationDepth = 0f;
         bestCenterInfluence = 0f;
 
@@ -651,10 +668,11 @@ public sealed class Player : INetworkEntity
         foreach (Platform platform in level.GetCollidablePlatforms(CurrentColor))
         {
             if (!TryCalculateEjectionInfo(
-                platform,
+                platform.Bounds,
+                GetPlatformCenter(platform),
                 fallbackDirection,
                 out Vector2 direction,
-                out Vector2 platformCenter,
+                out Vector2 targetCenter,
                 out float penetrationDepth,
                 out float centerInfluence))
             {
@@ -668,17 +686,60 @@ public sealed class Player : INetworkEntity
             }
 
             bestPlatform = platform;
+            bestPlayer = null;
             bestDirection = direction;
-            bestPlatformCenter = platformCenter;
+            bestTargetCenter = targetCenter;
             bestPenetrationDepth = penetrationDepth;
             bestCenterInfluence = centerInfluence;
             bestScore = score;
         }
 
-        return bestPlatform != null;
+        if (allPlayers != null)
+        {
+            foreach (Player other in allPlayers)
+            {
+                if (ReferenceEquals(other, this))
+                {
+                    continue;
+                }
+
+                if (other.CurrentColor != CurrentColor)
+                {
+                    continue;
+                }
+
+                if (!TryCalculateEjectionInfo(
+                    other.Bounds,
+                    GetPlayerCenter(other),
+                    fallbackDirection,
+                    out Vector2 direction,
+                    out Vector2 targetCenter,
+                    out float penetrationDepth,
+                    out float centerInfluence))
+                {
+                    continue;
+                }
+
+                float score = (centerInfluence * 1000f) + penetrationDepth;
+                if (score <= bestScore)
+                {
+                    continue;
+                }
+
+                bestPlatform = null;
+                bestPlayer = other;
+                bestDirection = direction;
+                bestTargetCenter = targetCenter;
+                bestPenetrationDepth = penetrationDepth;
+                bestCenterInfluence = centerInfluence;
+                bestScore = score;
+            }
+        }
+
+        return bestPlatform != null || bestPlayer != null;
     }
 
-    private void StartEjection(
+    private void StartEjectionFromPlatform(
         Platform platform,
         Vector2 direction,
         Vector2 platformCenter,
@@ -687,9 +748,32 @@ public sealed class Player : INetworkEntity
     {
         State = PlayerState.Ejecting;
         _ejectionPlatform = platform;
+        _ejectionPlayer = null;
+        InitializeEjectionState(direction, platformCenter, penetrationDepth, centerInfluence);
+    }
+
+    private void StartEjectionFromPlayer(
+        Player player,
+        Vector2 direction,
+        Vector2 playerCenter,
+        float penetrationDepth,
+        float centerInfluence)
+    {
+        State = PlayerState.Ejecting;
+        _ejectionPlatform = null;
+        _ejectionPlayer = player;
+        InitializeEjectionState(direction, playerCenter, penetrationDepth, centerInfluence);
+    }
+
+    private void InitializeEjectionState(
+        Vector2 direction,
+        Vector2 targetCenter,
+        float penetrationDepth,
+        float centerInfluence)
+    {
         _ejectionBaseDirection = direction;
         _ejectionForceDirection = direction;
-        _ejectionPlatformCenter = platformCenter;
+        _ejectionPlatformCenter = targetCenter;
         _ejectionTimer = 0f;
         _ejectionRampAmount = GetEjectionRampAmount();
         _ejectionForce = 0f;
@@ -701,7 +785,7 @@ public sealed class Player : INetworkEntity
         IsGrounded = false;
 
         _debugEscapeVectorTimeRemaining = DebugEscapeVectorSeconds;
-        _debugEscapeVectorStart = platformCenter;
+        _debugEscapeVectorStart = targetCenter;
         _debugEscapeVector = direction * MathHelper.Clamp(EjectionMaxSpeed * 0.12f, 28f, 110f);
 
         OnEjectionStart?.Invoke(this);
@@ -741,10 +825,11 @@ public sealed class Player : INetworkEntity
             : _ejectionBaseDirection;
 
         if (!TryCalculateEjectionInfo(
-            _ejectionPlatform,
+            GetEjectionTargetBounds(),
+            _ejectionPlatformCenter,
             fallbackDirection,
             out Vector2 direction,
-            out Vector2 platformCenter,
+            out Vector2 targetCenter,
             out float penetrationDepth,
             out float centerInfluence))
         {
@@ -760,43 +845,65 @@ public sealed class Player : INetworkEntity
         }
 
         _ejectionForceDirection = direction;
-        _ejectionPlatformCenter = platformCenter;
+        _ejectionPlatformCenter = targetCenter;
         _ejectionPenetrationDepth = penetrationDepth;
         _ejectionCenterInfluence = centerInfluence;
         return true;
     }
 
     private bool TryCalculateEjectionInfo(
-        Platform platform,
+        Rectangle targetBounds,
+        Vector2 targetCenter,
         Vector2 fallbackDirection,
         out Vector2 direction,
-        out Vector2 platformCenter,
+        out Vector2 resolvedTargetCenter,
         out float penetrationDepth,
         out float centerInfluence)
     {
         direction = Vector2.Zero;
-        platformCenter = GetPlatformCenter(platform);
+        resolvedTargetCenter = targetCenter;
         penetrationDepth = 0f;
         centerInfluence = 0f;
 
-        if (!TryGetPenetrationDepth(platform.Bounds, out penetrationDepth))
+        if (!TryGetPenetrationDepth(targetBounds, out penetrationDepth))
         {
             return false;
         }
 
         Vector2 playerCenter = Position + (Size * 0.5f);
-        Vector2 centerDelta = playerCenter - platformCenter;
+        Vector2 centerDelta = playerCenter - targetCenter;
 
         direction = NormalizeOrFallback(centerDelta, fallbackDirection);
-        centerInfluence = CalculateCenterInfluence(centerDelta, platform.Bounds);
+        centerInfluence = CalculateCenterInfluence(centerDelta, targetBounds);
         return true;
+    }
+
+    private Rectangle GetEjectionTargetBounds()
+    {
+        if (_ejectionPlatform != null)
+        {
+            return _ejectionPlatform.Bounds;
+        }
+
+        return _ejectionPlayer?.Bounds ?? Rectangle.Empty;
     }
 
     private bool IsEjectionTargetStillSolidAndOverlapping()
     {
-        return _ejectionPlatform != null
-            && _ejectionPlatform.PlatformColor == CurrentColor
-            && CollisionHelper.Intersects(Position, Size, _ejectionPlatform.Bounds);
+        if (_ejectionPlatform != null)
+        {
+            return (_ejectionPlatform.PlatformColor == CurrentColor
+                    || _ejectionPlatform.PlatformColor == GameColor.White)
+                && CollisionHelper.Intersects(Position, Size, _ejectionPlatform.Bounds);
+        }
+
+        if (_ejectionPlayer != null)
+        {
+            return _ejectionPlayer.CurrentColor == CurrentColor
+                && CollisionHelper.Intersects(Position, Size, _ejectionPlayer.Bounds);
+        }
+
+        return false;
     }
 
     private void FinishEjection(bool enableLaunchControl = true)
@@ -809,6 +916,7 @@ public sealed class Player : INetworkEntity
         Vector2 finalDirection = _ejectionForceDirection;
         State = PlayerState.Normal;
         _ejectionPlatform = null;
+        _ejectionPlayer = null;
         _ejectionBaseDirection = Vector2.Zero;
         _ejectionForceDirection = Vector2.Zero;
         _ejectionForce = 0f;
@@ -837,6 +945,7 @@ public sealed class Player : INetworkEntity
     {
         State = PlayerState.Normal;
         _ejectionPlatform = null;
+        _ejectionPlayer = null;
         _ejectionBaseDirection = Vector2.Zero;
         _ejectionForceDirection = Vector2.Zero;
         _ejectionPlatformCenter = Vector2.Zero;
@@ -850,7 +959,7 @@ public sealed class Player : INetworkEntity
         _launchControlRemaining = 0f;
     }
 
-    private bool HasGroundBelow(Level level)
+    private bool HasGroundBelow(Level level, IReadOnlyList<Player> allPlayers)
     {
         Vector2 probePosition = Position + new Vector2(0f, 2f);
 
@@ -864,6 +973,32 @@ public sealed class Player : INetworkEntity
             if (CollisionHelper.Intersects(probePosition, Size, platform.Bounds))
             {
                 return true;
+            }
+        }
+
+        if (allPlayers != null)
+        {
+            foreach (Player other in allPlayers)
+            {
+                if (ReferenceEquals(other, this))
+                {
+                    continue;
+                }
+
+                if (other.CurrentColor != CurrentColor)
+                {
+                    continue;
+                }
+
+                if (IsEjectingFrom(other))
+                {
+                    continue;
+                }
+
+                if (CollisionHelper.Intersects(probePosition, Size, other.Bounds))
+                {
+                    return true;
+                }
             }
         }
 
@@ -929,6 +1064,11 @@ public sealed class Player : INetworkEntity
         return new Vector2(
             platform.Bounds.X + (platform.Bounds.Width * 0.5f),
             platform.Bounds.Y + (platform.Bounds.Height * 0.5f));
+    }
+
+    private static Vector2 GetPlayerCenter(Player player)
+    {
+        return player.Position + (player.Size * 0.5f);
     }
 
     private bool TryGetPenetrationDepth(Rectangle obstacle, out float penetrationDepth)

@@ -174,6 +174,11 @@ public sealed class TextInputComponent
 
     public void SetFocus(bool focused)
     {
+        if (_isFocused == focused)
+        {
+            return;
+        }
+
         _isFocused = focused;
         if (focused)
         {

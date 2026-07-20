@@ -53,6 +53,7 @@ public sealed class GameSession
     public string SelectedLevelId { get; set; }
     public RopeGameplayMode RopeGameplayMode { get; set; }
     public bool LavaRiseEnabled { get; set; }
+    public bool PlayerCollisionEnabled { get; set; }
     public GameSessionSettings Settings { get; set; } = GameSessionSettings.Default;
 
     public static GameSession CreateLocalTest(string selectedLevelId, RopeGameplayMode ropeGameplayMode)

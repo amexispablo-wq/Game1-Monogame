@@ -52,6 +52,9 @@ public sealed class LevelData
     [JsonPropertyName("lavaRise")]
     public bool LavaRise { get; set; }
 
+    [JsonPropertyName("playerCollision")]
+    public bool PlayerCollision { get; set; }
+
     [JsonPropertyName("lavaLine")]
     public LavaLineData? LavaLine { get; set; }
 

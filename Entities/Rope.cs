@@ -837,19 +837,40 @@ public sealed class Rope : INetworkEntity
         LastTension = MathF.Max(LastTension, tension);
 
         float impulseScale = force * dt;
-        StartPlayer.AddImpulse(startTangent * impulseScale * StartPlayer.Mass);
-        EndPlayer.AddImpulse(endTangent * impulseScale * EndPlayer.Mass);
+        Vector2 startImpulse = startTangent * impulseScale * StartPlayer.Mass;
+        Vector2 endImpulse = endTangent * impulseScale * EndPlayer.Mass;
+
+        // Rope mass/self-weight must not kill jumps. Keep player↔player coupling (hang weight),
+        // but strip downward impulse while a player is moving upward.
+        startImpulse = FilterJumpMitigation(startImpulse, StartPlayer);
+        endImpulse = FilterJumpMitigation(endImpulse, EndPlayer);
+
+        StartPlayer.AddImpulse(startImpulse);
+        EndPlayer.AddImpulse(endImpulse);
 
         // Pinned constraint corrections = rope tugging players (consequence of rope).
         if (_startPinnedCorrection != Vector2.Zero)
         {
-            StartPlayer.AddImpulse(_startPinnedCorrection * StartPlayer.Mass * 0.5f);
+            Vector2 pinned = FilterJumpMitigation(_startPinnedCorrection * StartPlayer.Mass * 0.5f, StartPlayer);
+            StartPlayer.AddImpulse(pinned);
         }
 
         if (_endPinnedCorrection != Vector2.Zero)
         {
-            EndPlayer.AddImpulse(_endPinnedCorrection * EndPlayer.Mass * 0.5f);
+            Vector2 pinned = FilterJumpMitigation(_endPinnedCorrection * EndPlayer.Mass * 0.5f, EndPlayer);
+            EndPlayer.AddImpulse(pinned);
         }
+    }
+
+    private static Vector2 FilterJumpMitigation(Vector2 impulse, Player player)
+    {
+        // Up is negative Y. Kill downward (positive Y) rope force while airborne upward.
+        if (player.Velocity.Y < -40f && impulse.Y > 0f)
+        {
+            impulse.Y = 0f;
+        }
+
+        return impulse;
     }
 
     private float EvaluateTension(float endpointDistance, float maxLen)

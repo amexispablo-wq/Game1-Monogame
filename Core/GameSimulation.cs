@@ -17,13 +17,14 @@ public sealed class GameSimulation
     private float _fixedTimeAccumulator;
     private readonly float _lavaStartSurfaceY;
 
-    public GameSimulation(GameSession session, Level level, PlayerManager playerManager, bool lavaRiseEnabled = false)
+    public GameSimulation(GameSession session, Level level, PlayerManager playerManager, bool lavaRiseEnabled = false, bool playerCollisionEnabled = false)
     {
         _session = session;
         Level = level;
         PlayerManager = playerManager;
         TickRate = new TickRate(session.Settings.SimulationTicksPerSecond);
         PhysicsWorld = new PhysicsWorld(level, playerManager.Players, session, session.RopeGameplayMode);
+        PhysicsWorld.PlayerCollisionEnabled = playerCollisionEnabled;
         TimerRunning = true;
         _session.State = GameSessionState.Playing;
 
@@ -36,6 +37,7 @@ public sealed class GameSimulation
             LavaRiseEnabled = lavaRiseEnabled;
         }
 
+        PlayerCollisionEnabled = playerCollisionEnabled;
         LastSnapshot = CreateSnapshot(SimulationTick.Zero);
     }
 
@@ -54,6 +56,7 @@ public sealed class GameSimulation
     public bool NewRecord { get; private set; }
     public bool LavaActive { get; }
     public bool LavaRiseEnabled { get; }
+    public bool PlayerCollisionEnabled { get; }
     public float LavaRiseSpeed { get; }
     public float LavaSurfaceY { get; private set; }
     public bool IsPlayerDead { get; private set; }

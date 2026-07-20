@@ -58,6 +58,7 @@ public sealed class Level
     public bool ColoredRope { get; set; }
     public bool RegularRope { get; set; }
     public bool LavaRise { get; set; }
+    public bool PlayerCollision { get; set; }
     public LavaLine Lava { get; set; }
     public IReadOnlyList<Platform> Platforms => _platforms;
     public IReadOnlyList<Goal> Goals => _goals;
@@ -156,7 +157,8 @@ public sealed class Level
             Player4 = data.Player4,
             ColoredRope = data.ColoredRope,
             RegularRope = data.RegularRope,
-            LavaRise = data.LavaRise
+            LavaRise = data.LavaRise,
+            PlayerCollision = data.PlayerCollision
         };
 
         if (data.LavaLine is not null)
@@ -182,6 +184,7 @@ public sealed class Level
             ColoredRope = ColoredRope,
             RegularRope = RegularRope,
             LavaRise = LavaRise,
+            PlayerCollision = PlayerCollision,
             LavaLine = Lava is null ? null : new LavaLineData { SurfaceY = Lava.SurfaceY, RiseSpeed = Lava.RiseSpeed }
         };
 
@@ -229,6 +232,34 @@ public sealed class Level
         }
 
         return data;
+    }
+
+    public void ReplaceFromData(LevelData data)
+    {
+        Level loaded = FromData(data);
+        Name = loaded.Name;
+        PlayerStart = loaded.PlayerStart;
+        MusicId = loaded.MusicId;
+        AllPlayers = loaded.AllPlayers;
+        Player1 = loaded.Player1;
+        Player2 = loaded.Player2;
+        Player3 = loaded.Player3;
+        Player4 = loaded.Player4;
+        ColoredRope = loaded.ColoredRope;
+        RegularRope = loaded.RegularRope;
+        LavaRise = loaded.LavaRise;
+        PlayerCollision = loaded.PlayerCollision;
+        Lava = loaded.Lava;
+
+        _platforms.Clear();
+        _platforms.AddRange(loaded.Platforms);
+        _goals.Clear();
+        _goals.AddRange(loaded.Goals);
+        _checkpointFlags.Clear();
+        _checkpointFlags.AddRange(loaded.CheckpointFlags);
+        _launchPads.Clear();
+        _launchPads.AddRange(loaded.LaunchPads);
+        RecalculateWorldSize();
     }
 
     public void AddPlatform(Platform platform)
@@ -342,7 +373,7 @@ public sealed class Level
     {
         foreach (Platform platform in _platforms)
         {
-            if (platform.PlatformColor == playerColor)
+            if (platform.PlatformColor == playerColor || platform.PlatformColor == GameColor.White)
             {
                 yield return platform;
             }

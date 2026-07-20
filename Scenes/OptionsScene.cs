@@ -282,6 +282,15 @@ public sealed class OptionsScene : IScene
             return;
         }
 
+        if (_game.Input.GamepadMenuTabLeftPressed || _game.Input.MenuTabBackwardPressed)
+        {
+            SwitchSectionOffset(-1);
+        }
+        else if (_game.Input.GamepadMenuTabRightPressed || _game.Input.MenuTabPressed)
+        {
+            SwitchSectionOffset(1);
+        }
+
         RebuildFocus(gameTime);
 
         if (_displayTabFocus.WasActivated)
@@ -332,6 +341,28 @@ public sealed class OptionsScene : IScene
         }
 
         SyncPendingSettings();
+    }
+
+    private void SwitchSectionOffset(int delta)
+    {
+        OptionsSection[] sections =
+        {
+            OptionsSection.Display,
+            OptionsSection.Audio,
+            OptionsSection.Controls
+        };
+
+        int currentIndex = 0;
+        for (int i = 0; i < sections.Length; i++)
+        {
+            if (sections[i] == _activeSection)
+            {
+                currentIndex = i;
+                break;
+            }
+        }
+
+        _activeSection = sections[(currentIndex + delta + sections.Length) % sections.Length];
     }
 
     private void RebuildFocus(GameTime gameTime)

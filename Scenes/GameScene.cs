@@ -14,6 +14,7 @@ public sealed class GameScene : IScene
     private readonly string _levelId;
     private readonly RopeGameplayMode _ropeGameplayMode;
     private readonly bool _lavaRiseEnabled;
+    private readonly bool _playerCollisionEnabled;
     private readonly GameSession _session;
     private readonly Level _level;
     private readonly PlayerManager _playerManager;
@@ -36,6 +37,8 @@ public sealed class GameScene : IScene
     private readonly UIFocusManager _deathFocus = new() { Name = "Death Menu" };
     private readonly List<FocusableGridCell> _deathOptionFocusables = new();
     private bool _deathMenuFocusInitialized;
+    private Popup? _confirmPopup;
+    private ConfirmActionKind _pendingConfirm;
     private bool _disconnectPending;
     private float _disconnectTimer;
     private const float DisconnectReturnDelay = 2.5f;
@@ -47,17 +50,26 @@ public sealed class GameScene : IScene
 
     public bool IsPhotoModeActive => _photoMode;
 
+    private enum ConfirmActionKind
+    {
+        None,
+        RestartLevel,
+        QuitToMenu
+    }
+
     public GameScene(
         ColorBlocksGame game,
         string levelId = "level_1",
         RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics,
         bool lavaRiseEnabled = false,
-        bool ghostBestRunEnabled = false)
+        bool ghostBestRunEnabled = false,
+        bool playerCollisionEnabled = false)
     {
         _game = game;
         _levelId = levelId;
         _ropeGameplayMode = ropeGameplayMode;
         _lavaRiseEnabled = lavaRiseEnabled;
+        _playerCollisionEnabled = playerCollisionEnabled;
         _ghostBestRunEnabled = ghostBestRunEnabled;
         int localOwnerId = _game.SteamLobby.IsAvailable
             ? SteamOwnerId.FromSteamId(_game.SteamLobby.LocalSteamId)
@@ -71,13 +83,15 @@ public sealed class GameScene : IScene
                 _game.Steam.Username)
             : GameSession.CreateLocalTest(levelId, ropeGameplayMode);
         _session.LavaRiseEnabled = lavaRiseEnabled;
+        _session.PlayerCollisionEnabled = playerCollisionEnabled;
         _level = LevelLibrary.LoadLevel(levelId);
         _playerManager = new PlayerManager(_session, _level);
         _game.ActiveTuningPanel = _tuningPanel;
         _game.Party.ApplyPreferredInputForPrimaryLocalMember(_game.Input);
         _game.Party.LockAssignments();
         _playerManager.SpawnFromParty(_game.Party.Members, _game.Input);
-        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled);
+        bool collisionEnabled = playerCollisionEnabled && LevelRules.SupportsPlayerCollision(_level);
+        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled, collisionEnabled);
         _camera = new Camera(GetPlayersCenter());
         _replayRecorder.StartRecording(
             _levelId,
@@ -179,6 +193,30 @@ public sealed class GameScene : IScene
                 _game.ChangeScene(new PartyScene(_game));
                 return;
             }
+        }
+
+        if (_confirmPopup is not null)
+        {
+            _game.Input.GameplayInputBlocked = true;
+            _confirmPopup.Update(gameTime, _game.Input, viewport.Width, viewport.Height);
+            if (_confirmPopup.Result == PopupResult.Confirmed)
+            {
+                ConfirmActionKind action = _pendingConfirm;
+                _confirmPopup = null;
+                _pendingConfirm = ConfirmActionKind.None;
+                ExecuteConfirmedAction(action);
+            }
+            else if (_confirmPopup.Result == PopupResult.Cancelled)
+            {
+                _confirmPopup = null;
+                _pendingConfirm = ConfirmActionKind.None;
+                if (_pauseMenu.IsOpen)
+                {
+                    // stay paused
+                }
+            }
+
+            return;
         }
 
         if (_pauseMenu.IsOpen)
@@ -312,18 +350,40 @@ public sealed class GameScene : IScene
                 _simulation.PauseMenuRespawn();
                 break;
             case PauseMenuChoice.RestartLevel:
-                _simulation.SetPaused(false);
-                _pauseMenu.Close();
-                _game.Input.GameplayInputBlocked = false;
-                ResetGameplaySession();
+                _confirmPopup = new Popup(
+                    "Restart Level",
+                    "Restart from the beginning?\nProgress since last checkpoint will be lost.",
+                    "Restart",
+                    "Cancel");
+                _pendingConfirm = ConfirmActionKind.RestartLevel;
                 break;
             case PauseMenuChoice.BackToMenu:
                 _simulation.SetPaused(false);
                 _pauseMenu.Close();
                 _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
                 break;
-            case PauseMenuChoice.QuitGame:
-                _game.ExitGame();
+        }
+    }
+
+    private void ExecuteConfirmedAction(ConfirmActionKind action)
+    {
+        switch (action)
+        {
+            case ConfirmActionKind.RestartLevel:
+                if (_simulation.IsPlayerDead)
+                {
+                    _simulation.RespawnFromStart();
+                }
+                else
+                {
+                    _simulation.SetPaused(false);
+                    _pauseMenu.Close();
+                    _game.Input.GameplayInputBlocked = false;
+                    ResetGameplaySession();
+                }
+                break;
+            case ConfirmActionKind.QuitToMenu:
+                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
                 break;
         }
     }
@@ -372,6 +432,11 @@ public sealed class GameScene : IScene
         if (_pauseMenu.IsOpen)
         {
             _pauseMenu.Draw(spriteBatch, _game.Pixel, gameTime, viewport, _game.Input);
+        }
+
+        if (_confirmPopup is not null)
+        {
+            _confirmPopup.Draw(gameTime, spriteBatch, _game.Pixel);
         }
 
         if (_disconnectPending)
@@ -827,44 +892,51 @@ public sealed class GameScene : IScene
 
     private void UpdateDeathUi(GameTime gameTime)
     {
+        if (_confirmPopup is not null)
+        {
+            return;
+        }
+
         LayoutDeathUi();
         _deathOptionFocusables.Clear();
         _deathFocus.Clear();
 
-        _deathOptionFocusables.Add(new FocusableGridCell(_deathRespawnStartBounds, () => true));
+        // Order: checkpoint first, then restart start, then quit.
         _deathOptionFocusables.Add(new FocusableGridCell(_deathCheckpointBounds, () => _simulation.HasCheckpoint)
         {
             IsEnabled = _simulation.HasCheckpoint
         });
+        _deathOptionFocusables.Add(new FocusableGridCell(_deathRespawnStartBounds, () => true));
         _deathOptionFocusables.Add(new FocusableGridCell(_deathQuitBounds, () => true));
 
         var optionIndices = new List<int>();
-        optionIndices.Add(_deathFocus.Add(_deathOptionFocusables[0], "RespawnStart"));
-        optionIndices.Add(_deathFocus.Add(_deathOptionFocusables[1], "RespawnCheckpoint"));
+        optionIndices.Add(_deathFocus.Add(_deathOptionFocusables[0], "RespawnCheckpoint"));
+        optionIndices.Add(_deathFocus.Add(_deathOptionFocusables[1], "RespawnStart"));
         optionIndices.Add(_deathFocus.Add(_deathOptionFocusables[2], "Quit"));
         _deathFocus.Navigation.WireVerticalChain(optionIndices);
 
-        _deathFocus.FinalizeFocus("RespawnStart");
+        string defaultFocus = _simulation.HasCheckpoint ? "RespawnCheckpoint" : "RespawnStart";
+        _deathFocus.FinalizeFocus(defaultFocus);
         _deathFocus.Update(gameTime, _game.Input);
 
         InputManager input = _game.Input;
         if (input.UiPointerPressed)
         {
-            if (_deathRespawnStartBounds.Contains(input.UiPointerPosition))
-            {
-                _simulation.RespawnFromStart();
-                return;
-            }
-
             if (_simulation.HasCheckpoint && _deathCheckpointBounds.Contains(input.UiPointerPosition))
             {
                 _simulation.RespawnFromCheckpoint();
                 return;
             }
 
+            if (_deathRespawnStartBounds.Contains(input.UiPointerPosition))
+            {
+                OpenQuitOrRestartConfirm(ConfirmActionKind.RestartLevel);
+                return;
+            }
+
             if (_deathQuitBounds.Contains(input.UiPointerPosition))
             {
-                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+                OpenQuitOrRestartConfirm(ConfirmActionKind.QuitToMenu);
                 return;
             }
         }
@@ -876,14 +948,8 @@ public sealed class GameScene : IScene
                 continue;
             }
 
-            if (_deathOptionFocusables[i].WasActivated)
-            {
-                HandleDeathMenuChoice(i);
-                return;
-            }
-
-            bool confirmed = _deathFocus.Focused == _deathOptionFocusables[i] && input.MenuConfirmPressed;
-            if (confirmed)
+            if (_deathOptionFocusables[i].WasActivated
+                || (_deathFocus.Focused == _deathOptionFocusables[i] && input.MenuConfirmPressed))
             {
                 HandleDeathMenuChoice(i);
                 return;
@@ -892,22 +958,44 @@ public sealed class GameScene : IScene
 
         if (input.ExitPressed || input.MenuCancelPressed)
         {
-            _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+            OpenQuitOrRestartConfirm(ConfirmActionKind.QuitToMenu);
         }
+    }
+
+    private void OpenQuitOrRestartConfirm(ConfirmActionKind kind)
+    {
+        if (kind == ConfirmActionKind.RestartLevel)
+        {
+            _confirmPopup = new Popup(
+                "Restart Level",
+                "Restart from the beginning?\nProgress will be lost.",
+                "Restart",
+                "Cancel");
+        }
+        else
+        {
+            _confirmPopup = new Popup(
+                "Quit",
+                "Return to level select?",
+                "Quit",
+                "Cancel");
+        }
+
+        _pendingConfirm = kind;
     }
 
     private void HandleDeathMenuChoice(int optionIndex)
     {
         switch (optionIndex)
         {
-            case 0:
-                _simulation.RespawnFromStart();
-                break;
-            case 1 when _simulation.HasCheckpoint:
+            case 0 when _simulation.HasCheckpoint:
                 _simulation.RespawnFromCheckpoint();
                 break;
+            case 1:
+                OpenQuitOrRestartConfirm(ConfirmActionKind.RestartLevel);
+                break;
             default:
-                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+                OpenQuitOrRestartConfirm(ConfirmActionKind.QuitToMenu);
                 break;
         }
     }
@@ -922,8 +1010,8 @@ public sealed class GameScene : IScene
         int x = (viewport.Width - buttonWidth) / 2;
         int firstY = (viewport.Height / 2) - (totalHeight / 2) + (int)(viewport.Height * 0.06f);
 
-        _deathRespawnStartBounds = new Rectangle(x, firstY, buttonWidth, buttonHeight);
-        _deathCheckpointBounds = new Rectangle(x, firstY + buttonHeight + gap, buttonWidth, buttonHeight);
+        _deathCheckpointBounds = new Rectangle(x, firstY, buttonWidth, buttonHeight);
+        _deathRespawnStartBounds = new Rectangle(x, firstY + buttonHeight + gap, buttonWidth, buttonHeight);
         _deathQuitBounds = new Rectangle(x, firstY + (buttonHeight + gap) * 2, buttonWidth, buttonHeight);
     }
 
@@ -940,8 +1028,8 @@ public sealed class GameScene : IScene
         DrawCenteredText(spriteBatch, pixel, title, viewport.Width / 2, titleY, titleScale, new Color(255, 96, 40));
 
         bool hasCheckpoint = _simulation.HasCheckpoint;
-        DrawDeathButton(spriteBatch, pixel, _deathRespawnStartBounds, "RESPAWN START", enabled: true);
         DrawDeathButton(spriteBatch, pixel, _deathCheckpointBounds, "RESPAWN CHECKPOINT", enabled: hasCheckpoint);
+        DrawDeathButton(spriteBatch, pixel, _deathRespawnStartBounds, "RESTART LEVEL", enabled: true);
         DrawDeathButton(spriteBatch, pixel, _deathQuitBounds, "QUIT", enabled: true);
         if (_deathOptionFocusables.Count > 0)
         {

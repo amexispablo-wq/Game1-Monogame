@@ -595,6 +595,7 @@
   "coloredRope": true,
   "regularRope": true,
   "lavaRise": true,
+  "playerCollision": true,
   "lavaLine": {
     "surfaceY": 960,
     "riseSpeed": 10
@@ -602,8 +603,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-05-11T14:59:53.7977532Z",
-  "modifiedDate": "2026-07-17T19:18:52.7994662Z",
-  "version": 8,
+  "modifiedDate": "2026-07-20T18:14:42.8185647Z",
+  "version": 9,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -12,6 +13,8 @@ public sealed class EditorScene : IScene
     private const int ResizeMargin = 8;
     private const int MinPlatformSize = GridSize; // Must be at least one grid cell
     private const int MarqueeMinDragSize = 4;
+    private const int MaxUndoDepth = 10;
+    private static readonly JsonSerializerOptions UndoJsonOptions = new();
 
     private readonly ColorBlocksGame _game;
     private readonly string _levelId;
@@ -38,7 +41,11 @@ public sealed class EditorScene : IScene
     private readonly Dictionary<Platform, Rectangle> _dragStartBounds = new();
     private readonly Dictionary<CheckpointFlag, Point> _checkpointDragStartPositions = new();
     private readonly Dictionary<LaunchPad, Rectangle> _launchPadDragStartBounds = new();
+    private readonly Dictionary<Goal, Point> _goalDragStartPositions = new();
     private readonly List<EditorClipboardItem> _clipboard = new();
+    private readonly List<LevelData> _undoStack = new();
+    private readonly List<LevelData> _redoStack = new();
+    private LevelData? _historyGestureBefore;
     private Point _clipboardOrigin;
     private int _pasteCount;
     private Point _dragStartMouse;
@@ -54,7 +61,6 @@ public sealed class EditorScene : IScene
     private bool _isPanningCamera;
     private Point _createStart;
     private Point _goalDragStartMouse;
-    private Point _goalDragStartPosition;
     private Point _checkpointDragStartMouse;
     private Point _launchPadDragStartMouse;
     private Point _goalPreviewPosition;
@@ -73,7 +79,6 @@ public sealed class EditorScene : IScene
     private bool _checkpointSlotHovered;
     private bool _launchPadSlotHovered;
     private bool _playerSpawnSlotHovered;
-    private bool _isDraggingGoalFromToolbar;
     private bool _isDraggingPlayerSpawn;
     private bool _playerSpawnSelected;
     private bool _playerSpawnHovered;
@@ -92,6 +97,7 @@ public sealed class EditorScene : IScene
     private Rectangle _colorRedBounds;
     private Rectangle _colorGreenBounds;
     private Rectangle _colorBlueBounds;
+    private Rectangle _colorWhiteBounds;
 
     private readonly VirtualCursor _virtualCursor = new();
     private readonly UIFocusManager _uiFocus = new();
@@ -526,6 +532,18 @@ public sealed class EditorScene : IScene
     {
         if (_game.Input.ControlHeld)
         {
+            if (_game.Input.IsNewKeyPress(Keys.Z))
+            {
+                TryUndo();
+                return;
+            }
+
+            if (_game.Input.IsNewKeyPress(Keys.Y))
+            {
+                TryRedo();
+                return;
+            }
+
             if (_game.Input.IsNewKeyPress(Keys.C))
             {
                 CopySelectedObjects();
@@ -534,7 +552,9 @@ public sealed class EditorScene : IScene
 
             if (_game.Input.IsNewKeyPress(Keys.V))
             {
+                BeginHistoryGesture();
                 PasteClipboard();
+                EndHistoryGesture();
                 return;
             }
         }
@@ -554,17 +574,23 @@ public sealed class EditorScene : IScene
 
         if (_game.Input.IsNewKeyPress(Keys.Q))
         {
+            BeginHistoryGesture();
             RotateSelectedLaunchPads(-15f);
+            EndHistoryGesture();
         }
 
         if (_game.Input.IsNewKeyPress(Keys.E))
         {
+            BeginHistoryGesture();
             RotateSelectedLaunchPads(15f);
+            EndHistoryGesture();
         }
 
         if (_game.Input.IsNewKeyPress(Keys.Delete) && HasSelection)
         {
+            BeginHistoryGesture();
             DeleteSelectedObjects();
+            EndHistoryGesture();
             _isDragging = false;
             _isDraggingGoal = false;
             _isDraggingCheckpoint = false;
@@ -578,14 +604,18 @@ public sealed class EditorScene : IScene
         {
             if (_game.Input.IsNewKeyPress(Keys.OemComma) || _game.Input.IsNewKeyPress(Keys.OemMinus))
             {
+                BeginHistoryGesture();
                 _level.Lava.RiseSpeed = Math.Max(LavaLine.MinRiseSpeed, _level.Lava.RiseSpeed - 10f);
                 _isDirty = true;
+                EndHistoryGesture();
             }
 
             if (_game.Input.IsNewKeyPress(Keys.OemPeriod) || _game.Input.IsNewKeyPress(Keys.OemPlus))
             {
+                BeginHistoryGesture();
                 _level.Lava.RiseSpeed = Math.Min(LavaLine.MaxRiseSpeed, _level.Lava.RiseSpeed + 10f);
                 _isDirty = true;
+                EndHistoryGesture();
             }
         }
 
@@ -598,7 +628,9 @@ public sealed class EditorScene : IScene
     private void SetSelectedColor(GameColor color)
     {
         _selectedColor = color;
+        BeginHistoryGesture();
         ApplyColorToSelection(color);
+        EndHistoryGesture();
     }
 
     private bool TryApplyColorFromPointer()
@@ -626,6 +658,12 @@ public sealed class EditorScene : IScene
             return true;
         }
 
+        if (_colorWhiteBounds.Contains(UiPointer))
+        {
+            SetSelectedColor(GameColor.White);
+            return true;
+        }
+
         return false;
     }
 
@@ -635,7 +673,7 @@ public sealed class EditorScene : IScene
         int minDimension = Math.Min(viewport.Width, viewport.Height);
         int margin = Math.Max(8, (int)(minDimension * 0.025f));
         int panelWidth = Math.Min(
-            Math.Clamp((int)(viewport.Width * 0.28f), 220, 300),
+            Math.Clamp((int)(viewport.Width * 0.32f), 260, 340),
             Math.Max(1, viewport.Width - (margin * 2)));
         int panelHeight = Math.Min(
             Math.Clamp((int)(viewport.Height * 0.065f), 38, 52),
@@ -644,12 +682,12 @@ public sealed class EditorScene : IScene
 
         int swatchGap = 6;
         int swatchSize = Math.Max(18, panelHeight - Math.Max(12, panelHeight / 3));
-        int swatchesWidth = (swatchSize * 3) + (swatchGap * 2);
         int swatchY = _colorPanelBounds.Center.Y - (swatchSize / 2);
         int swatchX = _colorPanelBounds.Left + margin / 2;
         _colorRedBounds = new Rectangle(swatchX, swatchY, swatchSize, swatchSize);
         _colorGreenBounds = new Rectangle(_colorRedBounds.Right + swatchGap, swatchY, swatchSize, swatchSize);
         _colorBlueBounds = new Rectangle(_colorGreenBounds.Right + swatchGap, swatchY, swatchSize, swatchSize);
+        _colorWhiteBounds = new Rectangle(_colorBlueBounds.Right + swatchGap, swatchY, swatchSize, swatchSize);
     }
 
     private void HandleCameraInput(bool mouseOverUi, GameTime gameTime)
@@ -800,7 +838,7 @@ public sealed class EditorScene : IScene
                 return;
             }
 
-            StartLaunchPadDrag(clickedLaunchPad, mouse);
+            StartSelectionDrag(mouse);
             return;
         }
 
@@ -815,14 +853,22 @@ public sealed class EditorScene : IScene
                 _selectedCheckpoint = clickedCheckpoint;
             }
 
-            StartCheckpointDrag(clickedCheckpoint, mouse);
+            StartSelectionDrag(mouse);
             return;
         }
 
         if (clickedGoal is not null)
         {
-            SelectSingleGoal(clickedGoal);
-            StartGoalDrag(clickedGoal, mouse);
+            if (!_selectedGoals.Contains(clickedGoal))
+            {
+                SelectSingleGoal(clickedGoal);
+            }
+            else
+            {
+                _selectedGoal = clickedGoal;
+            }
+
+            StartSelectionDrag(mouse);
             return;
         }
 
@@ -846,7 +892,7 @@ public sealed class EditorScene : IScene
                 return;
             }
 
-            StartDrag(clickedPlatform, mouse);
+            StartSelectionDrag(mouse);
             return;
         }
 
@@ -857,6 +903,7 @@ public sealed class EditorScene : IScene
         }
 
         ClearSelection();
+        BeginHistoryGesture();
         _isCreating = true;
         _isDragging = false;
         _isResizing = false;
@@ -882,25 +929,21 @@ public sealed class EditorScene : IScene
         if (_isDragging && _selectedPlatforms.Count > 0)
         {
             MoveSelectedPlatforms(mouse);
-            return;
         }
 
-        if (_isDraggingGoal && _selectedGoal is not null)
+        if (_isDraggingGoal && _selectedGoals.Count > 0)
         {
-            MoveSelectedGoal(mouse);
-            return;
+            MoveSelectedGoals(mouse);
         }
 
         if (_isDraggingCheckpoint && _selectedCheckpoints.Count > 0)
         {
             MoveSelectedCheckpoints(mouse);
-            return;
         }
 
         if (_isDraggingLaunchPad && _selectedLaunchPads.Count > 0)
         {
             MoveSelectedLaunchPads(mouse);
-            return;
         }
 
         if (_isDraggingPlayerSpawn)
@@ -955,6 +998,7 @@ public sealed class EditorScene : IScene
         _isDraggingLavaLine = false;
         _isResizing = false;
         _activeHandle = ResizeHandle.None;
+        EndHistoryGesture();
     }
 
     private void StartMarqueeSelection(Point mouse)
@@ -1023,6 +1067,7 @@ public sealed class EditorScene : IScene
     private void StartLavaDrag(Point mouse)
     {
         ClearSelection();
+        BeginHistoryGesture();
         _lavaSelected = true;
         _isDraggingLavaLine = true;
         _isCreating = false;
@@ -1059,34 +1104,52 @@ public sealed class EditorScene : IScene
         _isDirty = true;
     }
 
-    private void StartDrag(Platform platform, Point mouse)
+    private void StartSelectionDrag(Point mouse)
     {
-        if (!_selectedPlatforms.Contains(platform))
-        {
-            SelectSinglePlatform(platform);
-        }
-        else
-        {
-            _selectedPlatform = platform;
-        }
-
-        _isDragging = true;
-        _isDraggingGoal = false;
-        _isDraggingCheckpoint = false;
-        _isDraggingLaunchPad = false;
+        BeginHistoryGesture();
         _isResizing = false;
         _isCreating = false;
+        _activeHandle = ResizeHandle.None;
+
+        _isDragging = _selectedPlatforms.Count > 0;
+        _isDraggingGoal = _selectedGoals.Count > 0;
+        _isDraggingCheckpoint = _selectedCheckpoints.Count > 0;
+        _isDraggingLaunchPad = _selectedLaunchPads.Count > 0;
+
         _dragStartMouse = mouse;
+        _goalDragStartMouse = mouse;
+        _checkpointDragStartMouse = mouse;
+        _launchPadDragStartMouse = mouse;
+
         _dragStartBounds.Clear();
         foreach (Platform selectedPlatform in _selectedPlatforms)
         {
             _dragStartBounds[selectedPlatform] = selectedPlatform.Bounds;
+        }
+
+        _goalDragStartPositions.Clear();
+        foreach (Goal selectedGoal in _selectedGoals)
+        {
+            _goalDragStartPositions[selectedGoal] = selectedGoal.Position;
+        }
+
+        _checkpointDragStartPositions.Clear();
+        foreach (CheckpointFlag selectedCheckpoint in _selectedCheckpoints)
+        {
+            _checkpointDragStartPositions[selectedCheckpoint] = selectedCheckpoint.Position;
+        }
+
+        _launchPadDragStartBounds.Clear();
+        foreach (LaunchPad selectedLaunchPad in _selectedLaunchPads)
+        {
+            _launchPadDragStartBounds[selectedLaunchPad] = selectedLaunchPad.Bounds;
         }
     }
 
     private void StartResize(Platform platform, ResizeHandle handle, Point mouse)
     {
         SelectSinglePlatform(platform);
+        BeginHistoryGesture();
         _activeHandle = handle;
         _isResizing = true;
         _isDragging = false;
@@ -1101,6 +1164,7 @@ public sealed class EditorScene : IScene
     private void StartResize(LaunchPad launchPad, ResizeHandle handle, Point mouse)
     {
         SelectSingleLaunchPad(launchPad);
+        BeginHistoryGesture();
         _activeHandle = handle;
         _isResizing = true;
         _isDragging = false;
@@ -1125,20 +1189,6 @@ public sealed class EditorScene : IScene
         _selectedGoal = goal;
     }
 
-    private void StartGoalDrag(Goal goal, Point mouse)
-    {
-        SelectSingleGoal(goal);
-        _isDraggingGoal = true;
-        _isDragging = false;
-        _isDraggingCheckpoint = false;
-        _isDraggingLaunchPad = false;
-        _isResizing = false;
-        _isCreating = false;
-        _activeHandle = ResizeHandle.None;
-        _goalDragStartMouse = mouse;
-        _goalDragStartPosition = goal.Position;
-    }
-
     private void SelectSingleCheckpoint(CheckpointFlag checkpoint)
     {
         _selectedPlatforms.Clear();
@@ -1150,28 +1200,6 @@ public sealed class EditorScene : IScene
         _selectedCheckpoints.Clear();
         _selectedCheckpoints.Add(checkpoint);
         _selectedCheckpoint = checkpoint;
-    }
-
-    private void StartCheckpointDrag(CheckpointFlag checkpoint, Point mouse)
-    {
-        if (!_selectedCheckpoints.Contains(checkpoint))
-        {
-            SelectSingleCheckpoint(checkpoint);
-        }
-
-        _isDraggingCheckpoint = true;
-        _isDraggingLaunchPad = false;
-        _isDraggingGoal = false;
-        _isDragging = false;
-        _isResizing = false;
-        _isCreating = false;
-        _activeHandle = ResizeHandle.None;
-        _checkpointDragStartMouse = mouse;
-        _checkpointDragStartPositions.Clear();
-        foreach (CheckpointFlag selectedCheckpoint in _selectedCheckpoints)
-        {
-            _checkpointDragStartPositions[selectedCheckpoint] = selectedCheckpoint.Position;
-        }
     }
 
     private void SelectSingleLaunchPad(LaunchPad launchPad)
@@ -1187,58 +1215,42 @@ public sealed class EditorScene : IScene
         _selectedLaunchPad = launchPad;
     }
 
-    private void StartLaunchPadDrag(LaunchPad launchPad, Point mouse)
+    private void MoveSelectedGoals(Point mouse)
     {
-        if (!_selectedLaunchPads.Contains(launchPad))
-        {
-            SelectSingleLaunchPad(launchPad);
-        }
-
-        _isDraggingLaunchPad = true;
-        _isDraggingCheckpoint = false;
-        _isDraggingGoal = false;
-        _isDragging = false;
-        _isResizing = false;
-        _isCreating = false;
-        _activeHandle = ResizeHandle.None;
-        _launchPadDragStartMouse = mouse;
-        _launchPadDragStartBounds.Clear();
-        foreach (LaunchPad selectedLaunchPad in _selectedLaunchPads)
-        {
-            _launchPadDragStartBounds[selectedLaunchPad] = selectedLaunchPad.Bounds;
-        }
-    }
-
-    private void MoveSelectedGoal(Point mouse)
-    {
-        if (_selectedGoal is null)
-        {
-            return;
-        }
-
         Point delta = GetDelta(mouse, _goalDragStartMouse);
         if (_snapToGrid)
         {
             delta = SnapDelta(delta);
         }
 
-        Point nextPosition = new(
-            _goalDragStartPosition.X + delta.X,
-            _goalDragStartPosition.Y + delta.Y);
-
-        if (_snapToGrid)
+        bool movedAnyGoal = false;
+        foreach (Goal selectedGoal in _selectedGoals)
         {
-            nextPosition = Snap(nextPosition);
+            if (!_goalDragStartPositions.TryGetValue(selectedGoal, out Point startPosition))
+            {
+                continue;
+            }
+
+            Point nextPosition = new(startPosition.X + delta.X, startPosition.Y + delta.Y);
+            if (_snapToGrid)
+            {
+                nextPosition = Snap(nextPosition);
+            }
+
+            if (selectedGoal.Position == nextPosition)
+            {
+                continue;
+            }
+
+            selectedGoal.Position = nextPosition;
+            movedAnyGoal = true;
         }
 
-        if (_selectedGoal.Position == nextPosition)
+        if (movedAnyGoal)
         {
-            return;
+            _level.RecalculateWorldSize();
+            _isDirty = true;
         }
-
-        _selectedGoal.Position = nextPosition;
-        _level.RecalculateWorldSize();
-        _isDirty = true;
     }
 
     private void MoveSelectedCheckpoints(Point mouse)
@@ -1325,6 +1337,7 @@ public sealed class EditorScene : IScene
     private void BeginToolbarObjectDrag(EditorObjectKind kind, Point mouse)
     {
         ClearSelection();
+        BeginHistoryGesture();
         _toolbarDragKind = kind;
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
@@ -1390,6 +1403,7 @@ public sealed class EditorScene : IScene
         }
 
         _toolbarDragKind = EditorObjectKind.None;
+        EndHistoryGesture();
     }
 
     private void MoveSelectedPlatforms(Point mouse)
@@ -1570,6 +1584,7 @@ public sealed class EditorScene : IScene
 
     private void StartPlayerSpawnDrag(Point mouse)
     {
+        BeginHistoryGesture();
         _isDraggingPlayerSpawn = true;
         _isDragging = false;
         _isDraggingGoal = false;
@@ -1990,11 +2005,13 @@ public sealed class EditorScene : IScene
             return;
         }
 
+        BeginHistoryGesture();
         _level.Lava.RiseSpeed = MathHelper.Clamp(
             _level.Lava.RiseSpeed + delta,
             LavaLine.MinRiseSpeed,
             LavaLine.MaxRiseSpeed);
         _isDirty = true;
+        EndHistoryGesture();
     }
 
     private void DrawLavaSpeedPanel(SpriteBatch spriteBatch, Texture2D pixel)
@@ -2180,16 +2197,28 @@ public sealed class EditorScene : IScene
 
     private void DrawGrid(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, Rectangle visibleWorldBounds)
     {
-        // Fixed 32x32 world cells, drawn in screen space. Fade to fully invisible before cells get tiny.
+        // Fixed 32px world cells. Zoom out → coarser visual grid (3x then 9x).
         float screenCellSize = GridSize * _camera.Zoom;
+        int stepCells = 1;
+        if (screenCellSize < 10f)
+        {
+            stepCells = 9;
+        }
+        else if (screenCellSize < 18f)
+        {
+            stepCells = 3;
+        }
+
+        int worldStep = GridSize * stepCells;
+        float screenStep = worldStep * _camera.Zoom;
         const float fullVisibilityCellSize = 26f;
-        const float hiddenCellSize = 12f;
-        if (screenCellSize <= hiddenCellSize)
+        const float hiddenCellSize = 4f;
+        if (screenStep <= hiddenCellSize)
         {
             return;
         }
 
-        float fade = (screenCellSize - hiddenCellSize) / (fullVisibilityCellSize - hiddenCellSize);
+        float fade = (screenStep - hiddenCellSize) / (fullVisibilityCellSize - hiddenCellSize);
         fade = MathHelper.Clamp(fade, 0f, 1f);
         fade *= fade;
 
@@ -2202,10 +2231,10 @@ public sealed class EditorScene : IScene
 
         Color gridColor = new Color((byte)255, (byte)255, (byte)255, alpha);
 
-        int startX = FloorToGrid(visibleWorldBounds.Left);
-        int endX = visibleWorldBounds.Right + GridSize;
+        int startX = FloorToMultiple(visibleWorldBounds.Left, worldStep);
+        int endX = visibleWorldBounds.Right + worldStep;
         int lastScreenX = int.MinValue;
-        for (int worldX = startX; worldX <= endX; worldX += GridSize)
+        for (int worldX = startX; worldX <= endX; worldX += worldStep)
         {
             int screenX = (int)MathF.Round(_camera.WorldToScreen(new Vector2(worldX, 0f), viewport).X);
             if (screenX < 0 || screenX >= viewport.Width || screenX == lastScreenX)
@@ -2217,10 +2246,10 @@ public sealed class EditorScene : IScene
             spriteBatch.Draw(pixel, new Rectangle(screenX, 0, 1, viewport.Height), gridColor);
         }
 
-        int startY = FloorToGrid(visibleWorldBounds.Top);
-        int endY = visibleWorldBounds.Bottom + GridSize;
+        int startY = FloorToMultiple(visibleWorldBounds.Top, worldStep);
+        int endY = visibleWorldBounds.Bottom + worldStep;
         int lastScreenY = int.MinValue;
-        for (int worldY = startY; worldY <= endY; worldY += GridSize)
+        for (int worldY = startY; worldY <= endY; worldY += worldStep)
         {
             int screenY = (int)MathF.Round(_camera.WorldToScreen(new Vector2(0f, worldY), viewport).Y);
             if (screenY < 0 || screenY >= viewport.Height || screenY == lastScreenY)
@@ -2312,6 +2341,7 @@ public sealed class EditorScene : IScene
         DrawColorSwatch(spriteBatch, pixel, _colorRedBounds, GameColor.Red);
         DrawColorSwatch(spriteBatch, pixel, _colorGreenBounds, GameColor.Green);
         DrawColorSwatch(spriteBatch, pixel, _colorBlueBounds, GameColor.Blue);
+        DrawColorSwatch(spriteBatch, pixel, _colorWhiteBounds, GameColor.White);
 
         SimpleTextRenderer.DrawString(
             spriteBatch,
@@ -2517,6 +2547,118 @@ public sealed class EditorScene : IScene
         SaveLevel(force: true);
     }
 
+    private void BeginHistoryGesture()
+    {
+        if (_historyGestureBefore is not null)
+        {
+            return;
+        }
+
+        _historyGestureBefore = _level.ToData();
+    }
+
+    private void EndHistoryGesture()
+    {
+        if (_historyGestureBefore is null)
+        {
+            return;
+        }
+
+        LevelData before = _historyGestureBefore;
+        _historyGestureBefore = null;
+
+        LevelData after = _level.ToData();
+        if (LevelDataEquals(before, after))
+        {
+            return;
+        }
+
+        _undoStack.Add(before);
+        while (_undoStack.Count > MaxUndoDepth)
+        {
+            _undoStack.RemoveAt(0);
+        }
+
+        _redoStack.Clear();
+    }
+
+    private void TryUndo()
+    {
+        if (_undoStack.Count == 0)
+        {
+            return;
+        }
+
+        CancelActiveEditGesture();
+        LevelData current = _level.ToData();
+        LevelData previous = _undoStack[^1];
+        _undoStack.RemoveAt(_undoStack.Count - 1);
+        _redoStack.Add(current);
+        while (_redoStack.Count > MaxUndoDepth)
+        {
+            _redoStack.RemoveAt(0);
+        }
+
+        RestoreLevelFromHistory(previous);
+    }
+
+    private void TryRedo()
+    {
+        if (_redoStack.Count == 0)
+        {
+            return;
+        }
+
+        CancelActiveEditGesture();
+        LevelData current = _level.ToData();
+        LevelData next = _redoStack[^1];
+        _redoStack.RemoveAt(_redoStack.Count - 1);
+        _undoStack.Add(current);
+        while (_undoStack.Count > MaxUndoDepth)
+        {
+            _undoStack.RemoveAt(0);
+        }
+
+        RestoreLevelFromHistory(next);
+    }
+
+    private void RestoreLevelFromHistory(LevelData data)
+    {
+        _historyGestureBefore = null;
+        _level.ReplaceFromData(data);
+        ClearSelection();
+        _hoveredPlatform = null;
+        _hoveredGoal = null;
+        _hoveredCheckpoint = null;
+        _hoveredLaunchPad = null;
+        _isDirty = true;
+    }
+
+    private void CancelActiveEditGesture()
+    {
+        _historyGestureBefore = null;
+        _isCreating = false;
+        _isMarqueeSelecting = false;
+        _marqueeBounds = Rectangle.Empty;
+        _isDragging = false;
+        _isDraggingGoal = false;
+        _isDraggingCheckpoint = false;
+        _isDraggingLaunchPad = false;
+        _isDraggingPlayerSpawn = false;
+        _isDraggingLavaLine = false;
+        _isResizing = false;
+        _activeHandle = ResizeHandle.None;
+        _toolbarDragKind = EditorObjectKind.None;
+        _previewBounds = Rectangle.Empty;
+    }
+
+    private static bool LevelDataEquals(LevelData left, LevelData right)
+    {
+        string leftJson = JsonSerializer.Serialize(left, UndoJsonOptions);
+        string rightJson = JsonSerializer.Serialize(right, UndoJsonOptions);
+        return leftJson == rightJson;
+    }
+
     private static int FitTextScale(string text, int preferredScale, int maxWidth)
     {
         int scale = Math.Max(1, preferredScale);
@@ -2572,6 +2714,16 @@ public sealed class EditorScene : IScene
     private static int FloorToGrid(int value)
     {
         return (int)MathF.Floor(value / (float)GridSize) * GridSize;
+    }
+
+    private static int FloorToMultiple(int value, int multiple)
+    {
+        if (multiple <= 0)
+        {
+            return value;
+        }
+
+        return (int)MathF.Floor(value / (float)multiple) * multiple;
     }
 
     private static bool HasLeft(ResizeHandle handle)

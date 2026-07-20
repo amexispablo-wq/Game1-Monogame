@@ -2,6 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
+    <Nullable>annotations</Nullable>
     <AssemblyName>Color Blocks</AssemblyName>
     <RootNamespace>ColorBlocks</RootNamespace>
     <Title>Color Blocks</Title>

@@ -6,7 +6,8 @@ public enum GameColor
 {
     Red,
     Blue,
-    Green
+    Green,
+    White
 }
 
 public static class GameColorExtensions

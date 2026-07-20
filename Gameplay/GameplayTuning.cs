@@ -18,17 +18,17 @@ public sealed class GameplayTuning
     public float LaunchForceMultiplier { get; set; } = 1f;
 
     public float RopeRestLength { get; set; } = 280f;
-    public float MinimumRopeLength { get; set; } = 120f;
+    public float MinimumRopeLength { get; set; } = 90f;
     public float MaximumRopeLength { get; set; } = 280f;
     public float SlackDistance { get; set; } = 48f;
     public float RopeStiffness { get; set; } = 0.62f;
     public float RopeDamping { get; set; } = 0.94f;
     public int ConstraintIterations { get; set; } = 8;
     public float NodeMass { get; set; } = 0f;
-    public float PullShorteningSpeed { get; set; } = 200f;
+    public float PullShorteningSpeed { get; set; } = 280f;
     public float PullRecoverySpeed { get; set; } = 140f;
     public float MaxRopeForce { get; set; } = 3800f;
-    public float MaxPullForce { get; set; } = 2400f;
+    public float MaxPullForce { get; set; } = 3200f;
     public float ProgressiveTensionCurve { get; set; } = 2.1f;
     public float MaxCorrectionPerFrame { get; set; } = 7.5f;
     public int NodeCount { get; set; } = 24;

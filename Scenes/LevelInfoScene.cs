@@ -22,6 +22,7 @@ public sealed class LevelInfoScene : IScene
     private readonly Checkbox _coloredRopeCheckbox = new() { Label = "Colored Rope" };
     private readonly Checkbox _regularRopeCheckbox = new() { Label = "Regular Rope" };
     private readonly Checkbox _lavaRiseCheckbox = new() { Label = "Lava Rise" };
+    private readonly Checkbox _playerCollisionCheckbox = new() { Label = "Player Collision" };
 
     private readonly UIFocusManager _focus = new();
     private readonly UIFocusManager _promptFocus = new();
@@ -35,6 +36,7 @@ public sealed class LevelInfoScene : IScene
     private readonly FocusableCheckbox _coloredRopeFocus;
     private readonly FocusableCheckbox _regularRopeFocus;
     private readonly FocusableCheckbox _lavaRiseFocus;
+    private readonly FocusableCheckbox _playerCollisionFocus;
     private readonly FocusableButton _backFocus;
     private readonly FocusableButton _applyFocus;
 
@@ -66,6 +68,7 @@ public sealed class LevelInfoScene : IScene
         _coloredRopeCheckbox.IsChecked = _level.ColoredRope;
         _regularRopeCheckbox.IsChecked = _level.RegularRope;
         _lavaRiseCheckbox.IsChecked = _level.LavaRise;
+        _playerCollisionCheckbox.IsChecked = _level.PlayerCollision;
 
         _nameFocus = new FocusableTextInput(_nameInput);
         _musicFocus = new FocusableDropdown<string>(_musicDropdown);
@@ -77,6 +80,7 @@ public sealed class LevelInfoScene : IScene
         _coloredRopeFocus = new FocusableCheckbox(_coloredRopeCheckbox);
         _regularRopeFocus = new FocusableCheckbox(_regularRopeCheckbox);
         _lavaRiseFocus = new FocusableCheckbox(_lavaRiseCheckbox);
+        _playerCollisionFocus = new FocusableCheckbox(_playerCollisionCheckbox);
         _backFocus = new FocusableButton(_backButton);
         _applyFocus = new FocusableButton(_applyButton);
 
@@ -104,6 +108,7 @@ public sealed class LevelInfoScene : IScene
         int coloredIdx = _focus.Add(_coloredRopeFocus, "ColoredRope");
         int regularIdx = _focus.Add(_regularRopeFocus, "RegularRope");
         int lavaIdx = _focus.Add(_lavaRiseFocus, "LavaRise");
+        int playerCollisionIdx = _focus.Add(_playerCollisionFocus, "PlayerCollision");
         int backIdx = _focus.Add(_backFocus, "Back");
         int applyIdx = _focus.Add(_applyFocus, "Apply");
 
@@ -112,7 +117,8 @@ public sealed class LevelInfoScene : IScene
         nav.LinkVertical(musicIdx, allPlayersIdx);
         nav.LinkVertical(coloredIdx, regularIdx);
         nav.LinkVertical(regularIdx, lavaIdx);
-        nav.LinkVertical(lavaIdx, backIdx);
+        nav.LinkVertical(lavaIdx, playerCollisionIdx);
+        nav.LinkVertical(playerCollisionIdx, backIdx);
         nav.LinkHorizontal(backIdx, applyIdx);
 
         bool allPlayers = _allPlayersCheckbox.IsChecked;
@@ -234,6 +240,9 @@ public sealed class LevelInfoScene : IScene
         y += 32;
         _lavaRiseCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
         _lavaRiseCheckbox.Draw(spriteBatch, pixel);
+        y += 36;
+        _playerCollisionCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 280, 30);
+        _playerCollisionCheckbox.Draw(spriteBatch, pixel);
         y += 36 + sectionSpacing;
 
         int buttonWidth = 140;
@@ -297,6 +306,7 @@ public sealed class LevelInfoScene : IScene
 
         y += 32;
         _lavaRiseCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
+        _playerCollisionCheckbox.Bounds = new Rectangle(contentArea.X + 18, y + 36, 280, 30);
 
         int buttonWidth = 140;
         int buttonGap = 16;
@@ -349,7 +359,8 @@ public sealed class LevelInfoScene : IScene
             Player4 = _player4Checkbox.IsChecked,
             ColoredRope = _coloredRopeCheckbox.IsChecked,
             RegularRope = _regularRopeCheckbox.IsChecked,
-            LavaRise = _lavaRiseCheckbox.IsChecked
+            LavaRise = _lavaRiseCheckbox.IsChecked,
+            PlayerCollision = _playerCollisionCheckbox.IsChecked
         };
     }
 
@@ -365,6 +376,7 @@ public sealed class LevelInfoScene : IScene
         _level.ColoredRope = _coloredRopeCheckbox.IsChecked;
         _level.RegularRope = _regularRopeCheckbox.IsChecked;
         _level.LavaRise = _lavaRiseCheckbox.IsChecked;
+        _level.PlayerCollision = _playerCollisionCheckbox.IsChecked;
 
         SaveLevel();
         _savedState = CaptureCurrentState();
@@ -469,13 +481,6 @@ public sealed class LevelInfoScene : IScene
         var messageBounds = new Rectangle(popupX + 20, popupY + 60, popupWidth - 40, 60);
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "Your metadata changes will be lost if you leave without saving.", messageBounds, 1, new Color(200, 200, 220));
 
-        int buttonWidth = 120;
-        int buttonHeight = 40;
-        int buttonGap = 14;
-        int totalWidth = buttonWidth * 3 + buttonGap * 2;
-        int buttonsX = popupX + (popupWidth - totalWidth) / 2;
-        int buttonsY = popupY + popupHeight - 64;
-
         DrawPopupButton(spriteBatch, pixel, _savePromptSaveBounds, "Save");
         DrawPopupButton(spriteBatch, pixel, _savePromptDiscardBounds, "Discard");
         DrawPopupButton(spriteBatch, pixel, _savePromptCancelBounds, "Cancel");
@@ -501,6 +506,7 @@ public sealed class LevelInfoScene : IScene
         public bool ColoredRope;
         public bool RegularRope;
         public bool LavaRise;
+        public bool PlayerCollision;
 
         public bool Equals(LevelInfoState other)
         {
@@ -513,7 +519,8 @@ public sealed class LevelInfoScene : IScene
                 && Player4 == other.Player4
                 && ColoredRope == other.ColoredRope
                 && RegularRope == other.RegularRope
-                && LavaRise == other.LavaRise;
+                && LavaRise == other.LavaRise
+                && PlayerCollision == other.PlayerCollision;
         }
 
         public override bool Equals(object? obj) => obj is LevelInfoState other && Equals(other);
@@ -530,6 +537,7 @@ public sealed class LevelInfoScene : IScene
             hash.Add(ColoredRope);
             hash.Add(RegularRope);
             hash.Add(LavaRise);
+            hash.Add(PlayerCollision);
             return hash.ToHashCode();
         }
     }

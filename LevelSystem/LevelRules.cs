@@ -97,4 +97,6 @@ public static class LevelRules
     }
 
     public static bool SupportsLavaRise(Level level) => level.LavaRise;
+
+    public static bool SupportsPlayerCollision(Level level) => level.PlayerCollision;
 }

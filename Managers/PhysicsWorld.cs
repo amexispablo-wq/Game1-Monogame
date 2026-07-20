@@ -44,6 +44,7 @@ public sealed class PhysicsWorld
     public List<Player> Players { get; }
     public List<Rope> Ropes { get; } = new();
     public RopeGameplayMode RopeGameplayMode { get; }
+    public bool PlayerCollisionEnabled { get; set; }
     public Vector2 LastLaunchForce { get; private set; }
     public float LastSimulationStepSeconds { get; private set; }
 
@@ -155,9 +156,9 @@ public sealed class PhysicsWorld
             return;
         }
 
-        player.BeginPhysicsStep(dt, _level);
-        player.HandleInputState(input, _level);
-        player.RefreshGroundedState(_level);
+        player.BeginPhysicsStep(dt, _level, GetPlayerCollisionTargets());
+        player.HandleInputState(input, _level, GetPlayerCollisionTargets());
+        player.RefreshGroundedState(_level, GetPlayerCollisionTargets());
         player.ApplyMovementForces(input, dt);
         player.ApplyJumpImpulse(input);
         player.ApplyGravity(Gravity, input);
@@ -195,7 +196,7 @@ public sealed class PhysicsWorld
         player.IntegratePosition(new Vector2(0f, player.Velocity.Y * dt));
         player.IsGrounded = false;
         ResolveVerticalCollisions(player);
-        player.FinishPhysicsStep(_level);
+        player.FinishPhysicsStep(_level, GetPlayerCollisionTargets());
     }
 
     private void ApplyLaunchPads(Player player)
@@ -309,6 +310,70 @@ public sealed class PhysicsWorld
             player.ApplyCollisionCorrection(correction, normal);
             player.Velocity = new Vector2(0f, player.Velocity.Y);
         }
+
+        if (PlayerCollisionEnabled)
+        {
+            ResolveHorizontalPlayerCollisions(player);
+        }
+    }
+
+    private void ResolveHorizontalPlayerCollisions(Player player)
+    {
+        foreach (Player other in _simulationOrder)
+        {
+            if (ReferenceEquals(other, player))
+            {
+                continue;
+            }
+
+            if (other.CurrentColor != player.CurrentColor)
+            {
+                continue;
+            }
+
+            if (player.IsEjectingFrom(other))
+            {
+                continue;
+            }
+
+            if (!CollisionHelper.Intersects(player.Position, player.Size, other.Bounds))
+            {
+                continue;
+            }
+
+            Vector2 correction = Vector2.Zero;
+            Vector2 normal = Vector2.Zero;
+
+            if (player.Velocity.X > 0f)
+            {
+                correction.X = other.Bounds.Left - (player.Position.X + player.Size.X);
+                normal = new Vector2(-1f, 0f);
+            }
+            else if (player.Velocity.X < 0f)
+            {
+                correction.X = other.Bounds.Right - player.Position.X;
+                normal = new Vector2(1f, 0f);
+            }
+            else if (CollisionHelper.TryGetMinimumTranslationVector(
+                player.Position,
+                player.Size,
+                other.Bounds,
+                out Vector2 escape,
+                out Vector2 escapeDirection,
+                out _))
+            {
+                correction = new Vector2(escape.X, 0f);
+                normal = new Vector2(escapeDirection.X, 0f);
+            }
+
+            if (correction == Vector2.Zero)
+            {
+                continue;
+            }
+
+            player.ApplyCollisionCorrection(correction, normal);
+            player.Velocity = new Vector2(0f, player.Velocity.Y);
+        }
     }
 
     private void ResolveVerticalCollisions(Player player)
@@ -360,6 +425,72 @@ public sealed class PhysicsWorld
             player.ApplyCollisionCorrection(correction, normal);
             player.Velocity = new Vector2(player.Velocity.X, 0f);
         }
+
+        if (PlayerCollisionEnabled)
+        {
+            ResolveVerticalPlayerCollisions(player);
+        }
+    }
+
+    private void ResolveVerticalPlayerCollisions(Player player)
+    {
+        foreach (Player other in _simulationOrder)
+        {
+            if (ReferenceEquals(other, player))
+            {
+                continue;
+            }
+
+            if (other.CurrentColor != player.CurrentColor)
+            {
+                continue;
+            }
+
+            if (player.IsEjectingFrom(other))
+            {
+                continue;
+            }
+
+            if (!CollisionHelper.Intersects(player.Position, player.Size, other.Bounds))
+            {
+                continue;
+            }
+
+            Vector2 correction = Vector2.Zero;
+            Vector2 normal = Vector2.Zero;
+
+            if (player.Velocity.Y > 0f)
+            {
+                correction.Y = other.Bounds.Top - (player.Position.Y + player.Size.Y);
+                normal = new Vector2(0f, -1f);
+                player.IsGrounded = true;
+            }
+            else if (player.Velocity.Y < 0f)
+            {
+                correction.Y = other.Bounds.Bottom - player.Position.Y;
+                normal = new Vector2(0f, 1f);
+            }
+            else if (CollisionHelper.TryGetMinimumTranslationVector(
+                player.Position,
+                player.Size,
+                other.Bounds,
+                out Vector2 escape,
+                out Vector2 escapeDirection,
+                out _))
+            {
+                correction = new Vector2(0f, escape.Y);
+                normal = new Vector2(0f, escapeDirection.Y);
+                player.IsGrounded = escape.Y < 0f;
+            }
+
+            if (correction == Vector2.Zero)
+            {
+                continue;
+            }
+
+            player.ApplyCollisionCorrection(correction, normal);
+            player.Velocity = new Vector2(player.Velocity.X, 0f);
+        }
     }
 
     private IReadOnlyList<Platform> GetSortedCollidablePlatforms(Player player)
@@ -377,6 +508,11 @@ public sealed class PhysicsWorld
         });
 
         return _sortedPlatformsScratch;
+    }
+
+    private IReadOnlyList<Player> GetPlayerCollisionTargets()
+    {
+        return PlayerCollisionEnabled ? Players : null;
     }
 
     private static PlayerInputState GetInputFor(

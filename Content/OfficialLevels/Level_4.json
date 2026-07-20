@@ -1,0 +1,118 @@
+{
+  "name": "LEVEL 4",
+  "platforms": [
+    {
+      "x": -2208,
+      "y": 512,
+      "width": 192,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": -2208,
+      "y": 512,
+      "width": 192,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -2208,
+      "y": 512,
+      "width": 192,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -2016,
+      "y": 448,
+      "width": 192,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -2400,
+      "y": 448,
+      "width": 192,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": -2624,
+      "y": 416,
+      "width": 192,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -1792,
+      "y": 416,
+      "width": 192,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": -2784,
+      "y": 192,
+      "width": 192,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -1632,
+      "y": 192,
+      "width": 192,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -1952,
+      "y": -384,
+      "width": 64,
+      "height": 32,
+      "color": "Blue"
+    }
+  ],
+  "goals": [],
+  "checkpointFlags": [],
+  "launchPads": [
+    {
+      "x": -2720,
+      "y": 384,
+      "width": 64,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": -1568,
+      "y": 384,
+      "width": 64,
+      "height": 32,
+      "rotation": 0
+    }
+  ],
+  "playerSpawn": {
+    "x": -2144,
+    "y": 384
+  },
+  "musicId": "default_track_01",
+  "allPlayers": true,
+  "player1": false,
+  "player2": false,
+  "player3": false,
+  "player4": false,
+  "coloredRope": false,
+  "regularRope": false,
+  "lavaRise": false,
+  "lavaLine": {
+    "surfaceY": 640,
+    "riseSpeed": 70
+  },
+  "author": "Game",
+  "workshopId": "",
+  "createdDate": "2026-07-20T15:46:39.5318063Z",
+  "modifiedDate": "2026-07-20T16:17:45.9139731Z",
+  "version": 3,
+  "ownerSteamId": "",
+  "downloadedVersion": "",
+  "lastSync": null
+}

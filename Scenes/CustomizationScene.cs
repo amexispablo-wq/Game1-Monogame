@@ -216,7 +216,6 @@ public sealed class CustomizationScene : IScene
         else if (!suppress && _applyFocus.WasActivated)
         {
             ApplyChanges();
-            _game.ChangeScene(new MenuScene(_game));
         }
         else if (_backFocus.WasActivated || _game.Input.ExitPressed || _game.Input.MenuCancelPressed)
         {
@@ -476,6 +475,13 @@ public sealed class CustomizationScene : IScene
 
     private void SwitchMember(int index)
     {
+        if (index == _activeMemberIndex)
+        {
+            return;
+        }
+
+        // Persist current member skin before switching so both locals can be set in one visit.
+        ApplyChanges();
         _activeMemberIndex = index;
         LoadMemberSelection();
     }
