@@ -353,6 +353,7 @@ public static class LevelLibrary
             }
         }
 
+        SortLevelsByName(levels);
         return levels;
     }
 
@@ -381,7 +382,13 @@ public static class LevelLibrary
             }
         }
 
+        SortLevelsByName(levels);
         return levels;
+    }
+
+    private static void SortLevelsByName(List<LevelMetadata> levels)
+    {
+        levels.Sort(static (a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
     }
 
     private static LevelMetadata? TryCreateMetadataFromJsonFile(

@@ -143,11 +143,20 @@ public sealed class PartyManager
         AssignNetworkPlayerIds();
     }
 
-    public void ApplyPreferredInputForPrimaryLocalMember(InputManager input)
+    public bool TryAssignInput(PartyMemberId memberId, PartyInputSource source, int controllerId = -1)
     {
-        if (AssignmentsLocked)
+        return TryAssignInput(memberId, source, controllerId, allowWhileLocked: false);
+    }
+
+    /// <summary>
+    /// Hot-swap local input during gameplay when a free gamepad/keyboard is used.
+    /// Works even while assignments are locked for the session.
+    /// </summary>
+    public bool TryHotSwapLocalInputFromActivity(InputManager input)
+    {
+        if (!AssignmentsLocked)
         {
-            return;
+            return ApplyPreferredInputForPrimaryLocalMemberInternal(input);
         }
 
         PartyMember? primary = null;
@@ -162,19 +171,131 @@ public sealed class PartyManager
 
         if (primary is null)
         {
-            return;
+            return false;
         }
 
         if (input.LastUsedPartyInputSource == PartyInputSource.Gamepad && input.LastUsedPartyControllerId >= 0)
         {
-            TryAssignInput(primary.Id, PartyInputSource.Gamepad, input.LastUsedPartyControllerId);
-            return;
+            if (primary.InputSource == PartyInputSource.Gamepad
+                && primary.ControllerId == input.LastUsedPartyControllerId)
+            {
+                return false;
+            }
+
+            return TryAssignInput(
+                primary.Id,
+                PartyInputSource.Gamepad,
+                input.LastUsedPartyControllerId,
+                allowWhileLocked: true);
         }
 
         if (input.LastUsedPartyInputSource == PartyInputSource.Keyboard)
         {
-            TryAssignInput(primary.Id, PartyInputSource.Keyboard);
+            if (primary.InputSource == PartyInputSource.Keyboard)
+            {
+                return false;
+            }
+
+            return TryAssignInput(primary.Id, PartyInputSource.Keyboard, -1, allowWhileLocked: true);
         }
+
+        return false;
+    }
+
+    public bool TryAssignInput(
+        PartyMemberId memberId,
+        PartyInputSource source,
+        int controllerId,
+        bool allowWhileLocked)
+    {
+        if (AssignmentsLocked && !allowWhileLocked)
+        {
+            return false;
+        }
+
+        PartyMember? member = GetMember(memberId);
+        if (member is null || !member.IsLocallyOwned)
+        {
+            return false;
+        }
+
+        switch (source)
+        {
+            case PartyInputSource.Keyboard:
+                if (IsKeyboardAssignedByOther(member))
+                {
+                    return false;
+                }
+
+                member.SetLocalKeyboard();
+                PublishLocalState();
+                NotifyChanged();
+                return true;
+
+            case PartyInputSource.Gamepad:
+                if (controllerId < 0 || controllerId >= InputManager.MaxLocalPlayers)
+                {
+                    return false;
+                }
+
+                if (!GamePad.GetState((Microsoft.Xna.Framework.PlayerIndex)controllerId).IsConnected)
+                {
+                    return false;
+                }
+
+                if (IsControllerAssignedByOther(member, controllerId))
+                {
+                    return false;
+                }
+
+                member.SetLocalGamepad(controllerId);
+                PublishLocalState();
+                NotifyChanged();
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    public void ApplyPreferredInputForPrimaryLocalMember(InputManager input)
+    {
+        if (AssignmentsLocked)
+        {
+            return;
+        }
+
+        ApplyPreferredInputForPrimaryLocalMemberInternal(input);
+    }
+
+    private bool ApplyPreferredInputForPrimaryLocalMemberInternal(InputManager input)
+    {
+        PartyMember? primary = null;
+        foreach (PartyMember member in _members)
+        {
+            if (member.IsLocallyOwned)
+            {
+                primary = member;
+                break;
+            }
+        }
+
+        if (primary is null)
+        {
+            return false;
+        }
+
+        if (input.LastUsedPartyInputSource == PartyInputSource.Gamepad && input.LastUsedPartyControllerId >= 0)
+        {
+            return TryAssignInput(primary.Id, PartyInputSource.Gamepad, input.LastUsedPartyControllerId);
+        }
+
+        if (input.LastUsedPartyInputSource == PartyInputSource.Keyboard)
+        {
+            return TryAssignInput(primary.Id, PartyInputSource.Keyboard);
+        }
+
+        return false;
     }
 
     public void UnlockAssignments()
@@ -351,58 +472,6 @@ public sealed class PartyManager
         }
 
         return false;
-    }
-
-    public bool TryAssignInput(PartyMemberId memberId, PartyInputSource source, int controllerId = -1)
-    {
-        if (AssignmentsLocked)
-        {
-            return false;
-        }
-
-        PartyMember? member = GetMember(memberId);
-        if (member is null || !member.IsLocallyOwned)
-        {
-            return false;
-        }
-
-        switch (source)
-        {
-            case PartyInputSource.Keyboard:
-                if (IsKeyboardAssignedByOther(member))
-                {
-                    return false;
-                }
-
-                member.SetLocalKeyboard();
-                PublishLocalState();
-                NotifyChanged();
-                return true;
-
-            case PartyInputSource.Gamepad:
-                if (controllerId < 0 || controllerId >= InputManager.MaxLocalPlayers)
-                {
-                    return false;
-                }
-
-                if (!GamePad.GetState((Microsoft.Xna.Framework.PlayerIndex)controllerId).IsConnected)
-                {
-                    return false;
-                }
-
-                if (IsControllerAssignedByOther(member, controllerId))
-                {
-                    return false;
-                }
-
-                member.SetLocalGamepad(controllerId);
-                PublishLocalState();
-                NotifyChanged();
-                return true;
-
-            default:
-                return false;
-        }
     }
 
     public bool TryCycleMemberInput(PartyMemberId memberId, int direction, Func<int, bool> isGamepadConnected)

@@ -57,6 +57,8 @@ public sealed class GameSettings
             { "Blue", true },
             { "Green", true },
             { "Checkpoint", true },
+            { "PhysicsExpulsion", true },
+            { "LaunchPad", true },
             { "MenuNavigation", true },
             { "Lava", true }
         };

@@ -21,6 +21,7 @@ public sealed class LevelInfoScene : IScene
     private readonly Checkbox _player4Checkbox = new() { Label = "4 Players" };
     private readonly Checkbox _coloredRopeCheckbox = new() { Label = "Colored Rope" };
     private readonly Checkbox _regularRopeCheckbox = new() { Label = "Regular Rope" };
+    private readonly Checkbox _anyRopeCheckbox = new() { Label = "Any" };
     private readonly Checkbox _lavaRiseCheckbox = new() { Label = "Lava Rise" };
     private readonly Checkbox _playerCollisionCheckbox = new() { Label = "Player Collision" };
 
@@ -33,6 +34,7 @@ public sealed class LevelInfoScene : IScene
     private readonly FocusableCheckbox _player2Focus;
     private readonly FocusableCheckbox _player3Focus;
     private readonly FocusableCheckbox _player4Focus;
+    private readonly FocusableCheckbox _anyRopeFocus;
     private readonly FocusableCheckbox _coloredRopeFocus;
     private readonly FocusableCheckbox _regularRopeFocus;
     private readonly FocusableCheckbox _lavaRiseFocus;
@@ -67,6 +69,7 @@ public sealed class LevelInfoScene : IScene
 
         _coloredRopeCheckbox.IsChecked = _level.ColoredRope;
         _regularRopeCheckbox.IsChecked = _level.RegularRope;
+        _anyRopeCheckbox.IsChecked = _level.AnyRope || (!_level.ColoredRope && !_level.RegularRope);
         _lavaRiseCheckbox.IsChecked = _level.LavaRise;
         _playerCollisionCheckbox.IsChecked = _level.PlayerCollision;
 
@@ -77,6 +80,7 @@ public sealed class LevelInfoScene : IScene
         _player2Focus = new FocusableCheckbox(_player2Checkbox);
         _player3Focus = new FocusableCheckbox(_player3Checkbox);
         _player4Focus = new FocusableCheckbox(_player4Checkbox);
+        _anyRopeFocus = new FocusableCheckbox(_anyRopeCheckbox);
         _coloredRopeFocus = new FocusableCheckbox(_coloredRopeCheckbox);
         _regularRopeFocus = new FocusableCheckbox(_regularRopeCheckbox);
         _lavaRiseFocus = new FocusableCheckbox(_lavaRiseCheckbox);
@@ -88,12 +92,14 @@ public sealed class LevelInfoScene : IScene
         _savedState = CaptureCurrentState();
         _hasUnsavedChanges = false;
         SyncPlayerCompatibilityState();
+        SyncRopeModeState();
     }
 
     public void Update(GameTime gameTime)
     {
         LayoutControls();
         SyncPlayerCompatibilityState();
+        SyncRopeModeState();
 
         if (_showUnsavedChangesPrompt)
         {
@@ -105,6 +111,7 @@ public sealed class LevelInfoScene : IScene
         int nameIdx = _focus.Add(_nameFocus, "LevelName");
         int musicIdx = _focus.Add(_musicFocus, "Music");
         int allPlayersIdx = _focus.Add(_allPlayersFocus, "AllPlayers");
+        int anyRopeIdx = _focus.Add(_anyRopeFocus, "AnyRope");
         int coloredIdx = _focus.Add(_coloredRopeFocus, "ColoredRope");
         int regularIdx = _focus.Add(_regularRopeFocus, "RegularRope");
         int lavaIdx = _focus.Add(_lavaRiseFocus, "LavaRise");
@@ -115,6 +122,7 @@ public sealed class LevelInfoScene : IScene
         NavigationGraph nav = _focus.Navigation;
         nav.LinkVertical(nameIdx, musicIdx);
         nav.LinkVertical(musicIdx, allPlayersIdx);
+        nav.LinkVertical(anyRopeIdx, coloredIdx);
         nav.LinkVertical(coloredIdx, regularIdx);
         nav.LinkVertical(regularIdx, lavaIdx);
         nav.LinkVertical(lavaIdx, playerCollisionIdx);
@@ -124,7 +132,7 @@ public sealed class LevelInfoScene : IScene
         bool allPlayers = _allPlayersCheckbox.IsChecked;
         if (allPlayers)
         {
-            nav.LinkVertical(allPlayersIdx, coloredIdx);
+            nav.LinkVertical(allPlayersIdx, anyRopeIdx);
         }
         else
         {
@@ -138,7 +146,7 @@ public sealed class LevelInfoScene : IScene
             nav.LinkVertical(p1Idx, p3Idx);
             nav.LinkHorizontal(p3Idx, p4Idx);
             nav.LinkVertical(p2Idx, p4Idx);
-            nav.LinkVertical(p3Idx, coloredIdx);
+            nav.LinkVertical(p3Idx, anyRopeIdx);
         }
 
         _focus.FinalizeFocus("LevelName");
@@ -159,6 +167,8 @@ public sealed class LevelInfoScene : IScene
         if (_applyFocus.WasActivated)
         {
             ApplyChanges();
+            ReturnToLevelSelect();
+            return;
         }
 
         if (_nameInput.IsFocused)
@@ -230,11 +240,13 @@ public sealed class LevelInfoScene : IScene
 
         DrawSectionLabel(spriteBatch, pixel, "Rope Modes", new Vector2(contentArea.X + 18, y));
         y += 32;
-        _coloredRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
-        _regularRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y + 36, 260, 30);
+        _anyRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
+        _coloredRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y + 36, 260, 30);
+        _regularRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y + 72, 260, 30);
+        _anyRopeCheckbox.Draw(spriteBatch, pixel);
         _coloredRopeCheckbox.Draw(spriteBatch, pixel);
         _regularRopeCheckbox.Draw(spriteBatch, pixel);
-        y += 36 * 2 + sectionSpacing;
+        y += 36 * 3 + sectionSpacing;
 
         DrawSectionLabel(spriteBatch, pixel, "Features", new Vector2(contentArea.X + 18, y));
         y += 32;
@@ -300,9 +312,10 @@ public sealed class LevelInfoScene : IScene
         y += 36 * 2 + sectionSpacing;
 
         y += 32;
-        _coloredRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
-        _regularRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y + 36, 260, 30);
-        y += 36 * 2 + sectionSpacing;
+        _anyRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
+        _coloredRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y + 36, 260, 30);
+        _regularRopeCheckbox.Bounds = new Rectangle(contentArea.X + 18, y + 72, 260, 30);
+        y += 36 * 3 + sectionSpacing;
 
         y += 32;
         _lavaRiseCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
@@ -319,6 +332,16 @@ public sealed class LevelInfoScene : IScene
 
     private void SyncPlayerCompatibilityState()
     {
+        // Checking all individual counts collapses into All Players.
+        if (!_allPlayersCheckbox.IsChecked
+            && _player1Checkbox.IsChecked
+            && _player2Checkbox.IsChecked
+            && _player3Checkbox.IsChecked
+            && _player4Checkbox.IsChecked)
+        {
+            _allPlayersCheckbox.IsChecked = true;
+        }
+
         bool allPlayers = _allPlayersCheckbox.IsChecked;
         _player1Checkbox.IsEnabled = !allPlayers;
         _player2Checkbox.IsEnabled = !allPlayers;
@@ -334,6 +357,30 @@ public sealed class LevelInfoScene : IScene
         _player2Checkbox.IsChecked = false;
         _player3Checkbox.IsChecked = false;
         _player4Checkbox.IsChecked = false;
+    }
+
+    private void SyncRopeModeState()
+    {
+        // Both specific modes checked → collapses into Any (like All Players).
+        if (!_anyRopeCheckbox.IsChecked
+            && _coloredRopeCheckbox.IsChecked
+            && _regularRopeCheckbox.IsChecked)
+        {
+            _anyRopeCheckbox.IsChecked = true;
+        }
+
+        // Any wins: clear + block specific rope modes (like All Players).
+        if (_anyRopeCheckbox.IsChecked)
+        {
+            _coloredRopeCheckbox.IsChecked = false;
+            _regularRopeCheckbox.IsChecked = false;
+            _coloredRopeCheckbox.IsEnabled = false;
+            _regularRopeCheckbox.IsEnabled = false;
+            return;
+        }
+
+        _coloredRopeCheckbox.IsEnabled = true;
+        _regularRopeCheckbox.IsEnabled = true;
     }
 
     private void DrawSectionLabel(SpriteBatch spriteBatch, Texture2D pixel, string text, Vector2 position)
@@ -357,6 +404,7 @@ public sealed class LevelInfoScene : IScene
             Player2 = _player2Checkbox.IsChecked,
             Player3 = _player3Checkbox.IsChecked,
             Player4 = _player4Checkbox.IsChecked,
+            AnyRope = _anyRopeCheckbox.IsChecked,
             ColoredRope = _coloredRopeCheckbox.IsChecked,
             RegularRope = _regularRopeCheckbox.IsChecked,
             LavaRise = _lavaRiseCheckbox.IsChecked,
@@ -373,8 +421,10 @@ public sealed class LevelInfoScene : IScene
         _level.Player2 = _player2Checkbox.IsChecked;
         _level.Player3 = _player3Checkbox.IsChecked;
         _level.Player4 = _player4Checkbox.IsChecked;
-        _level.ColoredRope = _coloredRopeCheckbox.IsChecked;
-        _level.RegularRope = _regularRopeCheckbox.IsChecked;
+        _level.AnyRope = _anyRopeCheckbox.IsChecked
+            || (!_coloredRopeCheckbox.IsChecked && !_regularRopeCheckbox.IsChecked);
+        _level.ColoredRope = _level.AnyRope ? false : _coloredRopeCheckbox.IsChecked;
+        _level.RegularRope = _level.AnyRope ? false : _regularRopeCheckbox.IsChecked;
         _level.LavaRise = _lavaRiseCheckbox.IsChecked;
         _level.PlayerCollision = _playerCollisionCheckbox.IsChecked;
 
@@ -503,6 +553,7 @@ public sealed class LevelInfoScene : IScene
         public bool Player2;
         public bool Player3;
         public bool Player4;
+        public bool AnyRope;
         public bool ColoredRope;
         public bool RegularRope;
         public bool LavaRise;
@@ -517,6 +568,7 @@ public sealed class LevelInfoScene : IScene
                 && Player2 == other.Player2
                 && Player3 == other.Player3
                 && Player4 == other.Player4
+                && AnyRope == other.AnyRope
                 && ColoredRope == other.ColoredRope
                 && RegularRope == other.RegularRope
                 && LavaRise == other.LavaRise
@@ -534,6 +586,7 @@ public sealed class LevelInfoScene : IScene
             hash.Add(Player2);
             hash.Add(Player3);
             hash.Add(Player4);
+            hash.Add(AnyRope);
             hash.Add(ColoredRope);
             hash.Add(RegularRope);
             hash.Add(LavaRise);

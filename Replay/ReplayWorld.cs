@@ -96,7 +96,7 @@ public sealed class ReplayWorld
       checkpoint.IsActive = checkpointSnapshot.IsActive;
       if (checkpointSnapshot.IsActive && frame.CurrentCheckpointId == checkpointSnapshot.Id)
       {
-        PlayerManager.ActivateCheckpoint(checkpoint);
+        PlayerManager.ActivateCheckpoint(checkpoint, playSfx: false);
       }
     }
   }

@@ -23,6 +23,7 @@ public sealed class Player : INetworkEntity
     private Vector2 _forceAccumulator;
     private Platform _ejectionPlatform;
     private Player _ejectionPlayer;
+    private Player _playerEjectionMustClear;
     private Vector2 _ejectionBaseDirection;
     private Vector2 _ejectionForceDirection;
     private Vector2 _ejectionPlatformCenter;
@@ -350,6 +351,7 @@ public sealed class Player : INetworkEntity
 
         AddImpulse(new Vector2(0f, -JumpImpulse * Mass));
         IsGrounded = false;
+        GameAudio.Play(SfxManager.Jump);
     }
 
     internal void ApplyGravity(float gravity, PlayerInputState input)
@@ -597,6 +599,7 @@ public sealed class Player : INetworkEntity
         }
 
         CurrentColor = requestedColor;
+        GameAudio.PlayColor(requestedColor);
 
         if (State == PlayerState.Ejecting)
         {
@@ -621,6 +624,18 @@ public sealed class Player : INetworkEntity
         if (State == PlayerState.Ejecting || IsFrozen)
         {
             return;
+        }
+
+        if (_playerEjectionMustClear is not null)
+        {
+            bool stillBlocked = _playerEjectionMustClear.CurrentColor == CurrentColor
+                && CollisionHelper.Intersects(Position, Size, _playerEjectionMustClear.Bounds);
+            if (stillBlocked)
+            {
+                return;
+            }
+
+            _playerEjectionMustClear = null;
         }
 
         if (!TryFindBestEjectionCandidate(
@@ -720,6 +735,8 @@ public sealed class Player : INetworkEntity
                     continue;
                 }
 
+                direction = GetMutualPlayerEjectionDirection(other);
+
                 float score = (centerInfluence * 1000f) + penetrationDepth;
                 if (score <= bestScore)
                 {
@@ -737,6 +754,74 @@ public sealed class Player : INetworkEntity
         }
 
         return bestPlatform != null || bestPlayer != null;
+    }
+
+    private Vector2 GetMutualPlayerEjectionDirection(Player other)
+    {
+        Vector2 selfCenter = Position + (Size * 0.5f);
+        Vector2 otherCenter = GetPlayerCenter(other);
+        Vector2 delta = selfCenter - otherCenter;
+
+        // Exact same spot → forced opposite horizontal (stable split).
+        const float sameCoordEpsilon = 0.5f;
+        if (MathF.Abs(delta.X) < sameCoordEpsilon && MathF.Abs(delta.Y) < sameCoordEpsilon)
+        {
+            float side = NetworkId <= other.NetworkId ? -1f : 1f;
+            return new Vector2(side, 0f);
+        }
+
+        // Nearest escape = MTV (shallowest overlap axis).
+        if (TryGetPlayerNearestEscapeDirection(other, selfCenter, otherCenter, out Vector2 nearest))
+        {
+            return nearest;
+        }
+
+        return NormalizeOrFallback(delta, GetFallbackEjectionDirection());
+    }
+
+    private bool TryGetPlayerNearestEscapeDirection(
+        Player other,
+        Vector2 selfCenter,
+        Vector2 otherCenter,
+        out Vector2 direction)
+    {
+        direction = Vector2.Zero;
+        Rectangle o = other.Bounds;
+
+        float overlapX = MathF.Min(Position.X + Size.X, o.Right) - MathF.Max(Position.X, o.Left);
+        float overlapY = MathF.Min(Position.Y + Size.Y, o.Bottom) - MathF.Max(Position.Y, o.Top);
+        if (overlapX <= 0f || overlapY <= 0f)
+        {
+            return false;
+        }
+
+        if (overlapX < overlapY)
+        {
+            float signX = selfCenter.X <= otherCenter.X ? -1f : 1f;
+            direction = new Vector2(signX, 0f);
+            return true;
+        }
+
+        if (overlapY < overlapX)
+        {
+            float signY = selfCenter.Y <= otherCenter.Y ? -1f : 1f;
+            direction = new Vector2(0f, signY);
+            return true;
+        }
+
+        // Equal overlap: prefer axis with larger center separation.
+        if (MathF.Abs(selfCenter.X - otherCenter.X) >= MathF.Abs(selfCenter.Y - otherCenter.Y))
+        {
+            float signX = selfCenter.X <= otherCenter.X ? -1f : 1f;
+            direction = new Vector2(signX, 0f);
+        }
+        else
+        {
+            float signY = selfCenter.Y <= otherCenter.Y ? -1f : 1f;
+            direction = new Vector2(0f, signY);
+        }
+
+        return true;
     }
 
     private void StartEjectionFromPlatform(
@@ -789,6 +874,7 @@ public sealed class Player : INetworkEntity
         _debugEscapeVector = direction * MathHelper.Clamp(EjectionMaxSpeed * 0.12f, 28f, 110f);
 
         OnEjectionStart?.Invoke(this);
+        GameAudio.BeginPhysicsExpulsion();
     }
 
     private void UpdateEjectionState(float dt)
@@ -836,7 +922,12 @@ public sealed class Player : INetworkEntity
             return false;
         }
 
-        if (_ejectionBaseDirection != Vector2.Zero)
+        // Player-vs-player: keep initial nearest escape so mid-overlap center cross cannot reverse both.
+        if (_ejectionPlayer is not null && _ejectionBaseDirection != Vector2.Zero)
+        {
+            direction = _ejectionBaseDirection;
+        }
+        else if (_ejectionBaseDirection != Vector2.Zero)
         {
             float alignment = Vector2.Dot(direction, _ejectionBaseDirection);
             direction = alignment < 0.15f
@@ -914,9 +1005,15 @@ public sealed class Player : INetworkEntity
         }
 
         Vector2 finalDirection = _ejectionForceDirection;
+        Player clearedPlayer = _ejectionPlayer;
         State = PlayerState.Normal;
         _ejectionPlatform = null;
         _ejectionPlayer = null;
+        if (clearedPlayer is not null)
+        {
+            _playerEjectionMustClear = clearedPlayer;
+        }
+
         _ejectionBaseDirection = Vector2.Zero;
         _ejectionForceDirection = Vector2.Zero;
         _ejectionForce = 0f;
@@ -939,13 +1036,16 @@ public sealed class Player : INetworkEntity
         }
 
         OnEjectionEnd?.Invoke(this);
+        GameAudio.EndPhysicsExpulsion();
     }
 
     private void ClearTransientMotionState()
     {
+        bool wasEjecting = State == PlayerState.Ejecting;
         State = PlayerState.Normal;
         _ejectionPlatform = null;
         _ejectionPlayer = null;
+        _playerEjectionMustClear = null;
         _ejectionBaseDirection = Vector2.Zero;
         _ejectionForceDirection = Vector2.Zero;
         _ejectionPlatformCenter = Vector2.Zero;
@@ -957,6 +1057,10 @@ public sealed class Player : INetworkEntity
         _ejectionPeakRaised = false;
         _justLaunched = false;
         _launchControlRemaining = 0f;
+        if (wasEjecting)
+        {
+            GameAudio.EndPhysicsExpulsion();
+        }
     }
 
     private bool HasGroundBelow(Level level, IReadOnlyList<Player> allPlayers)
@@ -1022,7 +1126,8 @@ public sealed class Player : INetworkEntity
             return Vector2.Normalize(LastCollisionNormal);
         }
 
-        return new Vector2(0f, -1f);
+        // Prefer horizontal for player stacks — upward default caused infinite sky eject.
+        return new Vector2(NetworkId % 2 == 0 ? -1f : 1f, 0f);
     }
 
     private Vector2 NormalizeOrFallback(Vector2 value, Vector2 fallback)

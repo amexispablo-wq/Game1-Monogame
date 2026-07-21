@@ -49,6 +49,15 @@ public static class LevelRules
 
     public static IReadOnlyList<RopeGameplayMode> GetAllowedRopeModes(Level level)
     {
+        if (level.AnyRope || (!level.ColoredRope && !level.RegularRope))
+        {
+            return new[]
+            {
+                RopeGameplayMode.ColoredPhysics,
+                RopeGameplayMode.Neutral
+            };
+        }
+
         bool colored = level.ColoredRope;
         bool regular = level.RegularRope;
 
@@ -99,4 +108,39 @@ public static class LevelRules
     public static bool SupportsLavaRise(Level level) => level.LavaRise;
 
     public static bool SupportsPlayerCollision(Level level) => level.PlayerCollision;
+
+    /// <summary>
+    /// Official runs must match level rules exactly for features,
+    /// and use an allowed rope mode / player count.
+    /// Turning OFF a level feature or ON a disallowed one → unofficial.
+    /// </summary>
+    public static bool IsOfficialPlaySettings(
+        Level level,
+        RopeGameplayMode ropeMode,
+        bool lavaRiseEnabled,
+        bool playerCollisionEnabled,
+        int playerCount)
+    {
+        if (!SupportsPlayerCount(level, playerCount))
+        {
+            return false;
+        }
+
+        if (!IsRopeModeAllowed(level, ropeMode))
+        {
+            return false;
+        }
+
+        if (lavaRiseEnabled != SupportsLavaRise(level))
+        {
+            return false;
+        }
+
+        if (playerCollisionEnabled != SupportsPlayerCollision(level))
+        {
+            return false;
+        }
+
+        return true;
+    }
 }

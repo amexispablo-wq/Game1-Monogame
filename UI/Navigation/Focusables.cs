@@ -30,6 +30,7 @@ public sealed class FocusableButton : IFocusable
         }
 
         WasActivated = true;
+        GameAudio.PlayMenuPress();
         return true;
     }
 
@@ -41,6 +42,7 @@ public sealed class FocusableButton : IFocusable
         if (Bounds.Contains(input.UiPointerPosition) && input.UiPointerPressed && IsEnabled)
         {
             WasActivated = true;
+            GameAudio.PlayMenuPress();
         }
 
         _button.Update(input, navigation);
@@ -165,6 +167,7 @@ public sealed class FocusableCheckbox : IFocusable
         }
 
         _checkbox.IsChecked = !_checkbox.IsChecked;
+        GameAudio.PlayMenuPress();
         return true;
     }
 
@@ -287,6 +290,11 @@ public sealed class FocusableAction : IFocusable
     public bool OnConfirm()
     {
         WasActivated = _onConfirm();
+        if (WasActivated)
+        {
+            GameAudio.PlayMenuPress();
+        }
+
         return WasActivated;
     }
 
@@ -631,6 +639,11 @@ public sealed class FocusableGridCell : IFocusable
     public bool OnConfirm()
     {
         WasActivated = _onConfirm();
+        if (WasActivated)
+        {
+            GameAudio.PlayMenuPress();
+        }
+
         return WasActivated;
     }
 

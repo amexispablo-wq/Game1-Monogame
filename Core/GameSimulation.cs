@@ -324,8 +324,17 @@ public sealed class GameSimulation
         IsLevelComplete = true;
         FinalTime = BestTimeStorage.RoundToCentiseconds(ElapsedTime);
         ElapsedTime = FinalTime;
-        NewRecord = BestTimeStorage.SaveIfRecord(_session.SelectedLevelId, FinalTime);
+        bool official = LevelRules.IsOfficialPlaySettings(
+            Level,
+            _session.RopeGameplayMode,
+            LavaRiseEnabled,
+            PlayerCollisionEnabled,
+            Players.Count);
+        bool savedRecord = BestTimeStorage.SaveIfRecord(_session.SelectedLevelId, FinalTime, official);
+        NewRecord = official && savedRecord;
         _session.State = GameSessionState.Completed;
+        GameAudio.PlayForce(SfxManager.LevelComplete);
+        GameAudio.SetPullRopeLoop(false);
 
         foreach (Player player in Players)
         {
@@ -369,6 +378,8 @@ public sealed class GameSimulation
         TimerRunning = false;
         _session.State = GameSessionState.Dead;
         _latchedLocalInput.Clear();
+        GameAudio.PlayForce(SfxManager.Lost);
+        GameAudio.SetPullRopeLoop(false);
 
         foreach (Player player in Players)
         {

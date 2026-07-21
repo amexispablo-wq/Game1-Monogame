@@ -24,6 +24,7 @@ public sealed class ReplayBackgroundRenderer
       }
 
       IsVisible = false;
+      GameAudio.SuppressGameplaySfx = false;
       ReplayDiagnostics.ActivePlayer = null;
       return;
     }
@@ -31,6 +32,7 @@ public sealed class ReplayBackgroundRenderer
     if (!HighlightManager.TryGetHighlightReplay(out HighlightReplayFile highlights))
     {
       IsVisible = false;
+      GameAudio.SuppressGameplaySfx = false;
       return;
     }
 
@@ -41,6 +43,7 @@ public sealed class ReplayBackgroundRenderer
     }
 
     IsVisible = true;
+    GameAudio.SuppressGameplaySfx = true;
     ReplayDiagnostics.ActivePlayer = _highlightPlayer.ActiveClipPlayer;
     _highlightPlayer.Update(gameTime, game.Viewport);
   }

@@ -198,23 +198,6 @@ public sealed class EditorScene : IScene
             return;
         }
 
-        if (_lavaSelected && _level.Lava is not null && IsPrimaryPressed() && !IsGamepadCursorMode())
-        {
-            if (_lavaSpeedMinusBounds.Contains(UiPointer))
-            {
-                AdjustLavaRiseSpeed(-10f);
-                _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
-                return;
-            }
-
-            if (_lavaSpeedPlusBounds.Contains(UiPointer))
-            {
-                AdjustLavaRiseSpeed(10f);
-                _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
-                return;
-            }
-        }
-
         bool mouseOverToolbar = IsMouseOverToolbar();
         bool cameraBlockedByUi = _colorPanelBounds.Contains(UiPointer)
             || _backButton.IsHovered
@@ -296,13 +279,13 @@ public sealed class EditorScene : IScene
         {
             if (_lavaSpeedMinusBounds.Contains(UiPointer))
             {
-                AdjustLavaRiseSpeed(-10f);
+                AdjustLavaRiseSpeed(-LavaLine.RiseSpeedStep);
                 return true;
             }
 
             if (_lavaSpeedPlusBounds.Contains(UiPointer))
             {
-                AdjustLavaRiseSpeed(10f);
+                AdjustLavaRiseSpeed(LavaLine.RiseSpeedStep);
                 return true;
             }
         }
@@ -344,12 +327,12 @@ public sealed class EditorScene : IScene
         {
             int minusIndex = _uiFocus.Add(new FocusableAction(_lavaSpeedMinusBounds, () =>
             {
-                AdjustLavaRiseSpeed(-10f);
+                AdjustLavaRiseSpeed(-LavaLine.RiseSpeedStep);
                 return true;
             }), "LavaSpeedMinus");
             int plusIndex = _uiFocus.Add(new FocusableAction(_lavaSpeedPlusBounds, () =>
             {
-                AdjustLavaRiseSpeed(10f);
+                AdjustLavaRiseSpeed(LavaLine.RiseSpeedStep);
                 return true;
             }), "LavaSpeedPlus");
 
@@ -604,18 +587,12 @@ public sealed class EditorScene : IScene
         {
             if (_game.Input.IsNewKeyPress(Keys.OemComma) || _game.Input.IsNewKeyPress(Keys.OemMinus))
             {
-                BeginHistoryGesture();
-                _level.Lava.RiseSpeed = Math.Max(LavaLine.MinRiseSpeed, _level.Lava.RiseSpeed - 10f);
-                _isDirty = true;
-                EndHistoryGesture();
+                AdjustLavaRiseSpeed(-LavaLine.RiseSpeedStep);
             }
 
             if (_game.Input.IsNewKeyPress(Keys.OemPeriod) || _game.Input.IsNewKeyPress(Keys.OemPlus))
             {
-                BeginHistoryGesture();
-                _level.Lava.RiseSpeed = Math.Min(LavaLine.MaxRiseSpeed, _level.Lava.RiseSpeed + 10f);
-                _isDirty = true;
-                EndHistoryGesture();
+                AdjustLavaRiseSpeed(LavaLine.RiseSpeedStep);
             }
         }
 
@@ -672,18 +649,17 @@ public sealed class EditorScene : IScene
         Viewport viewport = _game.Viewport;
         int minDimension = Math.Min(viewport.Width, viewport.Height);
         int margin = Math.Max(8, (int)(minDimension * 0.025f));
-        int panelWidth = Math.Min(
-            Math.Clamp((int)(viewport.Width * 0.32f), 260, 340),
-            Math.Max(1, viewport.Width - (margin * 2)));
         int panelHeight = Math.Min(
             Math.Clamp((int)(viewport.Height * 0.065f), 38, 52),
             Math.Max(1, viewport.Height - (margin * 2)));
+        int swatchGap = 6;
+        int swatchPad = Math.Max(8, margin / 2);
+        int swatchSize = Math.Max(18, panelHeight - Math.Max(12, panelHeight / 3));
+        int panelWidth = (swatchPad * 2) + (swatchSize * 4) + (swatchGap * 3);
         _colorPanelBounds = new Rectangle(margin, margin, panelWidth, panelHeight);
 
-        int swatchGap = 6;
-        int swatchSize = Math.Max(18, panelHeight - Math.Max(12, panelHeight / 3));
         int swatchY = _colorPanelBounds.Center.Y - (swatchSize / 2);
-        int swatchX = _colorPanelBounds.Left + margin / 2;
+        int swatchX = _colorPanelBounds.Left + swatchPad;
         _colorRedBounds = new Rectangle(swatchX, swatchY, swatchSize, swatchSize);
         _colorGreenBounds = new Rectangle(_colorRedBounds.Right + swatchGap, swatchY, swatchSize, swatchSize);
         _colorBlueBounds = new Rectangle(_colorGreenBounds.Right + swatchGap, swatchY, swatchSize, swatchSize);
@@ -2331,25 +2307,12 @@ public sealed class EditorScene : IScene
     {
         LayoutColorPanel();
         Rectangle panel = _colorPanelBounds;
-        string label = "COLOR";
-        int labelX = _colorBlueBounds.Right + Math.Max(8, panel.Width / 18);
-        int labelScale = FitTextScale($"{label} {_selectedColor}", 2, panel.Right - labelX - Math.Max(4, panel.Width / 24));
-        Point labelSize = SimpleTextRenderer.MeasureString($"{label} {_selectedColor}", labelScale);
-
         spriteBatch.Draw(pixel, panel, new Color(22, 26, 34, 220));
         DrawHelper.DrawBorder(spriteBatch, pixel, panel, new Color(134, 145, 166), 2);
         DrawColorSwatch(spriteBatch, pixel, _colorRedBounds, GameColor.Red);
         DrawColorSwatch(spriteBatch, pixel, _colorGreenBounds, GameColor.Green);
         DrawColorSwatch(spriteBatch, pixel, _colorBlueBounds, GameColor.Blue);
         DrawColorSwatch(spriteBatch, pixel, _colorWhiteBounds, GameColor.White);
-
-        SimpleTextRenderer.DrawString(
-            spriteBatch,
-            pixel,
-            $"{label} {_selectedColor}",
-            new Vector2(labelX, panel.Center.Y - (labelSize.Y * 0.5f)),
-            labelScale,
-            Color.White);
     }
 
     private void DrawColorSwatch(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, GameColor color)

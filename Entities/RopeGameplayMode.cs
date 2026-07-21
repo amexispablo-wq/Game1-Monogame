@@ -12,7 +12,7 @@ public static class RopeGameplayModeExtensions
     {
         return mode switch
         {
-            RopeGameplayMode.ColoredPhysics => "Colored Physics",
+            RopeGameplayMode.ColoredPhysics => "Colored Rope",
             RopeGameplayMode.Neutral => "Neutral Rope",
             _ => "Unknown"
         };
@@ -25,16 +25,6 @@ public static class RopeGameplayModeExtensions
             RopeGameplayMode.ColoredPhysics => "Colored",
             RopeGameplayMode.Neutral => "Neutral",
             _ => "Unknown"
-        };
-    }
-
-    public static string ToDescription(this RopeGameplayMode mode)
-    {
-        return mode switch
-        {
-            RopeGameplayMode.ColoredPhysics => "Rope collides with colored platforms",
-            RopeGameplayMode.Neutral => "Rope ignores platforms and stays beige",
-            _ => string.Empty
         };
     }
 }

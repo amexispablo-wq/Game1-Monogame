@@ -1,132 +1,417 @@
 {
-  "name": "LEVEL 5",
+  "name": "LEVEL 4",
   "platforms": [
     {
-      "x": 0,
-      "y": 64,
-      "width": 1056,
-      "height": 32,
-      "color": "Red"
-    },
-    {
-      "x": 0,
-      "y": 64,
-      "width": 1056,
-      "height": 32,
-      "color": "Blue"
-    },
-    {
-      "x": 0,
-      "y": 64,
-      "width": 1056,
-      "height": 32,
-      "color": "Green"
-    },
-    {
-      "x": 256,
-      "y": 0,
-      "width": 32,
-      "height": 32,
-      "color": "Red"
-    },
-    {
-      "x": 352,
-      "y": -64,
-      "width": 64,
-      "height": 32,
-      "color": "Red"
-    },
-    {
-      "x": 224,
-      "y": -352,
+      "x": 704,
+      "y": 512,
       "width": 224,
-      "height": 416,
-      "color": "Green"
+      "height": 32,
+      "color": "White"
     },
     {
-      "x": 448,
-      "y": -448,
-      "width": 352,
-      "height": 320,
-      "color": "Blue"
-    },
-    {
-      "x": 640,
-      "y": -128,
-      "width": 288,
-      "height": 192,
+      "x": 992,
+      "y": 480,
+      "width": 160,
+      "height": 32,
       "color": "Red"
     },
     {
-      "x": 512,
-      "y": -256,
-      "width": 32,
-      "height": 320,
+      "x": 1152,
+      "y": 512,
+      "width": 96,
+      "height": 32,
       "color": "Green"
     },
     {
-      "x": 512,
-      "y": -256,
+      "x": 1120,
+      "y": 320,
       "width": 32,
-      "height": 320,
+      "height": 160,
       "color": "Red"
     },
     {
-      "x": 512,
-      "y": -128,
+      "x": 1152,
+      "y": 320,
       "width": 32,
-      "height": 192,
+      "height": 160,
+      "color": "Green"
+    },
+    {
+      "x": 1312,
+      "y": 480,
+      "width": 32,
+      "height": 32,
       "color": "Blue"
     },
     {
-      "x": 448,
-      "y": -128,
+      "x": 1408,
+      "y": 448,
+      "width": 32,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 1504,
+      "y": 384,
       "width": 64,
       "height": 32,
       "color": "Green"
     },
     {
-      "x": 416,
-      "y": -128,
+      "x": 1632,
+      "y": 352,
       "width": 32,
       "height": 32,
       "color": "Blue"
     },
     {
-      "x": 224,
-      "y": -416,
-      "width": 32,
-      "height": 288,
+      "x": 1728,
+      "y": 192,
+      "width": 448,
+      "height": 320,
       "color": "Red"
     },
     {
-      "x": 288,
-      "y": -480,
+      "x": 1728,
+      "y": 352,
+      "width": 448,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 1984,
+      "y": 288,
       "width": 32,
-      "height": 224,
+      "height": 32,
       "color": "Blue"
     },
     {
-      "x": 160,
-      "y": -448,
+      "x": 2048,
+      "y": 224,
+      "width": 32,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": 1536,
+      "y": 96,
+      "width": 192,
+      "height": 96,
+      "color": "Blue"
+    },
+    {
+      "x": 1728,
+      "y": 160,
+      "width": 448,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 1632,
+      "y": -64,
+      "width": 32,
+      "height": 256,
+      "color": "Red"
+    },
+    {
+      "x": 1568,
+      "y": 32,
+      "width": 32,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 1728,
+      "y": 128,
+      "width": 224,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 1376,
+      "y": -96,
+      "width": 288,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 1184,
+      "y": -128,
+      "width": 128,
+      "height": 32,
+      "color": "White"
+    },
+    {
+      "x": 928,
+      "y": -160,
+      "width": 192,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 768,
+      "y": -192,
+      "width": 96,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 512,
+      "y": -224,
+      "width": 224,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": 512,
+      "y": -224,
+      "width": 224,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": 768,
+      "y": -192,
+      "width": 96,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": 928,
+      "y": -160,
+      "width": 192,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -64,
+      "y": -224,
+      "width": 544,
+      "height": 32,
+      "color": "White"
+    },
+    {
+      "x": -1056,
+      "y": -1664,
+      "width": 768,
+      "height": 1088,
+      "color": "Green"
+    },
+    {
+      "x": -1056,
+      "y": -608,
+      "width": 768,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -864,
+      "y": -672,
+      "width": 32,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -928,
+      "y": -704,
+      "width": 32,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -992,
+      "y": -768,
+      "width": 32,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -896,
+      "y": -800,
+      "width": 32,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -832,
+      "y": -864,
+      "width": 32,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -736,
+      "y": -928,
+      "width": 32,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -640,
+      "y": -960,
+      "width": 32,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -704,
+      "y": -1024,
+      "width": 32,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -768,
+      "y": -1056,
+      "width": 32,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -928,
+      "y": -1152,
+      "width": 32,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -864,
+      "y": -1088,
+      "width": 32,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -1280,
+      "y": -1152,
+      "width": 288,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -1312,
+      "y": -1344,
       "width": 256,
       "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -1248,
+      "y": -1600,
+      "width": 32,
+      "height": 288,
+      "color": "Blue"
+    },
+    {
+      "x": -1376,
+      "y": -1824,
+      "width": 32,
+      "height": 448,
       "color": "Green"
     },
     {
-      "x": 544,
-      "y": -64,
-      "width": 96,
-      "height": 128,
+      "x": -1248,
+      "y": -1664,
+      "width": 192,
+      "height": 32,
+      "color": "White"
+    },
+    {
+      "x": -800,
+      "y": -1856,
+      "width": 32,
+      "height": 192,
+      "color": "Green"
+    },
+    {
+      "x": -640,
+      "y": -1856,
+      "width": 32,
+      "height": 192,
+      "color": "Green"
+    },
+    {
+      "x": -608,
+      "y": -1856,
+      "width": 32,
+      "height": 192,
       "color": "Red"
+    },
+    {
+      "x": -768,
+      "y": -1856,
+      "width": 32,
+      "height": 192,
+      "color": "Blue"
     }
   ],
-  "goals": [],
-  "checkpointFlags": [],
-  "launchPads": [],
+  "goals": [
+    {
+      "x": -416,
+      "y": -1728
+    }
+  ],
+  "checkpointFlags": [
+    {
+      "id": 1,
+      "x": 224,
+      "y": -288
+    }
+  ],
+  "launchPads": [
+    {
+      "x": 32,
+      "y": -256,
+      "width": 96,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": 32,
+      "y": -448,
+      "width": 96,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": 32,
+      "y": -672,
+      "width": 96,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": -128,
+      "y": -800,
+      "width": 96,
+      "height": 32,
+      "rotation": 330
+    },
+    {
+      "x": -1280,
+      "y": -1184,
+      "width": 96,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": -1184,
+      "y": -1440,
+      "width": 96,
+      "height": 32,
+      "rotation": 330
+    },
+    {
+      "x": -1504,
+      "y": -1504,
+      "width": 96,
+      "height": 32,
+      "rotation": 30
+    }
+  ],
   "playerSpawn": {
-    "x": 0,
-    "y": 0
+    "x": 800,
+    "y": 448
   },
   "musicId": "default_track_01",
   "allPlayers": true,
@@ -134,18 +419,20 @@
   "player2": false,
   "player3": false,
   "player4": false,
+  "anyRope": false,
   "coloredRope": false,
-  "regularRope": false,
-  "lavaRise": false,
+  "regularRope": true,
+  "lavaRise": true,
+  "playerCollision": false,
   "lavaLine": {
     "surfaceY": 640,
-    "riseSpeed": 70
+    "riseSpeed": 10
   },
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-07-20T17:11:37.7277165Z",
-  "modifiedDate": "2026-07-20T17:32:01.5774228Z",
-  "version": 4,
+  "modifiedDate": "2026-07-21T22:34:19.0525548Z",
+  "version": 10,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

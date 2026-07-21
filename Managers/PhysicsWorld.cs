@@ -226,6 +226,7 @@ public sealed class PhysicsWorld
             player.LaunchFromPad(launchVelocity);
             _launchPadCooldowns[player.NetworkId] = MathF.Max(0.01f, LaunchPad.LaunchPadCooldown);
             LastLaunchForce = direction * LaunchPad.LaunchPadForce * launchMultiplier;
+            GameAudio.Play(SfxManager.LaunchPad);
             return;
         }
     }
@@ -331,8 +332,14 @@ public sealed class PhysicsWorld
                 continue;
             }
 
-            if (player.IsEjectingFrom(other))
+            if (player.IsEjectingFrom(other) || other.IsEjectingFrom(player))
             {
+                continue;
+            }
+
+            if (player.State == PlayerState.Ejecting || other.State == PlayerState.Ejecting)
+            {
+                // Let ejection force separate them — MTV teleport fights the eject feel.
                 continue;
             }
 
@@ -446,7 +453,12 @@ public sealed class PhysicsWorld
                 continue;
             }
 
-            if (player.IsEjectingFrom(other))
+            if (player.IsEjectingFrom(other) || other.IsEjectingFrom(player))
+            {
+                continue;
+            }
+
+            if (player.State == PlayerState.Ejecting || other.State == PlayerState.Ejecting)
             {
                 continue;
             }

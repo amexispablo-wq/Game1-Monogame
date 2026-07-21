@@ -23,9 +23,19 @@ public sealed class Button
     public Color TextColor { get; set; } = Color.White;
     public Color HoverTextColor { get; set; } = Color.White;
 
+    // Geometric pointer-over, independent of active input device (avoids hover SFX spam when
+    // mouse/gamepad activity flickers AllowPointerHoverVisual each frame).
+    private bool _pointerInside;
+
     public bool Update(InputManager input, InputNavigationService navigation)
     {
         bool pointerOver = Bounds.Contains(input.UiPointerPosition);
+        if (pointerOver && !_pointerInside)
+        {
+            GameAudio.PlayMenuHover();
+        }
+
+        _pointerInside = pointerOver;
         IsHovered = navigation.AllowPointerHoverVisual && pointerOver;
         WasClicked = pointerOver && input.UiPointerPressed;
         return WasClicked;
@@ -33,6 +43,12 @@ public sealed class Button
 
     public void SetPointerHover(bool hovered)
     {
+        if (hovered && !_pointerInside)
+        {
+            GameAudio.PlayMenuHover();
+        }
+
+        _pointerInside = hovered;
         IsHovered = hovered;
     }
 

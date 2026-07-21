@@ -11,18 +11,27 @@ public sealed class Checkbox
     public bool IsEnabled { get; set; } = true;
 
     private bool _isHovered;
+    private bool _pointerInside;
 
     public bool Update(InputManager input, InputNavigationService navigation)
     {
-        _isHovered = navigation.AllowPointerHoverVisual && Bounds.Contains(input.UiPointerPosition);
+        bool pointerOver = Bounds.Contains(input.UiPointerPosition);
+        if (pointerOver && !_pointerInside && IsEnabled)
+        {
+            GameAudio.PlayMenuHover();
+        }
+
+        _pointerInside = pointerOver;
+        _isHovered = navigation.AllowPointerHoverVisual && pointerOver;
         if (!IsEnabled)
         {
             return false;
         }
 
-        if (_isHovered && input.UiPointerPressed)
+        if (_pointerInside && input.UiPointerPressed)
         {
             IsChecked = !IsChecked;
+            GameAudio.PlayMenuPress();
             return true;
         }
 

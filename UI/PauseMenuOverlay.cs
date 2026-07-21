@@ -10,6 +10,7 @@ public enum PauseMenuChoice
     Resume,
     Respawn,
     RestartLevel,
+    Options,
     BackToMenu
 }
 
@@ -20,6 +21,7 @@ public sealed class PauseMenuOverlay
         "RESUME",
         "RESPAWN",
         "RESTART LEVEL",
+        "OPTIONS",
         "BACK TO MENU"
     };
 
@@ -33,7 +35,7 @@ public sealed class PauseMenuOverlay
 
     private static readonly string[] OptionIds =
     {
-        "Resume", "Respawn", "RestartLevel", "BackToMenu"
+        "Resume", "Respawn", "RestartLevel", "Options", "BackToMenu"
     };
 
     private static string OptionId(int index) =>
@@ -173,7 +175,8 @@ public sealed class PauseMenuOverlay
             0 => PauseMenuChoice.Resume,
             1 => PauseMenuChoice.Respawn,
             2 => PauseMenuChoice.RestartLevel,
-            3 => PauseMenuChoice.BackToMenu,
+            3 => PauseMenuChoice.Options,
+            4 => PauseMenuChoice.BackToMenu,
             _ => PauseMenuChoice.Resume
         };
     }

@@ -43,6 +43,9 @@ public sealed class LevelData
     [JsonPropertyName("player4")]
     public bool Player4 { get; set; }
 
+    [JsonPropertyName("anyRope")]
+    public bool AnyRope { get; set; }
+
     [JsonPropertyName("coloredRope")]
     public bool ColoredRope { get; set; }
 

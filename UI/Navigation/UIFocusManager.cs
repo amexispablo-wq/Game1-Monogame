@@ -37,6 +37,7 @@ public sealed class UIFocusManager
         _items.Clear();
         _ids.Clear();
         _navigation.Clear();
+        _focusedIndex = -1;
     }
 
     public void ResetFocus()
@@ -769,8 +770,17 @@ public sealed class UIFocusManager
             return;
         }
 
+        string newId = IdAt(index);
+        string? previousId = _stickyFocusId;
+        bool changed = !string.Equals(previousId, newId, StringComparison.Ordinal);
         _focusedIndex = index;
-        _stickyFocusId = IdAt(index);
+        _stickyFocusId = newId;
+
+        // Skip initial focus assign (null → first). Only play on real navigation changes.
+        if (changed && previousId is not null)
+        {
+            GameAudio.PlayMenuHover();
+        }
     }
 
     private void EnsureValidFocus()

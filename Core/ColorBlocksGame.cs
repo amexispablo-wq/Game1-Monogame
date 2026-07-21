@@ -19,6 +19,7 @@ public class ColorBlocksGame : Game
     private readonly GameNetworkCoordinator _gameNetwork;
     private readonly PartyHudOverlay _partyHud = new();
     private readonly MusicManager _music = new();
+    private readonly SfxManager _sfx = new();
     private readonly PresentationManager _presentation = new();
     private readonly ReplayBackgroundRenderer _replayBackground = new();
     private readonly BenchmarkOverlay _benchmarkOverlay = new();
@@ -66,6 +67,7 @@ public class ColorBlocksGame : Game
     public SteamPartyService SteamParty => _steamParty;
     public GameNetworkCoordinator GameNetwork => _gameNetwork;
     public MusicManager Music => _music;
+    public SfxManager Sfx => _sfx;
     public Viewport Viewport => _presentation.LogicalViewport;
     public PresentationManager Presentation => _presentation;
     public IScene CurrentScene => _currentScene;
@@ -161,6 +163,27 @@ public class ColorBlocksGame : Game
         _currentScene?.OnExit();
         _currentScene = scene;
         NavigationDebug.CurrentScene = scene.GetType().Name;
+        ApplySceneMusic(scene);
+    }
+
+    private void ApplySceneMusic(IScene scene)
+    {
+        switch (scene)
+        {
+            case GameScene gameScene:
+                _music.PlayLevelMusic(gameScene.LevelMusicId);
+                break;
+            case EditorScene:
+                _music.PlayEditorMusic();
+                break;
+            case RopeSandboxScene:
+            case ReplayViewerScene:
+                _music.Stop();
+                break;
+            default:
+                _music.PlayMenuMusic();
+                break;
+        }
     }
 
     public void ExitGame()
@@ -203,6 +226,8 @@ public class ColorBlocksGame : Game
         var settings = SettingsManager.CurrentSettings;
         ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);
 
+        _sfx.Load();
+        GameAudio.Sfx = _sfx;
         _music.ApplyVolume(SettingsManager.GetMusicVolume());
         ApplyFrameSettings(SettingsManager.CurrentSettings.FpsLimit);
         ChangeScene(new MenuScene(this));
@@ -214,6 +239,7 @@ public class ColorBlocksGame : Game
         _steamInput.RunFrame();
         _input.ConfigurePointerTransform(Window.ClientBounds, GraphicsDevice.Viewport, _presentation);
         _input.Update();
+        GameAudio.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
 
         if (_input.SteamInputOriginDumpPressed && _steamInput.IsInitialized)
         {

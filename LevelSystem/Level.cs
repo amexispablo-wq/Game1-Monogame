@@ -55,6 +55,7 @@ public sealed class Level
     public bool Player2 { get; set; }
     public bool Player3 { get; set; }
     public bool Player4 { get; set; }
+    public bool AnyRope { get; set; }
     public bool ColoredRope { get; set; }
     public bool RegularRope { get; set; }
     public bool LavaRise { get; set; }
@@ -155,11 +156,24 @@ public sealed class Level
             Player2 = data.Player2,
             Player3 = data.Player3,
             Player4 = data.Player4,
+            AnyRope = data.AnyRope,
             ColoredRope = data.ColoredRope,
             RegularRope = data.RegularRope,
             LavaRise = data.LavaRise,
             PlayerCollision = data.PlayerCollision
         };
+
+        // Legacy / incomplete: neither mode set → treat as Any.
+        if (!level.AnyRope && !level.ColoredRope && !level.RegularRope)
+        {
+            level.AnyRope = true;
+        }
+
+        if (level.AnyRope)
+        {
+            level.ColoredRope = false;
+            level.RegularRope = false;
+        }
 
         if (data.LavaLine is not null)
         {
@@ -181,6 +195,7 @@ public sealed class Level
             Player2 = Player2,
             Player3 = Player3,
             Player4 = Player4,
+            AnyRope = AnyRope,
             ColoredRope = ColoredRope,
             RegularRope = RegularRope,
             LavaRise = LavaRise,
@@ -245,6 +260,7 @@ public sealed class Level
         Player2 = loaded.Player2;
         Player3 = loaded.Player3;
         Player4 = loaded.Player4;
+        AnyRope = loaded.AnyRope;
         ColoredRope = loaded.ColoredRope;
         RegularRope = loaded.RegularRope;
         LavaRise = loaded.LavaRise;

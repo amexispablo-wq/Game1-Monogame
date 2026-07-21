@@ -248,7 +248,8 @@ public sealed class Rope : INetworkEntity
         }
 
         // Pull only shortens rest length above. No direct node→player gather.
-        // Shorter rests → constraints contract rope → endpoint coupling moves other player.
+        // Shorter rests → constraints contract rope → endpoint coupling:
+        // grounded solo puller = anchor (other gets reeled); else mutual.
 
         if (colored)
         {
@@ -273,7 +274,7 @@ public sealed class Rope : INetworkEntity
         SyncPinnedNodes(startAnchor, endAnchor);
         StabilizeFiniteNodes(startAnchor, endAnchor);
         UpdateDerivedMetrics(startAnchor, endAnchor);
-        ApplyEndpointCoupling(startAnchor, endAnchor, dt);
+        ApplyEndpointCoupling(startAnchor, endAnchor, dt, startPlayerPulling, endPlayerPulling);
         UpdateFeedback(dt);
 
         if (IsPulling)
@@ -784,7 +785,12 @@ public sealed class Rope : INetworkEntity
         }
     }
 
-    private void ApplyEndpointCoupling(Vector2 startAnchor, Vector2 endAnchor, float dt)
+    private void ApplyEndpointCoupling(
+        Vector2 startAnchor,
+        Vector2 endAnchor,
+        float dt,
+        bool startPlayerPulling,
+        bool endPlayerPulling)
     {
         float maxLen = MathF.Min(_currentRestLength, MaximumRopeLength);
         float pathLen = GetPathLength();
@@ -815,6 +821,14 @@ public sealed class Rope : INetworkEntity
             return;
         }
 
+        // Solo grounded pull = you are anchor. Rope reels other in; you do not get yanked.
+        // Airborne/hanging puller still receives coupling (else fall forever while rope grows).
+        // Both pull / neither pull = mutual coupling.
+        bool startIsPullAnchor = startPlayerPulling && !endPlayerPulling && StartPlayer.IsGrounded;
+        bool endIsPullAnchor = endPlayerPulling && !startPlayerPulling && EndPlayer.IsGrounded;
+        bool applyToStart = !startIsPullAnchor;
+        bool applyToEnd = !endIsPullAnchor;
+
         // Pull along rope tangents (into the chain), not chord — wrap still couples players.
         Vector2 startTangent = Nodes.Count > 1
             ? Nodes[1].Position - startAnchor
@@ -832,38 +846,60 @@ public sealed class Rope : INetworkEntity
         endTangent = Vector2.Normalize(endTangent);
 
         float tension = MathHelper.Clamp(overstretch / MathF.Max(1f, maxLen), 0.2f, 1f);
-        float force = MathF.Min(overstretch * MaxRopeForce * tension / MathF.Max(20f, maxLen), MaxRopeForce);
+        float forceCap = (startPlayerPulling || endPlayerPulling) ? MaxPullForce : MaxRopeForce;
+        float force = MathF.Min(overstretch * forceCap * tension / MathF.Max(20f, maxLen), forceCap);
         LastEndpointForce = force;
         LastTension = MathF.Max(LastTension, tension);
 
         float impulseScale = force * dt;
-        Vector2 startImpulse = startTangent * impulseScale * StartPlayer.Mass;
-        Vector2 endImpulse = endTangent * impulseScale * EndPlayer.Mass;
 
-        // Rope mass/self-weight must not kill jumps. Keep player↔player coupling (hang weight),
-        // but strip downward impulse while a player is moving upward.
-        startImpulse = FilterJumpMitigation(startImpulse, StartPlayer);
-        endImpulse = FilterJumpMitigation(endImpulse, EndPlayer);
+        if (applyToStart)
+        {
+            Vector2 startImpulse = FilterJumpMitigation(
+                startTangent * impulseScale * StartPlayer.Mass,
+                StartPlayer,
+                EndPlayer);
+            StartPlayer.AddImpulse(startImpulse);
+        }
 
-        StartPlayer.AddImpulse(startImpulse);
-        EndPlayer.AddImpulse(endImpulse);
+        if (applyToEnd)
+        {
+            Vector2 endImpulse = FilterJumpMitigation(
+                endTangent * impulseScale * EndPlayer.Mass,
+                EndPlayer,
+                StartPlayer);
+            EndPlayer.AddImpulse(endImpulse);
+        }
 
         // Pinned constraint corrections = rope tugging players (consequence of rope).
-        if (_startPinnedCorrection != Vector2.Zero)
+        if (applyToStart && _startPinnedCorrection != Vector2.Zero)
         {
-            Vector2 pinned = FilterJumpMitigation(_startPinnedCorrection * StartPlayer.Mass * 0.5f, StartPlayer);
+            Vector2 pinned = FilterJumpMitigation(
+                _startPinnedCorrection * StartPlayer.Mass * 0.5f,
+                StartPlayer,
+                EndPlayer);
             StartPlayer.AddImpulse(pinned);
         }
 
-        if (_endPinnedCorrection != Vector2.Zero)
+        if (applyToEnd && _endPinnedCorrection != Vector2.Zero)
         {
-            Vector2 pinned = FilterJumpMitigation(_endPinnedCorrection * EndPlayer.Mass * 0.5f, EndPlayer);
+            Vector2 pinned = FilterJumpMitigation(
+                _endPinnedCorrection * EndPlayer.Mass * 0.5f,
+                EndPlayer,
+                StartPlayer);
             EndPlayer.AddImpulse(pinned);
         }
     }
 
-    private static Vector2 FilterJumpMitigation(Vector2 impulse, Player player)
+    private static Vector2 FilterJumpMitigation(Vector2 impulse, Player player, Player other)
     {
+        // Protect jumps only when partner is grounded (firm rope support).
+        // Both airborne: keep full forces — stripping down-only injects free energy (launchpad yo-yo).
+        if (!other.IsGrounded)
+        {
+            return impulse;
+        }
+
         // Up is negative Y. Kill downward (positive Y) rope force while airborne upward.
         if (player.Velocity.Y < -40f && impulse.Y > 0f)
         {

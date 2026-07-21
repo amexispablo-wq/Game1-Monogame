@@ -1,4 +1,3 @@
-
 #----------------------------- Global Properties ----------------------------#
 
 /outputDir:bin/$(Platform)
@@ -12,4 +11,16 @@
 
 
 #---------------------------------- Content ---------------------------------#
+
+#begin Audio/Music/MainMenu.ogg
+/importer:OggImporter
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Audio/Music/MainMenu.ogg
+
+#begin Audio/Music/levelEditor.ogg
+/importer:OggImporter
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Audio/Music/levelEditor.ogg
 

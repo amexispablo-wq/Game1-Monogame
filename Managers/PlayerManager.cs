@@ -83,12 +83,43 @@ public sealed class PlayerManager
         return Players;
     }
 
-    public void ActivateCheckpoint(CheckpointFlag checkpoint)
+    public void SyncInputDevicesFromParty(IReadOnlyList<PartyMember> members, InputManager input)
     {
+        Dictionary<int, PartyMember> bindings = new();
+        for (int i = 0; i < Players.Count; i++)
+        {
+            Player player = Players[i];
+            PartyMember? member = null;
+            for (int m = 0; m < members.Count; m++)
+            {
+                if (members[m].Id == player.PartyMemberId)
+                {
+                    member = members[m];
+                    break;
+                }
+            }
+
+            if (member is null)
+            {
+                continue;
+            }
+
+            if (member.IsLocallyOwned)
+            {
+                player.AssignedInput = ToInputDevice(member);
+            }
+
+            bindings[player.NetworkId] = member;
+        }
+
+        input.SetGameplayBindings(bindings);
+    }
+
+    public void ActivateCheckpoint(CheckpointFlag checkpoint, bool playSfx = true)
+    {
+        // Same flag only arms once — revisiting must not re-capture / re-set.
         if (ReferenceEquals(CurrentCheckpoint, checkpoint))
         {
-            checkpoint.IsActive = true;
-            CaptureCheckpointPlayerColors();
             return;
         }
 
@@ -100,6 +131,10 @@ public sealed class PlayerManager
         CurrentCheckpoint = checkpoint;
         CurrentCheckpoint.IsActive = true;
         CaptureCheckpointPlayerColors();
+        if (playSfx)
+        {
+            GameAudio.Play(SfxManager.Checkpoint);
+        }
     }
 
     public void RespawnPlayer(Player player)
@@ -118,10 +153,11 @@ public sealed class PlayerManager
 
     public void ReviveAllAtCheckpoint()
     {
-        Vector2 position = RespawnPosition;
-        foreach (Player player in Players)
+        Vector2 basePosition = RespawnPosition;
+        for (int i = 0; i < Players.Count; i++)
         {
-            player.Revive(position);
+            // Spread same-color stacks so player-collision eject does not loop vertically.
+            Players[i].Revive(basePosition + new Vector2(PlayerSpawnSpacing * i, 0f));
         }
 
         ApplyCheckpointPlayerColors();

@@ -1,5 +1,5 @@
 {
-  "name": "LEVEL 4",
+  "name": "LEVEL 1",
   "platforms": [
     {
       "x": -2208,
@@ -23,8 +23,8 @@
       "color": "Red"
     },
     {
-      "x": -2016,
-      "y": 448,
+      "x": -2560,
+      "y": 160,
       "width": 192,
       "height": 32,
       "color": "Red"
@@ -44,8 +44,8 @@
       "color": "Red"
     },
     {
-      "x": -1792,
-      "y": 416,
+      "x": -2336,
+      "y": 128,
       "width": 192,
       "height": 32,
       "color": "Green"
@@ -58,22 +58,194 @@
       "color": "Blue"
     },
     {
-      "x": -1632,
-      "y": 192,
+      "x": -2176,
+      "y": -96,
       "width": 192,
       "height": 32,
       "color": "Blue"
     },
     {
-      "x": -1952,
-      "y": -384,
-      "width": 64,
+      "x": -2752,
+      "y": -480,
+      "width": 192,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -2592,
+      "y": -192,
+      "width": 192,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": -2816,
+      "y": -224,
+      "width": 192,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -2528,
+      "y": -512,
+      "width": 192,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": -2976,
+      "y": -448,
+      "width": 192,
       "height": 32,
       "color": "Blue"
+    },
+    {
+      "x": -2368,
+      "y": -736,
+      "width": 192,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -2400,
+      "y": -128,
+      "width": 192,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": -2400,
+      "y": -128,
+      "width": 192,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -2368,
+      "y": -832,
+      "width": 192,
+      "height": 96,
+      "color": "Red"
+    },
+    {
+      "x": -2368,
+      "y": -928,
+      "width": 192,
+      "height": 96,
+      "color": "Green"
+    },
+    {
+      "x": -2368,
+      "y": -1024,
+      "width": 192,
+      "height": 96,
+      "color": "Blue"
+    },
+    {
+      "x": -2176,
+      "y": -1088,
+      "width": 128,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": -2080,
+      "y": -1280,
+      "width": 32,
+      "height": 192,
+      "color": "Green"
+    },
+    {
+      "x": -2048,
+      "y": -1120,
+      "width": 192,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -1600,
+      "y": -1024,
+      "width": 384,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -1184,
+      "y": -960,
+      "width": 192,
+      "height": 96,
+      "color": "Red"
+    },
+    {
+      "x": -1184,
+      "y": -800,
+      "width": 224,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": -1184,
+      "y": -672,
+      "width": 256,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -1184,
+      "y": -672,
+      "width": 256,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -1184,
+      "y": -800,
+      "width": 224,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -768,
+      "y": -512,
+      "width": 128,
+      "height": 32,
+      "color": "Blue"
+    },
+    {
+      "x": -864,
+      "y": -448,
+      "width": 96,
+      "height": 32,
+      "color": "Green"
+    },
+    {
+      "x": -960,
+      "y": -352,
+      "width": 96,
+      "height": 32,
+      "color": "Red"
+    },
+    {
+      "x": -640,
+      "y": 576,
+      "width": 320,
+      "height": 32,
+      "color": "White"
     }
   ],
-  "goals": [],
-  "checkpointFlags": [],
+  "goals": [
+    {
+      "x": -512,
+      "y": 512
+    }
+  ],
+  "checkpointFlags": [
+    {
+      "id": 1,
+      "x": -1440,
+      "y": -1088
+    }
+  ],
   "launchPads": [
     {
       "x": -2720,
@@ -83,11 +255,60 @@
       "rotation": 0
     },
     {
-      "x": -1568,
-      "y": 384,
+      "x": -2112,
+      "y": 96,
       "width": 64,
       "height": 32,
       "rotation": 0
+    },
+    {
+      "x": -2912,
+      "y": -256,
+      "width": 64,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": -2304,
+      "y": -544,
+      "width": 64,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": -1792,
+      "y": -1120,
+      "width": 64,
+      "height": 32,
+      "rotation": 0
+    },
+    {
+      "x": -1216,
+      "y": -224,
+      "width": 160,
+      "height": 32,
+      "rotation": 90
+    },
+    {
+      "x": -768,
+      "y": 32,
+      "width": 96,
+      "height": 32,
+      "rotation": 15
+    },
+    {
+      "x": -352,
+      "y": 32,
+      "width": 96,
+      "height": 32,
+      "rotation": 345
+    },
+    {
+      "x": -544,
+      "y": 224,
+      "width": 96,
+      "height": 32,
+      "rotation": 180
     }
   ],
   "playerSpawn": {
@@ -100,9 +321,11 @@
   "player2": false,
   "player3": false,
   "player4": false,
+  "anyRope": false,
   "coloredRope": false,
-  "regularRope": false,
+  "regularRope": true,
   "lavaRise": false,
+  "playerCollision": false,
   "lavaLine": {
     "surfaceY": 640,
     "riseSpeed": 70
@@ -110,8 +333,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-07-20T15:46:39.5318063Z",
-  "modifiedDate": "2026-07-20T16:17:45.9139731Z",
-  "version": 3,
+  "modifiedDate": "2026-07-21T22:33:08.4368503Z",
+  "version": 9,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

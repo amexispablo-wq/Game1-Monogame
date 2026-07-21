@@ -438,12 +438,19 @@ public sealed class LevelSelectScene : IScene
         }
 
         int? ropeIndex = null;
-        int? lavaIndex = null;
         if (_ropeModeFocus != null)
         {
             ropeIndex = _focus.Add(_ropeModeFocus, "RopeMode");
         }
 
+        int? watchReplayIndex = null;
+        if (_watchReplayFocus != null && _selectedLevelId is not null)
+        {
+            _watchReplayFocus.IsEnabled = true;
+            watchReplayIndex = _focus.Add(_watchReplayFocus, "WatchReplay");
+        }
+
+        int? lavaIndex = null;
         if (_lavaRiseFocus != null)
         {
             lavaIndex = _focus.Add(_lavaRiseFocus, "LavaRise");
@@ -459,13 +466,6 @@ public sealed class LevelSelectScene : IScene
         if (_ghostBestRunFocus != null)
         {
             ghostIndex = _focus.Add(_ghostBestRunFocus, "GhostBestRun");
-        }
-
-        int? watchReplayIndex = null;
-        if (_watchReplayFocus != null && _selectedLevelId is not null)
-        {
-            _watchReplayFocus.IsEnabled = true;
-            watchReplayIndex = _focus.Add(_watchReplayFocus, "WatchReplay");
         }
 
         int backIndex = _focus.Add(_backFocus, "Back");
@@ -542,49 +542,34 @@ public sealed class LevelSelectScene : IScene
                 int downTarget = ropeIndex ?? primaryIndex ?? backIndex;
                 NavigationGraphBuilder.LinkGridBottomRowTo(nav, gridStart, _gridFocusables.Count, _gridLayout.Columns, downTarget);
 
-                if (ropeIndex is int rope && lavaIndex is int lava)
+                if (ropeIndex is int rope && primaryIndex is int playFromRope)
                 {
-                    nav.LinkHorizontal(rope, lava);
-
-                    if (playerCollisionIndex is int playerCollision)
-                    {
-                        nav.LinkVertical(lava, playerCollision);
-                        if (ghostIndex is int ghostFromCollision)
-                        {
-                            nav.LinkVertical(playerCollision, ghostFromCollision);
-                            if (primaryIndex is int playFromGhost)
-                            {
-                                nav.Link(ghostFromCollision, NavigationDirection.Down, playFromGhost);
-                            }
-                        }
-                        else if (primaryIndex is int playFromCollision)
-                        {
-                            nav.Link(playerCollision, NavigationDirection.Down, playFromCollision);
-                        }
-                    }
-                    else if (ghostIndex is int ghost)
-                    {
-                        nav.LinkVertical(lava, ghost);
-
-                        if (primaryIndex is int playFromGhost)
-                        {
-                            nav.Link(ghost, NavigationDirection.Down, playFromGhost);
-                        }
-                    }
-
-                    if (watchReplayIndex is int watchFromLava)
-                    {
-                        nav.LinkHorizontal(lava, watchFromLava);
-                    }
-
-                    if (primaryIndex is int play)
-                    {
-                        nav.LinkVertical(rope, play);
-                    }
+                    nav.LinkVertical(rope, playFromRope);
                 }
-                else if (ropeIndex is int ropeOnly && primaryIndex is int playOnly)
+
+                // Details panel cascade: Watch Replay → Lava → Collision → Ghost → Play
+                int? detailsCursor = watchReplayIndex;
+                if (detailsCursor is int watch && lavaIndex is int lava)
                 {
-                    nav.LinkVertical(ropeOnly, playOnly);
+                    nav.LinkVertical(watch, lava);
+                    detailsCursor = lava;
+                }
+
+                if (detailsCursor is int fromLava && playerCollisionIndex is int playerCollision)
+                {
+                    nav.LinkVertical(fromLava, playerCollision);
+                    detailsCursor = playerCollision;
+                }
+
+                if (detailsCursor is int fromCollision && ghostIndex is int ghost)
+                {
+                    nav.LinkVertical(fromCollision, ghost);
+                    detailsCursor = ghost;
+                }
+
+                if (detailsCursor is int detailsBottom && primaryIndex is int playFromDetails)
+                {
+                    nav.Link(detailsBottom, NavigationDirection.Down, playFromDetails);
                 }
 
                 if (watchReplayIndex is int watchReplay && _gridFocusables.Count > 0)
@@ -592,11 +577,6 @@ public sealed class LevelSelectScene : IScene
                     int topRight = gridStart + Math.Min(_gridLayout.Columns - 1, _gridFocusables.Count - 1);
                     nav.Link(topRight, NavigationDirection.Right, watchReplay);
                     nav.Link(watchReplay, NavigationDirection.Left, topRight);
-
-                    if (primaryIndex is int playFromWatch)
-                    {
-                        nav.Link(watchReplay, NavigationDirection.Down, playFromWatch);
-                    }
                 }
 
                 if (primaryIndex is int playBtn)
@@ -778,37 +758,6 @@ public sealed class LevelSelectScene : IScene
             _ropeModeLabelBounds = new Rectangle(20, selectorY - 22, Math.Max(1, viewport.Width - 40), 18);
             _ropeModeSelector.Bounds = new Rectangle((viewport.Width - selectorWidth) / 2, selectorY, selectorWidth, selectorHeight);
             _ropeModeDescriptionBounds = new Rectangle(20, selectorY + selectorHeight + 8, Math.Max(1, viewport.Width - 40), 18);
-
-            if (_lavaRiseCheckbox != null)
-            {
-                int checkboxX = Math.Min(viewport.Width - 220, _ropeModeSelector.Bounds.Right + 28);
-                int checkboxY = _ropeModeSelector.Bounds.Y + ((selectorHeight - 24) / 2);
-                _lavaRiseCheckbox.Bounds = new Rectangle(checkboxX, checkboxY, 180, 24);
-            }
-
-            if (_playerCollisionCheckbox != null && _lavaRiseCheckbox != null)
-            {
-                _playerCollisionCheckbox.Bounds = new Rectangle(
-                    _lavaRiseCheckbox.Bounds.X,
-                    _lavaRiseCheckbox.Bounds.Bottom + 6,
-                    220,
-                    24);
-            }
-
-            if (_ghostBestRunCheckbox != null)
-            {
-                Rectangle anchor = _playerCollisionCheckbox?.Bounds
-                    ?? _lavaRiseCheckbox?.Bounds
-                    ?? Rectangle.Empty;
-                if (anchor.Width > 0)
-                {
-                    _ghostBestRunCheckbox.Bounds = new Rectangle(
-                        anchor.X,
-                        anchor.Bottom + 6,
-                        220,
-                        24);
-                }
-            }
         }
 
         if (_mode == LevelSelectMode.PlayMode)
@@ -1315,8 +1264,8 @@ public sealed class LevelSelectScene : IScene
     private void HandleCreateNew()
     {
         _popupKind = LevelSelectPopupKind.CreateNew;
-        int levelCount = LevelLibrary.GetLocalLevels().Count;
-        _popup = new Popup("Create New Level", "Enter level name:", $"LEVEL {levelCount}");
+        int nextNumber = LevelLibrary.GetLocalLevels().Count + 1;
+        _popup = new Popup("Create New Level", "Enter level name:", $"LEVEL {nextNumber}");
     }
 
     private void HandleCreateCopy()
@@ -1448,8 +1397,8 @@ public sealed class LevelSelectScene : IScene
     private void HandleCreateOfficialLevel()
     {
         _popupKind = LevelSelectPopupKind.CreateOfficial;
-        int levelCount = LevelLibrary.GetOfficialLevels().Count;
-        _popup = new Popup("Create Official Level", "Enter level name:", $"LEVEL {levelCount}");
+        int nextNumber = LevelLibrary.GetOfficialLevels().Count + 1;
+        _popup = new Popup("Create Official Level", "Enter level name:", $"LEVEL {nextNumber}");
     }
 
     private void HandleConvertToOfficial()
@@ -1569,28 +1518,24 @@ public sealed class LevelSelectScene : IScene
 
         if (_lavaRiseCheckbox != null)
         {
-            bool supportsLava = LevelRules.SupportsLavaRise(level);
-            _lavaRiseCheckbox.IsEnabled = supportsLava;
-            _lavaRiseCheckbox.IsChecked = supportsLava;
-            s_lavaRiseEnabled = supportsLava;
+            _lavaRiseCheckbox.IsEnabled = true;
+            _lavaRiseCheckbox.IsChecked = level.LavaRise;
+            s_lavaRiseEnabled = level.LavaRise;
         }
 
         if (_playerCollisionCheckbox != null)
         {
-            bool supportsPlayerCollision = LevelRules.SupportsPlayerCollision(level);
-            _playerCollisionCheckbox.IsEnabled = supportsPlayerCollision;
-            _playerCollisionCheckbox.IsChecked = supportsPlayerCollision;
-            s_playerCollisionEnabled = supportsPlayerCollision;
+            _playerCollisionCheckbox.IsEnabled = true;
+            _playerCollisionCheckbox.IsChecked = level.PlayerCollision;
+            s_playerCollisionEnabled = level.PlayerCollision;
         }
 
         if (_ropeModeSelector != null)
         {
-            IReadOnlyList<RopeGameplayMode> allowed = LevelRules.GetAllowedRopeModes(level);
+            // Always allow picking either rope mode; mismatch vs level rules → unofficial run.
             _ropeModeSelector.Options.Clear();
-            foreach (RopeGameplayMode mode in allowed)
-            {
-                _ropeModeSelector.Options.Add(mode);
-            }
+            _ropeModeSelector.Options.Add(RopeGameplayMode.ColoredPhysics);
+            _ropeModeSelector.Options.Add(RopeGameplayMode.Neutral);
 
             s_selectedRopeMode = LevelRules.ClampRopeMode(level, s_selectedRopeMode);
             _ropeModeSelector.CurrentOption = s_selectedRopeMode;
@@ -1708,13 +1653,6 @@ public sealed class LevelSelectScene : IScene
 
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "ROPE MODE", _ropeModeLabelBounds, 1, new Color(184, 196, 216));
         _ropeModeSelector.Draw(spriteBatch, pixel);
-
-        string description = _ropeModeSelector.CurrentOption.ToDescription();
-        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, description, _ropeModeDescriptionBounds, 1, new Color(180, 200, 220));
-
-        _lavaRiseCheckbox?.Draw(spriteBatch, pixel);
-        _playerCollisionCheckbox?.Draw(spriteBatch, pixel);
-        _ghostBestRunCheckbox?.Draw(spriteBatch, pixel);
     }
 
     private void DrawLevelDetailsPanel(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, bool showPlayStats)
@@ -1798,7 +1736,69 @@ public sealed class LevelSelectScene : IScene
             _watchReplayButton.FillColor = _detailsHasBestReplay ? new Color(52, 61, 80) : new Color(40, 46, 58);
             _watchReplayButton.TextColor = _detailsHasBestReplay ? Color.White : new Color(140, 150, 165);
             _watchReplayButton.Draw(spriteBatch, pixel);
+            y = _watchReplayButton.Bounds.Bottom + 12;
         }
+
+        // Play options cascade under Watch Replay (flex column inside details panel).
+        const int optionHeight = 26;
+        const int optionGap = 8;
+        if (_lavaRiseCheckbox != null)
+        {
+            _lavaRiseCheckbox.Bounds = new Rectangle(textX, y, textWidth, optionHeight);
+            _lavaRiseCheckbox.Draw(spriteBatch, pixel);
+            y += optionHeight + optionGap;
+        }
+
+        if (_playerCollisionCheckbox != null)
+        {
+            _playerCollisionCheckbox.Bounds = new Rectangle(textX, y, textWidth, optionHeight);
+            _playerCollisionCheckbox.Draw(spriteBatch, pixel);
+            y += optionHeight + optionGap;
+        }
+
+        if (_ghostBestRunCheckbox != null)
+        {
+            _ghostBestRunCheckbox.Bounds = new Rectangle(textX, y, textWidth, optionHeight);
+            _ghostBestRunCheckbox.Draw(spriteBatch, pixel);
+            y = _ghostBestRunCheckbox.Bounds.Bottom + optionGap;
+        }
+
+        if (!AreCurrentPlaySettingsOfficial())
+        {
+            var warnBounds = new Rectangle(textX, y, textWidth, 40);
+            SimpleTextRenderer.DrawString(
+                spriteBatch,
+                pixel,
+                "UNOFFICIAL RUN",
+                new Microsoft.Xna.Framework.Vector2(textX, y),
+                2,
+                new Color(230, 70, 70));
+            SimpleTextRenderer.DrawString(
+                spriteBatch,
+                pixel,
+                "Options won't count for best run",
+                new Microsoft.Xna.Framework.Vector2(textX, y + 20),
+                1,
+                new Color(230, 90, 90));
+        }
+    }
+
+    private bool AreCurrentPlaySettingsOfficial()
+    {
+        if (_mode != LevelSelectMode.PlayMode || _selectedLevel is null)
+        {
+            return true;
+        }
+
+        RopeGameplayMode ropeMode = _ropeModeSelector?.CurrentOption ?? s_selectedRopeMode;
+        bool lavaRise = _lavaRiseCheckbox?.IsChecked ?? s_lavaRiseEnabled;
+        bool playerCollision = _playerCollisionCheckbox?.IsChecked ?? s_playerCollisionEnabled;
+        return LevelRules.IsOfficialPlaySettings(
+            _selectedLevel,
+            ropeMode,
+            lavaRise,
+            playerCollision,
+            _game.Party.Members.Count);
     }
 
     private string GetPlayerCompatibilityText(Level level)
@@ -1820,8 +1820,15 @@ public sealed class LevelSelectScene : IScene
     private string GetRopeText(Level level)
     {
         var ropeTags = new System.Collections.Generic.List<string>();
-        if (level.ColoredRope) ropeTags.Add("Colored Rope");
-        if (level.RegularRope) ropeTags.Add("Regular Rope");
+        if (level.AnyRope)
+        {
+            ropeTags.Add("Any");
+        }
+        else
+        {
+            if (level.ColoredRope) ropeTags.Add("Colored Rope");
+            if (level.RegularRope) ropeTags.Add("Regular Rope");
+        }
         return string.Join(", ", ropeTags);
     }
 

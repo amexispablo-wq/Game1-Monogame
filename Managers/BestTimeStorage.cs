@@ -23,7 +23,7 @@ public static class BestTimeStorage
         PropertyNameCaseInsensitive = true
     };
 
-    public static bool SaveIfRecord(string levelId, float elapsedSeconds)
+    public static bool SaveIfRecord(string levelId, float elapsedSeconds, bool official = true)
     {
         LevelSource source = LevelIdentity.GetSource(levelId);
         Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll(source);
@@ -35,12 +35,25 @@ public static class BestTimeStorage
             bestTimes[levelId] = record;
         }
 
-        if (record.Official is float savedBest && roundedTime >= savedBest)
+        if (official)
         {
-            return false;
+            if (record.Official is float savedBest && roundedTime >= savedBest)
+            {
+                return false;
+            }
+
+            record.Official = roundedTime;
+        }
+        else
+        {
+            if (record.Unofficial is float savedUnofficial && roundedTime >= savedUnofficial)
+            {
+                return false;
+            }
+
+            record.Unofficial = roundedTime;
         }
 
-        record.Official = roundedTime;
         SaveAll(source, bestTimes);
         return true;
     }

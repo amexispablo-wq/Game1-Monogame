@@ -1,5 +1,5 @@
 {
-  "name": "Level 2",
+  "name": "Level 3",
   "platforms": [
     {
       "x": -672,
@@ -447,9 +447,11 @@
   "player2": false,
   "player3": false,
   "player4": false,
-  "coloredRope": true,
-  "regularRope": true,
+  "anyRope": true,
+  "coloredRope": false,
+  "regularRope": false,
   "lavaRise": true,
+  "playerCollision": false,
   "lavaLine": {
     "surfaceY": 960,
     "riseSpeed": 10
@@ -457,8 +459,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-07-10T17:48:06.1426255Z",
-  "modifiedDate": "2026-07-10T18:50:50.4107331Z",
-  "version": 5,
+  "modifiedDate": "2026-07-21T22:34:27.2293492Z",
+  "version": 7,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

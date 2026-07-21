@@ -18,6 +18,7 @@ public sealed class OptionsScene : IScene
     }
 
     private readonly ColorBlocksGame _game;
+    private readonly Action? _onClosed;
     private OptionsSection _activeSection = OptionsSection.Display;
 
     // Section tabs
@@ -100,9 +101,10 @@ public sealed class OptionsScene : IScene
 
     public int ControlWidth { get; private set; }
 
-    public OptionsScene(ColorBlocksGame game)
+    public OptionsScene(ColorBlocksGame game, Action? onClosed = null)
     {
         _game = game;
+        _onClosed = onClosed;
 
         var displayModes = new List<DisplayMode>
         {
@@ -190,6 +192,8 @@ public sealed class OptionsScene : IScene
             ("Green", "GREEN"),
             ("Blue", "BLUE"),
             ("Checkpoint", "CHECKPOINT"),
+            ("PhysicsExpulsion", "PHYSICS EXPULSION"),
+            ("LaunchPad", "LAUNCH PAD"),
             ("MenuNavigation", "MENU NAVIGATION"),
             ("Lava", "LAVA")
         };
@@ -278,7 +282,7 @@ public sealed class OptionsScene : IScene
             }
 
             SettingsManager.RevertPendingChanges();
-            _game.ChangeScene(new MenuScene(_game));
+            LeaveOptions();
             return;
         }
 
@@ -309,7 +313,7 @@ public sealed class OptionsScene : IScene
         if (_backFocus.WasActivated)
         {
             SettingsManager.RevertPendingChanges();
-            _game.ChangeScene(new MenuScene(_game));
+            LeaveOptions();
             return;
         }
 
@@ -323,7 +327,7 @@ public sealed class OptionsScene : IScene
             }
 
             ApplySettings();
-            _game.ChangeScene(new MenuScene(_game));
+            LeaveOptions();
             return;
         }
 
@@ -363,6 +367,17 @@ public sealed class OptionsScene : IScene
         }
 
         _activeSection = sections[(currentIndex + delta + sections.Length) % sections.Length];
+    }
+
+    private void LeaveOptions()
+    {
+        if (_onClosed is not null)
+        {
+            _onClosed.Invoke();
+            return;
+        }
+
+        _game.ChangeScene(new MenuScene(_game));
     }
 
     private void RebuildFocus(GameTime gameTime)
@@ -1356,7 +1371,7 @@ public sealed class OptionsScene : IScene
             _displayConfirm = null;
             _displayRevertSnapshot = null;
             _pendingRevertSnapshot = null;
-            _game.ChangeScene(new MenuScene(_game));
+            LeaveOptions();
             return;
         }
 

@@ -12,7 +12,8 @@ namespace ColorBlocks;
 /// </summary>
 public sealed class LavaLine
 {
-    public const float DefaultRiseSpeed = 70f;   // px / second
+    public const float DefaultRiseSpeed = 10f;   // px / second
+    public const float RiseSpeedStep = 10f;
     public const float MinRiseSpeed = 0f;
     public const float MaxRiseSpeed = 400f;
     public const int EditorHitMargin = 22;       // vertical pick tolerance in world px

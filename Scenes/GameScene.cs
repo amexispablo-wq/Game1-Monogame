@@ -21,6 +21,7 @@ public sealed class GameScene : IScene
     private readonly GameSimulation _simulation;
     private readonly Camera _camera;
     private readonly PauseMenuOverlay _pauseMenu = new();
+    private OptionsScene? _pauseOptions;
     private bool _debugDraw;
     private readonly DeveloperTuningPanel _tuningPanel = new();
     private bool _completionUiActive;
@@ -49,6 +50,8 @@ public sealed class GameScene : IScene
     private bool _photoMode;
 
     public bool IsPhotoModeActive => _photoMode;
+
+    public string LevelMusicId => _level.MusicId;
 
     private enum ConfirmActionKind
     {
@@ -90,8 +93,7 @@ public sealed class GameScene : IScene
         _game.Party.ApplyPreferredInputForPrimaryLocalMember(_game.Input);
         _game.Party.LockAssignments();
         _playerManager.SpawnFromParty(_game.Party.Members, _game.Input);
-        bool collisionEnabled = playerCollisionEnabled && LevelRules.SupportsPlayerCollision(_level);
-        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled, collisionEnabled);
+        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled, playerCollisionEnabled);
         _camera = new Camera(GetPlayersCenter());
         _replayRecorder.StartRecording(
             _levelId,
@@ -112,7 +114,6 @@ public sealed class GameScene : IScene
         }
 
         _game.SteamLobby.MemberLeft += OnLobbyMemberLeft;
-        _game.Music.PlayLevelMusic(_level.MusicId);
     }
 
     public void OnExit()
@@ -126,6 +127,7 @@ public sealed class GameScene : IScene
         _game.Party.UnlockAssignments();
         _photoMode = false;
         _game.GameNetwork.Reset();
+        GameAudio.StopAllLoops();
         _game.Music.Stop();
         _replayRecorder.StopRecording();
         FinalizeSessionRecording();
@@ -165,6 +167,39 @@ public sealed class GameScene : IScene
 
     private IReadOnlyList<Player> Players => _simulation.Players;
     private IReadOnlyList<Rope> Ropes => _simulation.Ropes;
+
+    private void UpdateGameplayAudio()
+    {
+        bool pulling = false;
+        foreach (Rope rope in Ropes)
+        {
+            if (rope.IsPulling)
+            {
+                pulling = true;
+                break;
+            }
+        }
+
+        GameAudio.SetPullRopeLoop(pulling);
+
+        if (!_simulation.LavaActive)
+        {
+            GameAudio.UpdateLavaProximity(float.MaxValue);
+            return;
+        }
+
+        float nearest = float.MaxValue;
+        foreach (Player player in Players)
+        {
+            float distance = SfxManager.DistanceToLavaSurface(player.Bounds.Bottom, _simulation.LavaSurfaceY);
+            if (distance < nearest)
+            {
+                nearest = distance;
+            }
+        }
+
+        GameAudio.UpdateLavaProximity(nearest);
+    }
 
     public void Update(GameTime gameTime)
     {
@@ -219,9 +254,18 @@ public sealed class GameScene : IScene
             return;
         }
 
+        if (_pauseOptions is not null)
+        {
+            _game.Input.GameplayInputBlocked = true;
+            GameAudio.SetPullRopeLoop(false);
+            _pauseOptions.Update(gameTime);
+            return;
+        }
+
         if (_pauseMenu.IsOpen)
         {
             _game.Input.GameplayInputBlocked = true;
+            GameAudio.SetPullRopeLoop(false);
             PauseMenuChoice? choice = _pauseMenu.Update(gameTime, _game.Input, viewport);
             if (choice.HasValue)
             {
@@ -246,6 +290,7 @@ public sealed class GameScene : IScene
         if (_simulation.IsPlayerDead)
         {
             _game.Input.GameplayInputBlocked = true;
+            GameAudio.SetPullRopeLoop(false);
             if (!_deathMenuFocusInitialized)
             {
                 _deathFocus.ResetFocus();
@@ -267,6 +312,7 @@ public sealed class GameScene : IScene
         if (_simulation.IsLevelComplete)
         {
             _game.Input.GameplayInputBlocked = true;
+            GameAudio.SetPullRopeLoop(false);
             BeginCompletionUi();
             _completionUiElapsed += dt;
             UpdateCompletionUi(gameTime);
@@ -305,6 +351,11 @@ public sealed class GameScene : IScene
         GameNetworkCoordinator network = _game.GameNetwork;
         network.PumpIncoming(_session, _simulation);
 
+        if (_game.Party.TryHotSwapLocalInputFromActivity(_game.Input))
+        {
+            _playerManager.SyncInputDevicesFromParty(_game.Party.Members, _game.Input);
+        }
+
         if (_session.Role == GameSessionRole.Client)
         {
             network.SendLocalInput(_session, _simulation, _game.Input);
@@ -313,6 +364,7 @@ public sealed class GameScene : IScene
                 _simulation.ApplySnapshot(snapshot);
                 _replayRecorder.RecordFrame(_simulation, _camera);
                 _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
+                UpdateGameplayAudio();
             }
 
             BeginCompletionUi();
@@ -322,6 +374,7 @@ public sealed class GameScene : IScene
 
         _simulation.Advance(dt, _game.Input);
         _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
+        UpdateGameplayAudio();
         BeginCompletionUi();
         if (_simulation.IsLevelComplete && _simulation.NewRecord)
         {
@@ -357,12 +410,26 @@ public sealed class GameScene : IScene
                     "Cancel");
                 _pendingConfirm = ConfirmActionKind.RestartLevel;
                 break;
+            case PauseMenuChoice.Options:
+                OpenPauseOptions();
+                break;
             case PauseMenuChoice.BackToMenu:
                 _simulation.SetPaused(false);
                 _pauseMenu.Close();
                 _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
                 break;
         }
+    }
+
+    private void OpenPauseOptions()
+    {
+        _pauseOptions = new OptionsScene(_game, ClosePauseOptions);
+    }
+
+    private void ClosePauseOptions()
+    {
+        _pauseOptions = null;
+        // Stay paused; pause menu remains open underneath.
     }
 
     private void ExecuteConfirmedAction(ConfirmActionKind action)
@@ -429,7 +496,7 @@ public sealed class GameScene : IScene
             DrawDeathUi(spriteBatch, _game.Pixel, viewport, gameTime);
         }
 
-        if (_pauseMenu.IsOpen)
+        if (_pauseMenu.IsOpen && _pauseOptions is null)
         {
             _pauseMenu.Draw(spriteBatch, _game.Pixel, gameTime, viewport, _game.Input);
         }
@@ -445,6 +512,11 @@ public sealed class GameScene : IScene
         }
 
         spriteBatch.End();
+
+        if (_pauseOptions is not null)
+        {
+            _pauseOptions.Draw(gameTime, spriteBatch);
+        }
     }
 
     private void DrawDisconnectOverlay(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
