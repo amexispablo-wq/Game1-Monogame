@@ -11,6 +11,10 @@ public static class SteamConstants
 
     public const string LobbyDataPartyVersion = "party_version";
     public const string LobbyDataGameVersion = "game_version";
+    public const string LobbyDataBuildGuid = "build_guid";
+    public const string LobbyDataGitCommit = "git_commit";
+    public const string LobbyDataSessionId = "session_id";
+    public const string LobbyDataLevelHash = "level_hash";
     public const string LobbyDataLevel = "level";
     public const string LobbyDataRopeMode = "rope_mode";
     public const string LobbyDataLavaRise = "lava_rise";
@@ -18,6 +22,7 @@ public static class SteamConstants
     public const string LobbyDataLeaderSteam = "leader_steam";
 
     public const string LobbyMemberDataLocals = "locals";
+    public const string LobbyMemberDataBuild = "build_info";
 
     public const string ChatPrefixStart = "START:";
     public const string ChatPrefixKick = "KICK:";
@@ -42,7 +47,8 @@ public readonly record struct LobbyMemberInfo(
 public readonly record struct PartyStartMessage(
     string LevelId,
     RopeGameplayMode RopeMode,
-    bool LavaRiseEnabled);
+    bool LavaRiseEnabled,
+    string? LevelHash = null);
 
 public sealed class PartyRosterEntry
 {

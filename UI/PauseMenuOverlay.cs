@@ -128,6 +128,8 @@ public sealed class PauseMenuOverlay
         }
 
         _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, input);
+
+        VersionOverlay.DrawBottomRight(spriteBatch, pixel, viewport);
     }
 
     private void Layout(Viewport viewport)

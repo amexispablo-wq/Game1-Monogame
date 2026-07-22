@@ -30,14 +30,22 @@ public sealed class PhysicsWorld
 
         for (int i = 0; i < Players.Count - 1; i++)
         {
-            Ropes.Add(new Rope(
+            int ropeNetworkId = session.AllocateNetworkId();
+            NetworkEntityOwnership ownership = new(ropeNetworkId, session.HostOwnerId, session.IsHost, true);
+            Rope rope = new(
                 Players[i],
                 Players[i + 1],
                 Players,
                 RopeGameplayMode,
-                new NetworkEntityOwnership(session.AllocateNetworkId(), session.HostOwnerId, session.IsHost, true)));
+                ownership);
+            Ropes.Add(rope);
+            MultiplayerDebug.LogRope(
+                $"Create Rope NetworkId={ropeNetworkId} OwnerId={session.HostOwnerId} " +
+                $"IsLocal={session.IsHost} IsHostControlled=true " +
+                $"P{Players[i].PlayerIndex + 1}(N{Players[i].NetworkId})-P{Players[i + 1].PlayerIndex + 1}(N{Players[i + 1].NetworkId})");
         }
 
+        MultiplayerDebug.LogRope($"Rope chain done count={Ropes.Count} for players={Players.Count}");
         RefreshSimulationOrder();
     }
 

@@ -48,6 +48,7 @@ public sealed class Level
 
     public string Name { get; set; }
     public Vector2 PlayerStart { get; set; }
+    public GameColor PlayerStartColor { get; set; } = GameColor.Red;
     public Point WorldSize { get; private set; }
     public string MusicId { get; set; } = LevelMusicLibrary.DefaultMusicId;
     public bool AllPlayers { get; set; } = true;
@@ -150,6 +151,7 @@ public sealed class Level
             launchPads,
             data.Name)
         {
+            PlayerStartColor = NormalizePlayerStartColor(data.PlayerSpawnColor),
             MusicId = string.IsNullOrWhiteSpace(data.MusicId) ? LevelMusicLibrary.DefaultMusicId : data.MusicId,
             AllPlayers = data.AllPlayers,
             Player1 = data.Player1,
@@ -189,6 +191,7 @@ public sealed class Level
         {
             Name = Name,
             PlayerSpawn = new Vector2Data { X = PlayerStart.X, Y = PlayerStart.Y },
+            PlayerSpawnColor = NormalizePlayerStartColor(PlayerStartColor),
             MusicId = MusicId,
             AllPlayers = AllPlayers,
             Player1 = Player1,
@@ -254,6 +257,7 @@ public sealed class Level
         Level loaded = FromData(data);
         Name = loaded.Name;
         PlayerStart = loaded.PlayerStart;
+        PlayerStartColor = loaded.PlayerStartColor;
         MusicId = loaded.MusicId;
         AllPlayers = loaded.AllPlayers;
         Player1 = loaded.Player1;
@@ -394,6 +398,11 @@ public sealed class Level
                 yield return platform;
             }
         }
+    }
+
+    public static GameColor NormalizePlayerStartColor(GameColor color)
+    {
+        return color == GameColor.White ? GameColor.Red : color;
     }
 
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, float animationSeconds = 0f, bool isEditorMode = false)

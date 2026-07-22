@@ -52,6 +52,7 @@ public sealed class PartyManager
 
     private void HandleLobbyReady()
     {
+        MultiplayerDebug.LogParty($"HandleLobbyReady members={_members.Count} → PublishLocalMemberData");
         _steamParty?.PublishLocalMemberData(this);
     }
 
@@ -70,6 +71,7 @@ public sealed class PartyManager
             owningSteamId: owningSteamId);
         keyboardMember.IsLeader = true;
         _members.Add(keyboardMember);
+        MultiplayerDebug.LogParty($"PartyCreated leader='{keyboardMember.DisplayName}' steam={owningSteamId}");
         NotifyChanged();
     }
 
@@ -77,10 +79,12 @@ public sealed class PartyManager
     {
         if (_steamLobby is null || !_steamLobby.IsAvailable)
         {
+            MultiplayerDebug.LogParty("EnsureSteamParty → offline default party");
             EnsureDefaultParty();
             return;
         }
 
+        MultiplayerDebug.LogParty($"EnsureSteamParty → EnsurePartyLobby available members={_members.Count}");
         _steamLobby.EnsurePartyLobby();
     }
 
@@ -141,6 +145,13 @@ public sealed class PartyManager
     {
         AssignmentsLocked = true;
         AssignNetworkPlayerIds();
+        MultiplayerDebug.LogParty($"LockAssignments count={_members.Count}");
+        foreach (PartyMember member in _members)
+        {
+            MultiplayerDebug.LogParty(
+                $"  assign '{member.DisplayName}' NetworkId={member.NetworkPlayerId} OwnerId={member.OwnerId} " +
+                $"{(member.IsLocallyOwned ? "LOCAL" : "REMOTE")}");
+        }
     }
 
     public bool TryAssignInput(PartyMemberId memberId, PartyInputSource source, int controllerId = -1)
@@ -318,9 +329,13 @@ public sealed class PartyManager
     {
         if (AssignmentsLocked)
         {
+            MultiplayerDebug.LogWarn(
+                $"RebuildFromRoster SKIPPED — assignments locked (in gameplay). entries={entries.Count} dropped.");
             return;
         }
 
+        ulong previousLeaderSteamId = Leader?.OwningSteamId ?? 0;
+        int previousCount = _members.Count;
         _members.Clear();
         foreach (PartyRosterEntry entry in entries)
         {
@@ -357,6 +372,20 @@ public sealed class PartyManager
         }
 
         RefreshLocalDisplayNames();
+        if (_members.Count > previousCount)
+        {
+            MultiplayerDebug.LogParty($"PartyMemberAdded (roster) {previousCount}->{_members.Count}");
+        }
+        else if (_members.Count < previousCount)
+        {
+            MultiplayerDebug.LogParty($"PartyMemberRemoved (roster) {previousCount}->{_members.Count}");
+        }
+
+        if (previousLeaderSteamId != 0 && previousLeaderSteamId != leaderSteamId)
+        {
+            MultiplayerDebug.LogParty($"PartyLeaderChanged {previousLeaderSteamId}->{leaderSteamId}");
+        }
+
         NotifyChanged();
     }
 
@@ -417,6 +446,8 @@ public sealed class PartyManager
             owningSteamId: owningSteamId);
         _members.Add(member);
         RefreshLocalDisplayNames();
+        MultiplayerDebug.LogParty(
+            $"PartyMemberAdded '{member.DisplayName}' gamepad={controllerIndex} members={_members.Count}");
         PublishLocalState();
         NotifyChanged();
         return true;
@@ -466,6 +497,8 @@ public sealed class PartyManager
 
             _members.RemoveAt(i);
             RefreshLocalDisplayNames();
+            MultiplayerDebug.LogParty(
+                $"PartyMemberRemoved gamepad={controllerIndex} members={_members.Count}");
             PublishLocalState();
             NotifyChanged();
             return true;
@@ -556,6 +589,7 @@ public sealed class PartyManager
 
     private void NotifyChanged()
     {
+        MultiplayerDebug.LogParty($"PartyUpdated members={_members.Count} locked={AssignmentsLocked}");
         Changed?.Invoke();
     }
 

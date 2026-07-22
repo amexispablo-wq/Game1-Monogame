@@ -36,6 +36,7 @@ public sealed class LevelSelectScene : IScene
     private GridLayout _gridLayout = null!;
     private int? _selectedIndex;
     private Popup? _popup;
+    private AlertPopup? _alertPopup;
     private LevelSelectPopupKind _popupKind;
     private LevelSource _activeTab;
     private bool _importOfficialPickerOpen;
@@ -288,6 +289,17 @@ public sealed class LevelSelectScene : IScene
     {
         LayoutButtons();
         RefreshGridLayout();
+
+        if (_alertPopup != null)
+        {
+            _alertPopup.Update(gameTime, _game.Input, _game.Viewport.Width, _game.Viewport.Height);
+            if (_alertPopup.IsDismissed)
+            {
+                _alertPopup = null;
+            }
+
+            return;
+        }
 
         if (_popup != null)
         {
@@ -682,6 +694,13 @@ public sealed class LevelSelectScene : IScene
         {
             spriteBatch.Begin(samplerState: SamplerState.PointClamp);
             _popup.Draw(gameTime, spriteBatch, pixel);
+            spriteBatch.End();
+        }
+
+        if (_alertPopup != null)
+        {
+            spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+            _alertPopup.Draw(spriteBatch, pixel, viewport.Width, viewport.Height, gameTime, _game.Input);
             spriteBatch.End();
         }
     }
@@ -1117,6 +1136,7 @@ public sealed class LevelSelectScene : IScene
             s_playerCollisionEnabled = _playerCollisionCheckbox?.IsChecked ?? s_playerCollisionEnabled;
             s_ghostBestRunEnabled = _ghostBestRunCheckbox?.IsChecked ?? s_ghostBestRunEnabled;
 
+            MultiplayerDebug.LogSim($"PlayPressed level={levelId} mode={_mode}");
             if (_game.SteamLobby.IsInLobby)
             {
                 if (!_game.Party.IsLeader)
@@ -1124,7 +1144,24 @@ public sealed class LevelSelectScene : IScene
                     return;
                 }
 
-                _game.SteamLobby.BroadcastLevelStart(levelId, s_selectedRopeMode, s_lavaRiseEnabled);
+                MultiplayerDebug.LogSim(
+                    $"HOST PRESSED PLAY level={levelId} partyMembers={_game.Party.Members.Count} " +
+                    $"lobbyMembers={_game.SteamLobby.GetLobbyMemberCount()} " +
+                    "(no session handshake exists — each peer spawns from its OWN party roster)");
+                foreach (PartyMember member in _game.Party.Members)
+                {
+                    MultiplayerDebug.LogSim(
+                        $"  start-roster '{member.DisplayName}' {(member.IsLocallyOwned ? "LOCAL" : "REMOTE")} " +
+                        $"type={member.MemberType} steam={member.OwningSteamId}");
+                }
+
+                if (!_game.SteamLobby.BroadcastLevelStart(levelId, s_selectedRopeMode, s_lavaRiseEnabled))
+                {
+                    _alertPopup = new AlertPopup(
+                        "VERSION MISMATCH",
+                        $"Host: {SessionDiagnostics.HostBuildLabel} Client: {SessionDiagnostics.ClientBuildLabel}");
+                    return;
+                }
             }
 
             _game.ChangeScene(new GameScene(
@@ -1236,6 +1273,22 @@ public sealed class LevelSelectScene : IScene
     {
         if (_mode != LevelSelectMode.PlayMode)
         {
+            return;
+        }
+
+        MultiplayerDebug.LogSim(
+            $"CLIENT START RECEIVED level={message.LevelId} partyMembers={_game.Party.Members.Count} " +
+            $"lobbyMembers={_game.SteamLobby.GetLobbyMemberCount()}");
+        foreach (PartyMember member in _game.Party.Members)
+        {
+            MultiplayerDebug.LogSim(
+                $"  start-roster '{member.DisplayName}' {(member.IsLocallyOwned ? "LOCAL" : "REMOTE")} " +
+                $"type={member.MemberType} steam={member.OwningSteamId}");
+        }
+
+        if (!MultiplayerStartGate.ValidateClientStart(_game.SteamLobby, message, out string title, out string error))
+        {
+            _alertPopup = new AlertPopup(title, error);
             return;
         }
 

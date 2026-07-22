@@ -25,6 +25,9 @@ public sealed class LevelData
     [JsonPropertyName("playerSpawn")]
     public Vector2Data PlayerSpawn { get; set; } = new() { X = 100f, Y = 300f };
 
+    [JsonPropertyName("playerSpawnColor")]
+    public GameColor PlayerSpawnColor { get; set; } = GameColor.Red;
+
     [JsonPropertyName("musicId")]
     public string MusicId { get; set; } = LevelMusicLibrary.DefaultMusicId;
 

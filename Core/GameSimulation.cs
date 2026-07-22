@@ -39,6 +39,10 @@ public sealed class GameSimulation
 
         PlayerCollisionEnabled = playerCollisionEnabled;
         LastSnapshot = CreateSnapshot(SimulationTick.Zero);
+        MultiplayerDebug.LogSim(
+            $"GameSimulation ctor role={session.Role} state={session.State} " +
+            $"players={Players.Count} ropes={Ropes.Count} tickRate={TickRate.TicksPerSecond} " +
+            $"snapshotSeq={LastSnapshot.Sequence}");
     }
 
     public Level Level { get; }
@@ -64,6 +68,7 @@ public sealed class GameSimulation
     public bool IsPaused { get; private set; }
     public int SnapshotCount { get; private set; }
     public GameSnapshot LastSnapshot { get; private set; }
+    public bool RecordProgress { get; set; } = true;
 
     public int Advance(float frameSeconds, ILocalPlayerInputSource localInputSource)
     {
@@ -71,6 +76,8 @@ public sealed class GameSimulation
         {
             return 0;
         }
+
+        MultiplayerDebug.LogSimulationStartedOnce(_session, this);
 
         // Latch edge-triggered inputs every render frame so presses survive until a
         // fixed tick consumes them. Without this, at high/unlocked FPS most render
@@ -175,10 +182,18 @@ public sealed class GameSimulation
 
     public void ApplySnapshot(GameSnapshot snapshot)
     {
+        MultiplayerDebug.LogSnapshotConsumeStartedOnce(_session, snapshot.Sequence, snapshot.Tick);
+        MultiplayerDebug.ValidateEntityCountsFromSnapshot(this, snapshot);
         foreach (PlayerSnapshot playerSnapshot in snapshot.Players)
         {
             Player? player = FindPlayer(playerSnapshot.NetworkId);
-            player?.ApplySnapshot(playerSnapshot);
+            if (player is null)
+            {
+                MultiplayerDebug.RecordMissingPlayerSnapshot(playerSnapshot.NetworkId);
+                continue;
+            }
+
+            player.ApplySnapshot(playerSnapshot);
         }
 
         UpdateMotionTrails(TickRate.FixedDeltaSeconds);
@@ -186,7 +201,14 @@ public sealed class GameSimulation
         foreach (RopeSnapshot ropeSnapshot in snapshot.Ropes)
         {
             Rope? rope = FindRope(ropeSnapshot.NetworkId);
-            rope?.ApplySnapshot(ropeSnapshot);
+            if (rope is null)
+            {
+                MultiplayerDebug.RecordMissingRopeSnapshot(ropeSnapshot.NetworkId);
+                continue;
+            }
+
+            rope.ApplySnapshot(ropeSnapshot);
+            MultiplayerDebug.LogRopeReplicatedOnce(ropeSnapshot.NetworkId);
         }
 
         ElapsedTime = snapshot.Timer.ElapsedTime;
@@ -197,6 +219,8 @@ public sealed class GameSimulation
         LastSnapshot = snapshot;
         SnapshotCount = Math.Max(SnapshotCount, snapshot.Sequence);
         CurrentTick = new SimulationTick(Math.Max(CurrentTick.Value, snapshot.Tick));
+        MultiplayerDebug.RecordSnapshotApplied();
+        MultiplayerDebug.LogSimulationStartedOnce(_session, this);
     }
 
     private void StepFixedTick()
@@ -328,14 +352,22 @@ public sealed class GameSimulation
         IsLevelComplete = true;
         FinalTime = BestTimeStorage.RoundToCentiseconds(ElapsedTime);
         ElapsedTime = FinalTime;
-        bool official = LevelRules.IsOfficialPlaySettings(
-            Level,
-            _session.RopeGameplayMode,
-            LavaRiseEnabled,
-            PlayerCollisionEnabled,
-            Players.Count);
-        bool savedRecord = BestTimeStorage.SaveIfRecord(_session.SelectedLevelId, FinalTime, official);
-        NewRecord = official && savedRecord;
+        if (RecordProgress)
+        {
+            bool official = LevelRules.IsOfficialPlaySettings(
+                Level,
+                _session.RopeGameplayMode,
+                LavaRiseEnabled,
+                PlayerCollisionEnabled,
+                Players.Count);
+            bool savedRecord = BestTimeStorage.SaveIfRecord(_session.SelectedLevelId, FinalTime, official);
+            NewRecord = official && savedRecord;
+        }
+        else
+        {
+            NewRecord = false;
+        }
+
         _session.State = GameSessionState.Completed;
         GameAudio.PlayForce(SfxManager.LevelComplete);
         GameAudio.SetPullRopeLoop(false);

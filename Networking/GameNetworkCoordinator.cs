@@ -8,6 +8,7 @@ public sealed class GameNetworkCoordinator
     private readonly SteamGameNetworkService _transport;
     private readonly SteamLobbyService _lobby;
     private readonly Dictionary<int, PlayerInputState> _clientLatchedInput = new();
+    private bool _onlineSessionLogged;
 
     public GameNetworkCoordinator(
         SteamGameNetworkService transport,
@@ -29,14 +30,25 @@ public sealed class GameNetworkCoordinator
             return;
         }
 
+        if (!_onlineSessionLogged)
+        {
+            _onlineSessionLogged = true;
+            MultiplayerDebug.LogNet(
+                $"Online session pump START role={session.Role} localOwner={session.LocalOwnerId} " +
+                $"lobby={_lobby.CurrentLobbyId}");
+        }
+
         foreach (ReceivedNetworkPacket packet in _transport.ReceiveAll())
         {
+            MultiplayerDebug.RecordPacketReceived(packet.IsSnapshot, packet.Payload.Length);
             if (!NetworkPacketCodec.TryDecode(
                     packet.Payload,
                     out NetworkPacketType packetType,
                     out InputFrame? inputFrame,
                     out GameSnapshot? snapshot))
             {
+                MultiplayerDebug.LogWarn(
+                    $"Decode fail from sid={packet.SenderSteamId} bytes={packet.Payload.Length} snapshot={packet.IsSnapshot}");
                 continue;
             }
 
@@ -44,12 +56,18 @@ public sealed class GameNetworkCoordinator
             {
                 inputFrame.Tick = simulation.CurrentTick.Value;
                 simulation.InputBuffer.StoreFrame(inputFrame);
+                MultiplayerDebug.LogNet(
+                    $"Host recv InputFrame from sid={packet.SenderSteamId} owner={inputFrame.OwnerId} " +
+                    $"players={inputFrame.PlayerInputs.Count} → tick={inputFrame.Tick}");
                 continue;
             }
 
             if (!session.IsHost && packetType == NetworkPacketType.GameSnapshot && snapshot is not null)
             {
                 _latestClientSnapshot = snapshot;
+                MultiplayerDebug.LogNet(
+                    $"Client latch GameSnapshot seq={snapshot.Sequence} tick={snapshot.Tick} " +
+                    $"players={snapshot.Players.Count} ropes={snapshot.Ropes.Count}");
             }
         }
     }
@@ -66,7 +84,13 @@ public sealed class GameNetworkCoordinator
         ulong hostSteamId = _lobby.GetLobbyOwnerSteamId();
         if (hostSteamId != 0 && hostSteamId != _lobby.LocalSteamId)
         {
-            _transport.SendToUser(hostSteamId, payload, snapshot: false);
+            if (_transport.SendToUser(hostSteamId, payload, snapshot: false))
+            {
+                MultiplayerDebug.RecordPacketSent(snapshot: false, payload.Length);
+                MultiplayerDebug.LogNet(
+                    $"Client send InputFrame → host={hostSteamId} owner={frame.OwnerId} " +
+                    $"players={frame.PlayerInputs.Count} tick={frame.Tick}");
+            }
         }
     }
 
@@ -78,6 +102,7 @@ public sealed class GameNetworkCoordinator
         }
 
         byte[] payload = NetworkPacketCodec.EncodeGameplaySnapshot(snapshot);
+        int sent = 0;
         foreach (LobbyMemberInfo member in _lobby.GetLobbyMembers())
         {
             if (member.SteamId == 0 || member.SteamId == _lobby.LocalSteamId)
@@ -85,7 +110,18 @@ public sealed class GameNetworkCoordinator
                 continue;
             }
 
-            _transport.SendToUser(member.SteamId, payload, snapshot: true);
+            if (_transport.SendToUser(member.SteamId, payload, snapshot: true))
+            {
+                MultiplayerDebug.RecordPacketSent(snapshot: true, payload.Length);
+                sent++;
+            }
+        }
+
+        if (sent > 0)
+        {
+            MultiplayerDebug.LogNet(
+                $"Host BroadcastSnapshot seq={snapshot.Sequence} tick={snapshot.Tick} " +
+                $"recipients={sent} players={snapshot.Players.Count} ropes={snapshot.Ropes.Count}");
         }
     }
 
@@ -106,7 +142,10 @@ public sealed class GameNetworkCoordinator
     {
         _latestClientSnapshot = null;
         _clientLatchedInput.Clear();
+        _onlineSessionLogged = false;
         _transport.CloseAllSessions();
+        MultiplayerDebug.LogNet("GameNetworkCoordinator.Reset");
+        MultiplayerDebug.ResetSessionCounters();
     }
 
     public string GetOnlineRoleLabel(GameSession session) =>

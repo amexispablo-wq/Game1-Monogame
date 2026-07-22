@@ -10,6 +10,7 @@ public sealed class SteamLobbyService
 {
     private readonly SteamManager _steam;
     private readonly SteamCallbackManager _callbacks;
+    private readonly HashSet<ulong> _buildMismatchNotified = new();
     private CSteamID _currentLobby;
     private bool _isCreatingLobby;
 
@@ -130,10 +131,12 @@ public sealed class SteamLobbyService
 
         if (IsInLobby || _isCreatingLobby)
         {
+            MultiplayerDebug.LogLobby($"EnsurePartyLobby skip (inLobby={IsInLobby} creating={_isCreatingLobby})");
             return;
         }
 
         _isCreatingLobby = true;
+        MultiplayerDebug.LogLobby($"CreateLobby friends-only max={SteamConstants.MaxLobbyPlayers}");
         SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypeFriendsOnly, SteamConstants.MaxLobbyPlayers);
     }
 
@@ -151,6 +154,7 @@ public sealed class SteamLobbyService
             return;
         }
 
+        MultiplayerDebug.LogLobby($"JoinLobby request id={lobbyId}");
         SteamMatchmaking.JoinLobby(new CSteamID(lobbyId));
     }
 
@@ -197,6 +201,7 @@ public sealed class SteamLobbyService
     {
         if (!IsInLobby)
         {
+            MultiplayerDebug.LogLobby($"SetLocalMemberData '{key}' DROPPED — not in lobby");
             return;
         }
 
@@ -216,6 +221,8 @@ public sealed class SteamLobbyService
 
         SetLobbyData(SteamConstants.LobbyDataPartyVersion, SteamConstants.PartyVersion.ToString());
         SetLobbyData(SteamConstants.LobbyDataGameVersion, SteamConstants.GameVersion);
+        SetLobbyData(SteamConstants.LobbyDataBuildGuid, BuildInfo.Current.BuildGuid);
+        SetLobbyData(SteamConstants.LobbyDataGitCommit, BuildInfo.Current.GitCommit);
         if (!string.IsNullOrEmpty(levelId))
         {
             SetLobbyData(SteamConstants.LobbyDataLevel, levelId);
@@ -228,35 +235,165 @@ public sealed class SteamLobbyService
 
     public void PublishPartyRoster(string rosterData)
     {
+        if (!IsInLobby || !IsLobbyOwner())
+        {
+            MultiplayerDebug.LogWarn(
+                $"PublishPartyRoster DROPPED — inLobby={IsInLobby} owner={IsLobbyOwner()}");
+        }
+
         SetLobbyData(SteamConstants.LobbyDataPartyRoster, rosterData);
     }
 
     public bool ValidateLobbyVersion()
     {
-        string? gameVersion = GetLobbyData(SteamConstants.LobbyDataGameVersion);
-        if (!string.IsNullOrEmpty(gameVersion)
-            && !string.Equals(gameVersion, SteamConstants.GameVersion, StringComparison.Ordinal))
+        if (TryGetHostBuildMismatch(out string mismatchMessage))
         {
-            ErrorOccurred?.Invoke(
-                SteamPartyError.VersionMismatch,
-                $"Version mismatch. Lobby: {gameVersion}, Local: {SteamConstants.GameVersion}");
+            ErrorOccurred?.Invoke(SteamPartyError.VersionMismatch, mismatchMessage);
             return false;
         }
 
         return true;
     }
 
-    public void BroadcastLevelStart(string levelId, RopeGameplayMode ropeMode, bool lavaRiseEnabled)
+    /// <summary>
+    /// Build handshake (client side): compares the host's GameVersion / Build GUID / Git Commit
+    /// (published as lobby data) with this build. Any difference is a mismatch.
+    /// </summary>
+    public bool TryGetHostBuildMismatch(out string mismatchMessage)
+    {
+        mismatchMessage = string.Empty;
+        string? hostVersion = GetLobbyData(SteamConstants.LobbyDataGameVersion);
+        string? hostGuid = GetLobbyData(SteamConstants.LobbyDataBuildGuid);
+        string? hostCommit = GetLobbyData(SteamConstants.LobbyDataGitCommit);
+        BuildInfo local = BuildInfo.Current;
+
+        bool anyPublished = !string.IsNullOrEmpty(hostVersion)
+            || !string.IsNullOrEmpty(hostGuid)
+            || !string.IsNullOrEmpty(hostCommit);
+        if (!anyPublished)
+        {
+            return false;
+        }
+
+        bool mismatch =
+            (!string.IsNullOrEmpty(hostVersion) && !string.Equals(hostVersion, local.GameVersion, StringComparison.Ordinal))
+            || (!string.IsNullOrEmpty(hostGuid) && !string.Equals(hostGuid, local.BuildGuid, StringComparison.Ordinal))
+            || (!string.IsNullOrEmpty(hostCommit) && !string.Equals(hostCommit, local.GitCommit, StringComparison.Ordinal));
+
+        string hostLabel = FormatBuildLabel(hostVersion, hostGuid);
+        if (!IsLobbyOwner())
+        {
+            SessionDiagnostics.RecordBuildHandshake(hostLabel, local.Label, !mismatch);
+        }
+
+        MultiplayerDebug.LogLobby(
+            $"BuildHandshake host={hostVersion}/{hostGuid}/{hostCommit} " +
+            $"local={local.GameVersion}/{local.BuildGuid}/{local.GitCommit} match={!mismatch}");
+
+        if (!mismatch)
+        {
+            return false;
+        }
+
+        mismatchMessage = $"Version mismatch detected. Host: {hostLabel} Client: {local.Label}";
+        MultiplayerDebug.LogError(
+            "BuildHandshake",
+            $"Version mismatch detected. Host: {hostVersion} ({hostGuid}) commit={hostCommit} " +
+            $"Client: {local.GameVersion} ({local.BuildGuid}) commit={local.GitCommit}");
+        return true;
+    }
+
+    /// <summary>
+    /// Build handshake (host side): every member publishes its build via member data.
+    /// Returns true when a member's build differs from the host build.
+    /// </summary>
+    public bool ValidateMemberBuilds()
     {
         if (!IsInLobby || !IsLobbyOwner())
         {
-            return;
+            return false;
+        }
+
+        BuildInfo local = BuildInfo.Current;
+        bool anyMismatch = false;
+        foreach (LobbyMemberInfo member in GetLobbyMembers())
+        {
+            if (member.SteamId == LocalSteamId)
+            {
+                continue;
+            }
+
+            string? token = GetLobbyMemberData(member.SteamId, SteamConstants.LobbyMemberDataBuild);
+            if (string.IsNullOrEmpty(token))
+            {
+                continue;
+            }
+
+            string[] parts = token.Split('|');
+            string clientVersion = parts.Length > 0 ? parts[0] : "?";
+            string clientGuid = parts.Length > 1 ? parts[1] : "?";
+            string clientCommit = parts.Length > 2 ? parts[2] : "?";
+            bool match = string.Equals(token, local.HandshakeToken, StringComparison.Ordinal);
+            string clientLabel = FormatBuildLabel(clientVersion, clientGuid);
+            SessionDiagnostics.RecordBuildHandshake(local.Label, clientLabel, match);
+
+            if (match)
+            {
+                _buildMismatchNotified.Remove(member.SteamId);
+                continue;
+            }
+
+            anyMismatch = true;
+            if (_buildMismatchNotified.Add(member.SteamId))
+            {
+                MultiplayerDebug.LogError(
+                    "BuildHandshake",
+                    $"Version mismatch detected. Host: {local.GameVersion} ({local.BuildGuid}) commit={local.GitCommit} " +
+                    $"Client '{member.DisplayName}': {clientVersion} ({clientGuid}) commit={clientCommit}");
+                ErrorOccurred?.Invoke(
+                    SteamPartyError.VersionMismatch,
+                    $"Version mismatch detected. Host: {local.Label} Client: {clientLabel}");
+            }
+        }
+
+        return anyMismatch;
+    }
+
+    /// <summary>Returns false when the start was cancelled (e.g. build mismatch across peers).</summary>
+    public bool BroadcastLevelStart(string levelId, RopeGameplayMode ropeMode, bool lavaRiseEnabled)
+    {
+        if (!IsInLobby || !IsLobbyOwner())
+        {
+            return true;
+        }
+
+        MultiplayerDebug.LogLobby($"StartLevelRequested level={levelId} members={GetLobbyMemberCount()}");
+        if (ValidateMemberBuilds())
+        {
+            MultiplayerDebug.LogError("BuildHandshake", "StartLevelRequested CANCELLED — build mismatch in lobby");
+            return false;
         }
 
         PublishLobbySettings(levelId, ropeMode, lavaRiseEnabled);
-        string message = $"{SteamConstants.ChatPrefixStart}{levelId}|{(int)ropeMode}|{(lavaRiseEnabled ? 1 : 0)}";
+        string levelHash = SessionDiagnostics.ComputeLevelHash(levelId);
+        SetLobbyData(SteamConstants.LobbyDataLevelHash, levelHash);
+        SessionDiagnostics.RecordLevelHashes(levelHash, levelHash);
+        string message =
+            $"{SteamConstants.ChatPrefixStart}{levelId}|{(int)ropeMode}|{(lavaRiseEnabled ? 1 : 0)}|{levelHash}";
         byte[] bytes = Encoding.UTF8.GetBytes(message);
+        MultiplayerDebug.LogLobby(
+            $"BroadcastLevelStart level={levelId} rope={ropeMode} lava={lavaRiseEnabled} " +
+            $"hash={SessionDiagnostics.ShortHash(levelHash)} members={GetLobbyMemberCount()}");
         SteamMatchmaking.SendLobbyChatMsg(_currentLobby, bytes, bytes.Length);
+        return true;
+    }
+
+    private static string FormatBuildLabel(string? version, string? buildGuid)
+    {
+        string shortId = string.IsNullOrEmpty(buildGuid)
+            ? "??????"
+            : (buildGuid.Length >= 6 ? buildGuid[..6] : buildGuid);
+        return $"{(string.IsNullOrEmpty(version) ? "?" : version)} ({shortId})";
     }
 
     public void RefreshMetadataFromLobby()
@@ -285,7 +422,14 @@ public sealed class SteamLobbyService
         }
 
         _currentLobby = new CSteamID(callback.m_ulSteamIDLobby);
+        MultiplayerDebug.LogLobby($"OnLobbyCreated ok id={_currentLobby.m_SteamID}");
+
+        string sessionId = DiagnosticsLog.CreateSessionId(_currentLobby.m_SteamID);
+        SetLobbyData(SteamConstants.LobbyDataSessionId, sessionId);
+        DiagnosticsLog.SetSessionId(sessionId);
+
         InitializeLobbyDefaults();
+        PublishLocalBuildInfo();
         LobbyStateChanged?.Invoke();
         LobbyReady?.Invoke();
     }
@@ -295,6 +439,7 @@ public sealed class SteamLobbyService
         _isCreatingLobby = false;
         if ((EChatRoomEnterResponse)callback.m_EChatRoomEnterResponse != EChatRoomEnterResponse.k_EChatRoomEnterResponseSuccess)
         {
+            MultiplayerDebug.LogLobby($"OnLobbyEnter FAIL response={callback.m_EChatRoomEnterResponse}");
             ErrorOccurred?.Invoke(SteamPartyError.JoinFailed, $"Join failed: {callback.m_EChatRoomEnterResponse}");
             return;
         }
@@ -302,6 +447,7 @@ public sealed class SteamLobbyService
         _currentLobby = new CSteamID(callback.m_ulSteamIDLobby);
         if (!ValidateLobbyVersion())
         {
+            MultiplayerDebug.LogLobby($"OnLobbyEnter version mismatch → leave id={_currentLobby.m_SteamID}");
             LeaveLobby();
             return;
         }
@@ -315,10 +461,30 @@ public sealed class SteamLobbyService
             return;
         }
 
+        MultiplayerDebug.LogLobby(
+            $"OnLobbyEnter ok id={_currentLobby.m_SteamID} members={memberCount}/{memberLimit} local={LocalSteamId}");
+        AdoptLobbySessionId();
+        PublishLocalBuildInfo();
+        LogLobbyMemberList("enter");
         UpdateRichPresence();
         RefreshMetadataFromLobby();
         LobbyStateChanged?.Invoke();
         LobbyReady?.Invoke();
+    }
+
+    /// <summary>Client reply half of the build handshake: publish this build as lobby member data.</summary>
+    private void PublishLocalBuildInfo()
+    {
+        SetLocalMemberData(SteamConstants.LobbyMemberDataBuild, BuildInfo.Current.HandshakeToken);
+    }
+
+    private void AdoptLobbySessionId()
+    {
+        string? sessionId = GetLobbyData(SteamConstants.LobbyDataSessionId);
+        if (!string.IsNullOrEmpty(sessionId))
+        {
+            DiagnosticsLog.SetSessionId(sessionId);
+        }
     }
 
     private void OnLobbyChatUpdate(LobbyChatUpdate_t callback)
@@ -329,6 +495,8 @@ public sealed class SteamLobbyService
         }
 
         EChatMemberStateChange state = (EChatMemberStateChange)callback.m_rgfChatMemberStateChange;
+        MultiplayerDebug.LogLobby(
+            $"OnLobbyChatUpdate user={callback.m_ulSteamIDUserChanged} state={state} members={GetLobbyMemberCount()}");
         if (state.HasFlag(EChatMemberStateChange.k_EChatMemberStateChangeLeft)
             || state.HasFlag(EChatMemberStateChange.k_EChatMemberStateChangeDisconnected)
             || state.HasFlag(EChatMemberStateChange.k_EChatMemberStateChangeKicked)
@@ -337,6 +505,7 @@ public sealed class SteamLobbyService
             MemberLeft?.Invoke(callback.m_ulSteamIDUserChanged);
         }
 
+        LogLobbyMemberList("chat-update");
         LobbyStateChanged?.Invoke();
     }
 
@@ -348,9 +517,15 @@ public sealed class SteamLobbyService
         }
 
         RefreshMetadataFromLobby();
+        AdoptLobbySessionId();
+        ValidateMemberBuilds();
 
         bool isLobbyMetadata = callback.m_ulSteamIDMember == callback.m_ulSteamIDLobby;
-        if (isLobbyMetadata || IsLobbyOwner())
+        bool willFire = isLobbyMetadata || IsLobbyOwner();
+        MultiplayerDebug.LogLobby(
+            $"OnLobbyDataUpdate source={(isLobbyMetadata ? "LOBBY-METADATA" : $"MEMBER {callback.m_ulSteamIDMember}")} " +
+            $"→ LobbyStateChanged={(willFire ? "FIRE" : "SUPPRESSED (non-owner ignores member-data updates)")}");
+        if (willFire)
         {
             LobbyStateChanged?.Invoke();
         }
@@ -358,11 +533,15 @@ public sealed class SteamLobbyService
 
     private void OnLobbyInvite(LobbyInvite_t callback)
     {
+        MultiplayerDebug.LogLobby(
+            $"InviteReceived lobby={callback.m_ulSteamIDLobby} from={callback.m_ulSteamIDUser}");
         JoinLobby(callback.m_ulSteamIDLobby);
     }
 
     private void OnGameLobbyJoinRequested(GameLobbyJoinRequested_t callback)
     {
+        MultiplayerDebug.LogLobby(
+            $"InviteAccepted lobby={callback.m_steamIDLobby.m_SteamID} friend={callback.m_steamIDFriend.m_SteamID}");
         JoinLobby(callback.m_steamIDLobby.m_SteamID);
     }
 
@@ -452,7 +631,24 @@ public sealed class SteamLobbyService
             return;
         }
 
-        LevelStartReceived?.Invoke(new PartyStartMessage(parts[0], (RopeGameplayMode)ropeMode, lavaRise == 1));
+        string? levelHash = parts.Length >= 4 && !string.IsNullOrWhiteSpace(parts[3]) ? parts[3] : null;
+        LevelStartReceived?.Invoke(
+            new PartyStartMessage(parts[0], (RopeGameplayMode)ropeMode, lavaRise == 1, levelHash));
+        MultiplayerDebug.LogLobby(
+            $"StartLevelReceived level={parts[0]} rope={(RopeGameplayMode)ropeMode} lava={lavaRise == 1} " +
+            $"hash={SessionDiagnostics.ShortHash(levelHash ?? string.Empty)}");
+    }
+
+    private void LogLobbyMemberList(string reason)
+    {
+        IReadOnlyList<LobbyMemberInfo> members = GetLobbyMembers();
+        MultiplayerDebug.LogLobby($"MemberList ({reason}) count={members.Count}");
+        foreach (LobbyMemberInfo member in members)
+        {
+            string owner = member.IsOwner ? " OWNER" : string.Empty;
+            string self = member.SteamId == LocalSteamId ? " YOU" : string.Empty;
+            MultiplayerDebug.LogLobby($"  member '{member.DisplayName}' sid={member.SteamId}{owner}{self}");
+        }
     }
 
     private void InitializeLobbyDefaults()
@@ -478,6 +674,9 @@ public sealed class SteamLobbyService
         CurrentLevelId = null;
         CurrentLavaRiseEnabled = false;
         CurrentRopeMode = RopeGameplayMode.ColoredPhysics;
+        _buildMismatchNotified.Clear();
+        DiagnosticsLog.ResetSessionId();
+        SessionDiagnostics.ResetSessionState();
         SteamFriends.SetRichPresence(SteamConstants.RichPresenceConnectKey, string.Empty);
         SteamFriends.SetRichPresence("steam_display", string.Empty);
     }

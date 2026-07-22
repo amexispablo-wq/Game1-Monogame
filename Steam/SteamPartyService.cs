@@ -33,6 +33,9 @@ public sealed class SteamPartyService
 
         string locals = PartyRosterCodec.SerializeLocalSlots(localMembers, localSteamId);
         _lobby.SetLocalMemberData(SteamConstants.LobbyMemberDataLocals, locals);
+        MultiplayerDebug.LogParty(
+            $"PublishLocalMemberData sid={localSteamId} localSlots={localMembers.Count} data='{locals}'" +
+            (localMembers.Count == 0 ? " ← EMPTY: this peer will appear as SteamRemote spectator in roster" : string.Empty));
     }
 
     public void PublishLocalPartyState(PartyManager party)
@@ -54,13 +57,21 @@ public sealed class SteamPartyService
         string rosterData = _lobby.GetLobbyData(SteamConstants.LobbyDataPartyRoster) ?? string.Empty;
         if (string.Equals(rosterData, _lastAppliedRoster, StringComparison.Ordinal))
         {
+            MultiplayerDebug.LogParty(
+                $"RebuildPartyFromLobby SKIPPED — roster unchanged (len={rosterData.Length}) while " +
+                $"lobbyMembers={_lobby.GetLobbyMemberCount()} partyMembers={party.Members.Count}. " +
+                "If a peer just joined, roster is now STALE (owner never republished).");
             return;
         }
 
         _lastAppliedRoster = rosterData;
         List<PartyRosterEntry> entries = PartyRosterCodec.Deserialize(rosterData);
+        MultiplayerDebug.LogParty(
+            $"RebuildPartyFromLobby rosterLen={rosterData.Length} entries={entries.Count} " +
+            $"lobbyMembers={_lobby.GetLobbyMemberCount()}");
         if (entries.Count == 0)
         {
+            MultiplayerDebug.LogParty("Empty roster → RebuildFromLobbyMembersOnly fallback");
             RebuildFromLobbyMembersOnly(party);
             if (_lobby.IsLobbyOwner())
             {
@@ -73,6 +84,14 @@ public sealed class SteamPartyService
         ulong localSteamId = _lobby.LocalSteamId;
         ulong leaderSteamId = _lobby.GetLobbyOwnerSteamId();
         party.RebuildFromRoster(entries, localSteamId, leaderSteamId);
+        MultiplayerDebug.LogParty(
+            $"Roster applied partyCount={party.Members.Count} local={localSteamId} leader={leaderSteamId}");
+        foreach (PartyMember member in party.Members)
+        {
+            MultiplayerDebug.LogParty(
+                $"  party '{member.DisplayName}' {(member.IsLocallyOwned ? "LOCAL" : "REMOTE")} " +
+                $"OWNER{member.OwnerId} TYPE {member.MemberType} steam={member.OwningSteamId}");
+        }
     }
 
     public void ResetSyncState()
@@ -92,12 +111,19 @@ public sealed class SteamPartyService
         string existing = _lobby.GetLobbyData(SteamConstants.LobbyDataPartyRoster) ?? string.Empty;
         if (string.Equals(existing, serialized, StringComparison.Ordinal))
         {
+            MultiplayerDebug.LogParty($"PublishAuthoritativeRoster SKIPPED — unchanged entries={entries.Count}");
             return;
         }
 
         _lobby.PublishPartyRoster(serialized);
         _lastAppliedRoster = serialized;
         _lobby.SetLobbyData(SteamConstants.LobbyDataLeaderSteam, _lobby.GetLobbyOwnerSteamId().ToString());
+        MultiplayerDebug.LogParty($"PublishAuthoritativeRoster entries={entries.Count} bytes={serialized.Length}");
+        foreach (PartyRosterEntry entry in entries)
+        {
+            MultiplayerDebug.LogParty(
+                $"  auth idx={entry.MemberIndex} '{entry.DisplayName}' ownerSteam={entry.OwningSteamId} type={entry.MemberType}");
+        }
     }
 
     private List<PartyRosterEntry> BuildAuthoritativeRoster(PartyManager party)

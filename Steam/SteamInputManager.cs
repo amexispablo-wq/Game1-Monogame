@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.IO;
+using System.Text;
 using Steamworks;
 
 namespace ColorBlocks;
@@ -12,6 +13,8 @@ namespace ColorBlocks;
 /// </summary>
 public sealed class SteamInputManager
 {
+    private static readonly TimeSpan DetectionRetryInterval = TimeSpan.FromSeconds(1);
+
     private readonly SteamManager _steam;
     private readonly InputHandle_t[] _connectedHandles = new InputHandle_t[Constants.STEAM_INPUT_MAX_COUNT];
     private readonly InputHandle_t[] _slotHandles = new InputHandle_t[InputManager.MaxLocalPlayers];
@@ -28,6 +31,9 @@ public sealed class SteamInputManager
     private Callback<SteamInputDeviceDisconnected_t>? _deviceDisconnected;
     private string _activeLayoutLabel = "—";
     private DateTime _lastLayoutRefreshUtc = DateTime.MinValue;
+    private DateTime _lastDetectionAttemptUtc = DateTime.MinValue;
+    private int _detectionRetryCount;
+    private bool _actionHandlesComplete;
 
     public SteamInputManager(SteamManager steam)
     {
@@ -49,36 +55,73 @@ public sealed class SteamInputManager
     public DateTime LastLayoutRefreshUtc => _lastLayoutRefreshUtc;
     public string GlyphSource => Glyphs.GlyphSource;
 
+    /// <summary>Human-readable pipeline status for diagnostics (F3 panel).</summary>
+    public string InitializationStatus { get; private set; } = "Not initialized";
+
+    /// <summary>How many 1s detection retries have run while no controller was connected.</summary>
+    public int DetectionRetryCount => _detectionRetryCount;
+
     public void Initialize()
     {
-        if (_isInitialized || !_steam.IsInitialized)
+        if (_isInitialized)
         {
             return;
         }
 
+        if (!_steam.IsInitialized)
+        {
+            InitializationStatus = $"SteamAPI.Init failed ({_steam.Status})";
+            SteamInputLog.Log($"Init skipped: SteamAPI not initialized ({_steam.Status})");
+            return;
+        }
+
+        SteamInputLog.Log("SteamAPI.Init OK — initializing Steam Input");
+
         try
         {
-            if (!SteamInput.Init(bExplicitlyCallRunFrame: true))
-            {
-                return;
-            }
-
+            // Manifest path must be registered before SteamInput.Init so Steam
+            // resolves in-game actions from the bundled VDF instead of Workshop.
             string manifestPath = Path.Combine(AppContext.BaseDirectory, "steam_input_manifest.vdf");
             if (File.Exists(manifestPath))
             {
-                SteamInput.SetInputActionManifestFilePath(manifestPath);
+                bool manifestOk = SteamInput.SetInputActionManifestFilePath(manifestPath);
+                SteamInputLog.Log($"SetInputActionManifestFilePath('{manifestPath}') -> {manifestOk}");
+            }
+            else
+            {
+                SteamInputLog.Log($"Manifest NOT FOUND at '{manifestPath}' — relying on Steam-side config");
             }
 
+            if (!SteamInput.Init(bExplicitlyCallRunFrame: true))
+            {
+                InitializationStatus = "SteamInput.Init returned false";
+                SteamInputLog.Log("SteamInput.Init FAILED (returned false)");
+                return;
+            }
+
+            SteamInputLog.Log("SteamInput.Init OK (explicit RunFrame mode)");
+
+            // Handles may resolve as 0 until Steam finishes loading the action
+            // manifest; the periodic tick re-caches until all are valid.
             CacheActionHandles();
             RegisterCallbacks();
-            RefreshConnectedControllers();
+            RefreshConnectedControllers(reason: "startup");
             _isInitialized = true;
+            InitializationStatus = "OK";
             _lastLayoutRefreshUtc = DateTime.UtcNow;
+            _lastDetectionAttemptUtc = DateTime.UtcNow;
             Glyphs.Invalidate();
+
+            if (_connectedCount == 0)
+            {
+                SteamInputLog.Log("No controllers at startup — retrying detection every 1s");
+            }
         }
         catch (Exception ex) when (IsRecoverableException(ex))
         {
             _isInitialized = false;
+            InitializationStatus = $"Init exception: {ex.GetType().Name}";
+            SteamInputLog.Log($"Init EXCEPTION: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -92,12 +135,14 @@ public sealed class SteamInputManager
         try
         {
             SteamInput.RunFrame();
-            RefreshConnectedControllers();
+            PeriodicDetectionTick();
             ActivateGameplaySetOnAll();
         }
         catch (Exception ex) when (IsRecoverableException(ex))
         {
             _isInitialized = false;
+            InitializationStatus = $"RunFrame exception: {ex.GetType().Name}";
+            SteamInputLog.Log($"RunFrame EXCEPTION: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -112,13 +157,16 @@ public sealed class SteamInputManager
         {
             UnregisterCallbacks();
             SteamInput.Shutdown();
+            SteamInputLog.Log("SteamInput.Shutdown OK");
         }
         catch (Exception ex) when (IsRecoverableException(ex))
         {
+            SteamInputLog.Log($"Shutdown EXCEPTION: {ex.GetType().Name}");
         }
         finally
         {
             _isInitialized = false;
+            InitializationStatus = "Shut down";
             _connectedCount = 0;
             Array.Clear(_connectedHandles, 0, _connectedHandles.Length);
             Array.Clear(_slotHandles, 0, _slotHandles.Length);
@@ -341,6 +389,78 @@ public sealed class SteamInputManager
 
     public void DumpActionOriginsToConsole() => Glyphs.DumpOriginsToConsole();
 
+    // ---- Diagnostics (F3 panel) ----
+
+    /// <summary>Raw slot-to-handle mapping value; 0 = unassigned.</summary>
+    public ulong GetSlotHandleRaw(int localPlayerSlot) => GetHandleForSlot(localPlayerSlot).m_InputHandle;
+
+    public ulong GameplayActionSetRaw => _gameplaySet.m_InputActionSetHandle;
+
+    /// <summary>Comma-separated action names whose handles resolved to 0. Empty when all valid.</summary>
+    public string GetMissingActionSummary()
+    {
+        StringBuilder? sb = null;
+        void Append(string name)
+        {
+            sb ??= new StringBuilder();
+            if (sb.Length > 0)
+            {
+                sb.Append(", ");
+            }
+
+            sb.Append(name);
+        }
+
+        if (_gameplaySet.m_InputActionSetHandle == 0)
+        {
+            Append($"set:{SteamInputActionNames.ActionSetGameplay}");
+        }
+
+        for (int i = 0; i < _digitalNames.Length; i++)
+        {
+            if (_digitalHandles[i].m_InputDigitalActionHandle == 0)
+            {
+                Append(_digitalNames[i]);
+            }
+        }
+
+        for (int i = 0; i < _analogNames.Length; i++)
+        {
+            if (_analogHandles[i].m_InputAnalogActionHandle == 0)
+            {
+                Append(_analogNames[i]);
+            }
+        }
+
+        return sb?.ToString() ?? string.Empty;
+    }
+
+    /// <summary>Compact snapshot of pressed digital actions for one slot, e.g. "Jump ColorRed".</summary>
+    public string GetDigitalStateSummary(int localPlayerSlot)
+    {
+        if (!_isInitialized || GetSlotHandleRaw(localPlayerSlot) == 0)
+        {
+            return string.Empty;
+        }
+
+        StringBuilder? sb = null;
+        for (int i = 0; i < _digitalNames.Length; i++)
+        {
+            if (GetDigital(localPlayerSlot, _digitalNames[i]))
+            {
+                sb ??= new StringBuilder();
+                if (sb.Length > 0)
+                {
+                    sb.Append(' ');
+                }
+
+                sb.Append(_digitalNames[i]);
+            }
+        }
+
+        return sb?.ToString() ?? string.Empty;
+    }
+
     public static SteamInputControllerType ToControllerType(ESteamInputType type) => type switch
     {
         ESteamInputType.k_ESteamInputType_XBox360Controller
@@ -371,6 +491,36 @@ public sealed class SteamInputManager
         _ => "Gamepad"
     };
 
+    private void PeriodicDetectionTick()
+    {
+        DateTime now = DateTime.UtcNow;
+        if (now - _lastDetectionAttemptUtc < DetectionRetryInterval)
+        {
+            return;
+        }
+
+        _lastDetectionAttemptUtc = now;
+
+        // Action handles can resolve to 0 until Steam loads the manifest;
+        // keep re-caching until the full set is valid.
+        if (!_actionHandlesComplete)
+        {
+            CacheActionHandles();
+        }
+
+        if (_connectedCount == 0)
+        {
+            _detectionRetryCount++;
+            RefreshConnectedControllers(reason: $"retry #{_detectionRetryCount}");
+        }
+        else
+        {
+            // Cheap periodic re-sync so slot mapping stays correct even if a
+            // connect/disconnect callback was missed.
+            RefreshConnectedControllers(reason: null);
+        }
+    }
+
     private void CacheActionHandles()
     {
         _gameplaySet = SteamInput.GetActionSetHandle(SteamInputActionNames.ActionSetGameplay);
@@ -383,6 +533,20 @@ public sealed class SteamInputManager
         {
             _analogHandles[i] = SteamInput.GetAnalogActionHandle(_analogNames[i]);
         }
+
+        string missing = GetMissingActionSummary();
+        bool complete = missing.Length == 0;
+        if (complete && !_actionHandlesComplete)
+        {
+            SteamInputLog.Log($"Action handles OK: set=0x{_gameplaySet.m_InputActionSetHandle:X} " +
+                $"digital={_digitalNames.Length} analog={_analogNames.Length}");
+        }
+        else if (!complete)
+        {
+            SteamInputLog.Log($"Action handles INCOMPLETE, missing: {missing}");
+        }
+
+        _actionHandlesComplete = complete;
     }
 
     private void RegisterCallbacks()
@@ -405,30 +569,38 @@ public sealed class SteamInputManager
     private void OnConfigurationLoaded(SteamInputConfigurationLoaded_t data)
     {
         _activeLayoutLabel = $"cfg:{data.m_unAppID}";
+        SteamInputLog.Log($"ConfigurationLoaded: app={data.m_unAppID} handle=0x{data.m_ulDeviceHandle.m_InputHandle:X}");
+        CacheActionHandles();
+        RefreshConnectedControllers(reason: "config loaded");
         ForceRefreshGlyphs();
     }
 
     private void OnDeviceConnected(SteamInputDeviceConnected_t data)
     {
-        RefreshConnectedControllers();
+        SteamInputLog.Log($"DeviceConnected: handle=0x{data.m_ulConnectedDeviceHandle.m_InputHandle:X}");
+        RefreshConnectedControllers(reason: "device connected");
         ForceRefreshGlyphs();
     }
 
     private void OnDeviceDisconnected(SteamInputDeviceDisconnected_t data)
     {
-        RefreshConnectedControllers();
+        SteamInputLog.Log($"DeviceDisconnected: handle=0x{data.m_ulDisconnectedDeviceHandle.m_InputHandle:X}");
+        RefreshConnectedControllers(reason: "device disconnected");
         ForceRefreshGlyphs();
     }
 
-    private void RefreshConnectedControllers()
+    private void RefreshConnectedControllers(string? reason)
     {
+        int previousCount = _connectedCount;
+
         try
         {
             _connectedCount = SteamInput.GetConnectedControllers(_connectedHandles);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             _connectedCount = 0;
+            SteamInputLog.Log($"GetConnectedControllers EXCEPTION: {ex.GetType().Name}");
             return;
         }
 
@@ -503,6 +675,44 @@ public sealed class SteamInputManager
                     break;
                 }
             }
+        }
+
+        bool countChanged = _connectedCount != previousCount;
+        bool isRetry = reason is not null && reason.StartsWith("retry", StringComparison.Ordinal);
+        if (countChanged || (reason is not null && !isRetry) || (isRetry && _connectedCount > 0))
+        {
+            LogControllerSnapshot(reason ?? "periodic");
+        }
+
+        if (isRetry && _connectedCount > 0)
+        {
+            SteamInputLog.Log($"Controller detected after {_detectionRetryCount} retries");
+            _detectionRetryCount = 0;
+        }
+    }
+
+    private void LogControllerSnapshot(string reason)
+    {
+        SteamInputLog.Log($"Controllers ({reason}): count={_connectedCount}");
+        for (int slot = 0; slot < InputManager.MaxLocalPlayers; slot++)
+        {
+            ulong raw = _slotHandles[slot].m_InputHandle;
+            if (raw == 0)
+            {
+                continue;
+            }
+
+            string type;
+            try
+            {
+                type = FormatControllerType(SteamInput.GetInputTypeForHandle(_slotHandles[slot]));
+            }
+            catch (Exception)
+            {
+                type = "?";
+            }
+
+            SteamInputLog.Log($"  slot {slot}: handle=0x{raw:X} type={type}");
         }
     }
 

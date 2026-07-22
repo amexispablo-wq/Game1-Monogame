@@ -1,0 +1,3 @@
+login deadewok333
+
+run_app_build C:\Users\amexi\Desktop\sdk\tools\ContentBuilder\scripts\app_build_4796400.vdf

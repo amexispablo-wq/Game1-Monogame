@@ -347,8 +347,8 @@
       "rotation": 0
     },
     {
-      "x": 1632,
-      "y": -1504,
+      "x": 1664,
+      "y": -1472,
       "width": 160,
       "height": 64,
       "rotation": 30
@@ -383,9 +383,10 @@
     }
   ],
   "playerSpawn": {
-    "x": 480,
-    "y": -1856
+    "x": 1856,
+    "y": -1408
   },
+  "playerSpawnColor": "Red",
   "musicId": "default_track_01",
   "allPlayers": true,
   "player1": false,
@@ -404,8 +405,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-07-17T19:19:47.3662989Z",
-  "modifiedDate": "2026-07-21T22:34:13.7085493Z",
-  "version": 9,
+  "modifiedDate": "2026-07-22T16:25:47.9881367Z",
+  "version": 10,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

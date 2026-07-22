@@ -110,12 +110,17 @@ public sealed class SteamGameNetworkService
 
     private static void OnNetworkingSessionRequest(SteamNetworkingMessagesSessionRequest_t data)
     {
+        MultiplayerDebug.LogNet(
+            $"ConnectionOpened session accepted peer={data.m_identityRemote.GetSteamID64()}");
         SteamNetworkingMessages.AcceptSessionWithUser(ref data.m_identityRemote);
     }
 
     private static void OnNetworkingSessionFailed(SteamNetworkingMessagesSessionFailed_t data)
     {
-        Console.WriteLine($"[SteamNet] Session failed for {data.m_info.m_identityRemote.GetSteamID64()}");
+        MultiplayerDebug.LogError(
+            "Net",
+            $"ConnectionClosed session failed peer={data.m_info.m_identityRemote.GetSteamID64()} " +
+            $"state={data.m_info.m_eState} reason={data.m_info.m_eEndReason}");
     }
 }
 

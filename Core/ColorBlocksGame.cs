@@ -42,6 +42,13 @@ public class ColorBlocksGame : Game
         Window.Title = "Color Blocks";
 
         UserDataPaths.Initialize();
+        DiagnosticsLog.Initialize();
+        foreach (string line in BuildInfo.Current.DescribeLines())
+        {
+            DiagnosticsLog.Info("BuildInfo", line);
+        }
+
+        SessionDiagnostics.LogSteamInputFileHashes();
         UserDataMigration.RunIfNeeded();
         SettingsManager.Initialize();
         SkinLibraryStorage.Initialize();
@@ -210,10 +217,14 @@ public class ColorBlocksGame : Game
     protected override void Initialize()
     {
         _steam.Initialize();
+        DiagnosticsLog.Info("Steam", $"SteamAPI.Init ok={_steam.IsInitialized} status='{_steam.Status}'");
         if (_steam.IsInitialized)
         {
             _steamCallbacks.Register();
             _steamInput.Initialize();
+            DiagnosticsLog.Info(
+                "Steam",
+                $"SteamInput.Init ok={_steamInput.IsInitialized} status='{_steamInput.InitializationStatus}'");
             Party.BindSteamServices(_steamLobby, _steamParty);
         }
 

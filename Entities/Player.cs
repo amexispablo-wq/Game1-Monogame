@@ -686,6 +686,7 @@ public sealed class Player : INetworkEntity
                 platform.Bounds,
                 GetPlatformCenter(platform),
                 fallbackDirection,
+                blendAxes: true,
                 out Vector2 direction,
                 out Vector2 targetCenter,
                 out float penetrationDepth,
@@ -727,6 +728,7 @@ public sealed class Player : INetworkEntity
                     other.Bounds,
                     GetPlayerCenter(other),
                     fallbackDirection,
+                    blendAxes: false,
                     out Vector2 direction,
                     out Vector2 targetCenter,
                     out float penetrationDepth,
@@ -770,8 +772,8 @@ public sealed class Player : INetworkEntity
             return new Vector2(side, 0f);
         }
 
-        // Nearest escape = MTV (shallowest overlap axis).
-        if (TryGetPlayerNearestEscapeDirection(other, selfCenter, otherCenter, out Vector2 nearest))
+        // Nearest escape = MTV (cardinal). Keep single-axis for stable player split.
+        if (TryGetNearestEscapeDirection(other.Bounds, selfCenter, otherCenter, blendAxes: false, out Vector2 nearest))
         {
             return nearest;
         }
@@ -779,45 +781,59 @@ public sealed class Player : INetworkEntity
         return NormalizeOrFallback(delta, GetFallbackEjectionDirection());
     }
 
-    private bool TryGetPlayerNearestEscapeDirection(
-        Player other,
+    private bool TryGetNearestEscapeDirection(
+        Rectangle obstacle,
         Vector2 selfCenter,
-        Vector2 otherCenter,
+        Vector2 obstacleCenter,
+        bool blendAxes,
         out Vector2 direction)
     {
         direction = Vector2.Zero;
-        Rectangle o = other.Bounds;
 
-        float overlapX = MathF.Min(Position.X + Size.X, o.Right) - MathF.Max(Position.X, o.Left);
-        float overlapY = MathF.Min(Position.Y + Size.Y, o.Bottom) - MathF.Max(Position.Y, o.Top);
-        if (overlapX <= 0f || overlapY <= 0f)
+        float exitLeft = Position.X + Size.X - obstacle.Left;
+        float exitRight = obstacle.Right - Position.X;
+        float exitTop = Position.Y + Size.Y - obstacle.Top;
+        float exitBottom = obstacle.Bottom - Position.Y;
+        if (exitLeft <= 0f || exitRight <= 0f || exitTop <= 0f || exitBottom <= 0f)
         {
             return false;
         }
 
-        if (overlapX < overlapY)
+        float signX = exitLeft <= exitRight ? -1f : 1f;
+        float signY = exitTop <= exitBottom ? -1f : 1f;
+        float penX = MathF.Min(exitLeft, exitRight);
+        float penY = MathF.Min(exitTop, exitBottom);
+
+        if (blendAxes)
         {
-            float signX = selfCenter.X <= otherCenter.X ? -1f : 1f;
+            // Inverse penetration: closer exits weigh more. Corner (similar pens) → diagonal.
+            const float epsilon = 0.0001f;
+            Vector2 raw = new(
+                signX / MathF.Max(penX, epsilon),
+                signY / MathF.Max(penY, epsilon));
+            direction = NormalizeOrFallback(raw, GetFallbackEjectionDirection());
+            return true;
+        }
+
+        // Cardinal MTV (shallowest axis only).
+        if (penX < penY)
+        {
             direction = new Vector2(signX, 0f);
             return true;
         }
 
-        if (overlapY < overlapX)
+        if (penY < penX)
         {
-            float signY = selfCenter.Y <= otherCenter.Y ? -1f : 1f;
             direction = new Vector2(0f, signY);
             return true;
         }
 
-        // Equal overlap: prefer axis with larger center separation.
-        if (MathF.Abs(selfCenter.X - otherCenter.X) >= MathF.Abs(selfCenter.Y - otherCenter.Y))
+        if (MathF.Abs(selfCenter.X - obstacleCenter.X) >= MathF.Abs(selfCenter.Y - obstacleCenter.Y))
         {
-            float signX = selfCenter.X <= otherCenter.X ? -1f : 1f;
             direction = new Vector2(signX, 0f);
         }
         else
         {
-            float signY = selfCenter.Y <= otherCenter.Y ? -1f : 1f;
             direction = new Vector2(0f, signY);
         }
 
@@ -909,11 +925,17 @@ public sealed class Player : INetworkEntity
         Vector2 fallbackDirection = _ejectionBaseDirection == Vector2.Zero
             ? GetFallbackEjectionDirection()
             : _ejectionBaseDirection;
+        Vector2 liveTargetCenter = _ejectionPlatform is not null
+            ? GetPlatformCenter(_ejectionPlatform)
+            : _ejectionPlayer is not null
+                ? GetPlayerCenter(_ejectionPlayer)
+                : _ejectionPlatformCenter;
 
         if (!TryCalculateEjectionInfo(
             GetEjectionTargetBounds(),
-            _ejectionPlatformCenter,
+            liveTargetCenter,
             fallbackDirection,
+            blendAxes: _ejectionPlatform is not null,
             out Vector2 direction,
             out Vector2 targetCenter,
             out float penetrationDepth,
@@ -927,12 +949,10 @@ public sealed class Player : INetworkEntity
         {
             direction = _ejectionBaseDirection;
         }
-        else if (_ejectionBaseDirection != Vector2.Zero)
+        else
         {
-            float alignment = Vector2.Dot(direction, _ejectionBaseDirection);
-            direction = alignment < 0.15f
-                ? _ejectionBaseDirection
-                : NormalizeOrFallback(Vector2.Lerp(_ejectionBaseDirection, direction, 0.35f), _ejectionBaseDirection);
+            // Platforms: track nearest exits live (top→bottom flip, side swap, corner blend).
+            _ejectionBaseDirection = direction;
         }
 
         _ejectionForceDirection = direction;
@@ -946,6 +966,7 @@ public sealed class Player : INetworkEntity
         Rectangle targetBounds,
         Vector2 targetCenter,
         Vector2 fallbackDirection,
+        bool blendAxes,
         out Vector2 direction,
         out Vector2 resolvedTargetCenter,
         out float penetrationDepth,
@@ -964,7 +985,15 @@ public sealed class Player : INetworkEntity
         Vector2 playerCenter = Position + (Size * 0.5f);
         Vector2 centerDelta = playerCenter - targetCenter;
 
-        direction = NormalizeOrFallback(centerDelta, fallbackDirection);
+        if (TryGetNearestEscapeDirection(targetBounds, playerCenter, targetCenter, blendAxes, out Vector2 nearest))
+        {
+            direction = nearest;
+        }
+        else
+        {
+            direction = NormalizeOrFallback(centerDelta, fallbackDirection);
+        }
+
         centerInfluence = CalculateCenterInfluence(centerDelta, targetBounds);
         return true;
     }

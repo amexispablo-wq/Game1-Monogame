@@ -273,6 +273,17 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public bool IsAnyGamepadConnected()
     {
+        if (_steamBackend is { IsActive: true })
+        {
+            for (int i = 0; i < MaxLocalPlayers; i++)
+            {
+                if (_steamBackend.HasController(i))
+                {
+                    return true;
+                }
+            }
+        }
+
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
             if (_currentGamepads[i].IsConnected)
@@ -286,8 +297,18 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public Vector2 GetMenuLeftStick()
     {
+        if (TryGetSteamMoveStick(out Vector2 steamMove))
+        {
+            return steamMove;
+        }
+
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
+            if (IsSteamOwnedSlot(i))
+            {
+                continue;
+            }
+
             if (_currentGamepads[i].IsConnected)
             {
                 return GamepadDefaults.ProcessLeftStick(_currentGamepads[i].ThumbSticks.Left);
@@ -301,6 +322,11 @@ public sealed class InputManager : ILocalPlayerInputSource
     {
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
+            if (IsSteamOwnedSlot(i))
+            {
+                continue;
+            }
+
             if (_currentGamepads[i].IsConnected)
             {
                 return GamepadDefaults.ProcessRightStick(_currentGamepads[i].ThumbSticks.Right);
@@ -312,8 +338,19 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public Vector2 GetEditorLeftStick()
     {
+        // Prefer Steam Move — GamePad stick often broken/zero when Steam Input owns device.
+        if (TryGetSteamMoveStickRaw(out Vector2 raw))
+        {
+            return GamepadDefaults.ProcessEditorStick(raw);
+        }
+
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
+            if (IsSteamOwnedSlot(i))
+            {
+                continue;
+            }
+
             if (_currentGamepads[i].IsConnected)
             {
                 return GamepadDefaults.ProcessEditorStick(_currentGamepads[i].ThumbSticks.Left);
@@ -327,6 +364,11 @@ public sealed class InputManager : ILocalPlayerInputSource
     {
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
+            if (IsSteamOwnedSlot(i))
+            {
+                continue;
+            }
+
             if (_currentGamepads[i].IsConnected)
             {
                 return GamepadDefaults.ProcessEditorStick(_currentGamepads[i].ThumbSticks.Right);
@@ -334,6 +376,66 @@ public sealed class InputManager : ILocalPlayerInputSource
         }
 
         return Vector2.Zero;
+    }
+
+    private bool IsSteamOwnedSlot(int slot) =>
+        _steamBackend is not null && _steamBackend.HasController(slot);
+
+    private bool TryGetSteamMoveStick(out Vector2 processed)
+    {
+        processed = Vector2.Zero;
+        if (_steamBackend is null || !_steamBackend.IsActive)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            if (!_steamBackend.HasController(i))
+            {
+                continue;
+            }
+
+            Vector2 move = _steamBackend.GetMoveVector(i);
+            if (move != Vector2.Zero)
+            {
+                processed = move;
+                return true;
+            }
+        }
+
+        if (_steamBackend.MoveVector != Vector2.Zero)
+        {
+            processed = _steamBackend.MoveVector;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryGetSteamMoveStickRaw(out Vector2 raw)
+    {
+        raw = Vector2.Zero;
+        if (_steamInput is null || !_steamInput.IsInitialized || _steamBackend is null)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            if (!_steamBackend.HasController(i))
+            {
+                continue;
+            }
+
+            if (_steamInput.TryGetAnalog(i, SteamInputActionNames.Move, out float x, out float y))
+            {
+                raw = new Vector2(x, y);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public void ReloadKeyboardBindings()

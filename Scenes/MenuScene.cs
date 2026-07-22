@@ -46,7 +46,8 @@ public sealed class MenuScene : IScene
     {
         LayoutButtons();
 
-        if (_game.Input.ExitPressed || _game.Input.MenuCancelPressed)
+        // Escape quit only. B / MenuCancel must not close main menu (use Quit button).
+        if (_game.Input.ExitPressed)
         {
             _game.ExitGame();
             return;
@@ -158,6 +159,8 @@ public sealed class MenuScene : IScene
         }
         _quitButton.Draw(spriteBatch, pixel);
         _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
+
+        VersionOverlay.DrawBottomRight(spriteBatch, pixel, viewport);
 
         spriteBatch.End();
     }

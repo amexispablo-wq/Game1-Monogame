@@ -14,7 +14,8 @@ public sealed class OptionsScene : IScene
     {
         Display,
         Audio,
-        Controls
+        Controls,
+        Debug
     }
 
     private readonly ColorBlocksGame _game;
@@ -25,9 +26,17 @@ public sealed class OptionsScene : IScene
     private readonly Button _displayTabButton = new("DISPLAY SETTINGS") { TextScale = 2 };
     private readonly Button _audioTabButton = new("AUDIO") { TextScale = 2 };
     private readonly Button _controlsTabButton = new("CONTROLS") { TextScale = 2 };
+    private readonly Button _debugTabButton = new("DEBUG") { TextScale = 2 };
     private readonly FocusableButton _displayTabFocus;
     private readonly FocusableButton _audioTabFocus;
     private readonly FocusableButton _controlsTabFocus;
+    private readonly FocusableButton _debugTabFocus;
+
+    // Debug section
+    private readonly Button _exportDiagnosticsButton = new("Export Diagnostics") { TextScale = 2 };
+    private readonly FocusableButton _exportDiagnosticsFocus;
+    private string? _exportStatus;
+    private bool _exportStatusIsError;
 
     // Display settings
     private ResolutionDropdown _resolutionDropdown = new();
@@ -155,6 +164,12 @@ public sealed class OptionsScene : IScene
         _displayTabFocus = new FocusableButton(_displayTabButton);
         _audioTabFocus = new FocusableButton(_audioTabButton);
         _controlsTabFocus = new FocusableButton(_controlsTabButton);
+        _debugTabFocus = new FocusableButton(_debugTabButton);
+        _exportDiagnosticsFocus = new FocusableButton(_exportDiagnosticsButton);
+        _exportDiagnosticsButton.FillColor = new Color(55, 78, 118);
+        _exportDiagnosticsButton.HoverFillColor = new Color(70, 98, 148);
+        _exportDiagnosticsButton.BorderColor = new Color(130, 160, 210);
+        _exportDiagnosticsButton.HoverBorderColor = new Color(190, 215, 255);
 
         _displayModeFocus = new FocusableCycleSelector<DisplayMode>(_displayModeSelector);
         _fpsLimitFocus = new FocusableCycleSelector<int>(_fpsLimitSelector);
@@ -309,6 +324,15 @@ public sealed class OptionsScene : IScene
         {
             _activeSection = OptionsSection.Controls;
         }
+        else if (_debugTabFocus.WasActivated)
+        {
+            _activeSection = OptionsSection.Debug;
+        }
+
+        if (_activeSection == OptionsSection.Debug && _exportDiagnosticsFocus.WasActivated)
+        {
+            ExportDiagnostics();
+        }
 
         if (_backFocus.WasActivated)
         {
@@ -347,13 +371,30 @@ public sealed class OptionsScene : IScene
         SyncPendingSettings();
     }
 
+    private void ExportDiagnostics()
+    {
+        try
+        {
+            string zipPath = DiagnosticsExporter.Export();
+            _exportStatus = $"Exported: {zipPath}";
+            _exportStatusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            _exportStatus = $"Export failed: {ex.Message}";
+            _exportStatusIsError = true;
+            DiagnosticsLog.Error("Export", ex.ToString());
+        }
+    }
+
     private void SwitchSectionOffset(int delta)
     {
         OptionsSection[] sections =
         {
             OptionsSection.Display,
             OptionsSection.Audio,
-            OptionsSection.Controls
+            OptionsSection.Controls,
+            OptionsSection.Debug
         };
 
         int currentIndex = 0;
@@ -389,8 +430,10 @@ public sealed class OptionsScene : IScene
         int displayTabIndex = _focus.Add(_displayTabFocus, "DisplayTab");
         int audioTabIndex = _focus.Add(_audioTabFocus, "AudioTab");
         int controlsTabIndex = _focus.Add(_controlsTabFocus, "ControlsTab");
+        int debugTabIndex = _focus.Add(_debugTabFocus, "DebugTab");
         _focus.Navigation.LinkHorizontal(displayTabIndex, audioTabIndex);
         _focus.Navigation.LinkHorizontal(audioTabIndex, controlsTabIndex);
+        _focus.Navigation.LinkHorizontal(controlsTabIndex, debugTabIndex);
 
         int sectionEntryIndex = -1;
         int sectionExitIndex = -1;
@@ -422,6 +465,13 @@ public sealed class OptionsScene : IScene
                 previous = effectIndex;
                 sectionExitIndex = effectIndex;
             }
+        }
+        else if (_activeSection == OptionsSection.Debug)
+        {
+            int exportIndex = _focus.Add(_exportDiagnosticsFocus, "ExportDiagnostics");
+            _focus.Navigation.LinkVertical(debugTabIndex, exportIndex);
+            sectionEntryIndex = exportIndex;
+            sectionExitIndex = exportIndex;
         }
         else
         {
@@ -502,6 +552,7 @@ public sealed class OptionsScene : IScene
         {
             OptionsSection.Audio => "MusicVolume",
             OptionsSection.Controls => _controlBindings.Count > 0 ? $"{_controlBindings[0].action}Keyboard" : "ControlsTab",
+            OptionsSection.Debug => "ExportDiagnostics",
             _ => "DisplayMode"
         };
         _focus.FinalizeFocus(defaultFocus);
@@ -552,6 +603,10 @@ public sealed class OptionsScene : IScene
         else if (_activeSection == OptionsSection.Audio)
         {
             DrawAudioSettings(spriteBatch, pixel, layout);
+        }
+        else if (_activeSection == OptionsSection.Debug)
+        {
+            DrawDebugSettings(spriteBatch, pixel, layout);
         }
         else
         {
@@ -621,9 +676,41 @@ public sealed class OptionsScene : IScene
         _displayTabButton.FillColor = _activeSection == OptionsSection.Display ? new Color(82, 94, 118) : new Color(48, 57, 74);
         _audioTabButton.FillColor = _activeSection == OptionsSection.Audio ? new Color(82, 94, 118) : new Color(48, 57, 74);
         _controlsTabButton.FillColor = _activeSection == OptionsSection.Controls ? new Color(82, 94, 118) : new Color(48, 57, 74);
+        _debugTabButton.FillColor = _activeSection == OptionsSection.Debug ? new Color(82, 94, 118) : new Color(48, 57, 74);
         _displayTabButton.Draw(spriteBatch, pixel);
         _audioTabButton.Draw(spriteBatch, pixel);
         _controlsTabButton.Draw(spriteBatch, pixel);
+        _debugTabButton.Draw(spriteBatch, pixel);
+    }
+
+    private void DrawDebugSettings(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
+    {
+        DrawSection(spriteBatch, pixel, layout, layout.DisplaySectionBounds, "DEBUG");
+
+        _exportDiagnosticsButton.Draw(spriteBatch, pixel);
+
+        int textX = layout.DisplaySectionBounds.X + layout.SectionPadding;
+        int textWidth = layout.DisplaySectionBounds.Width - (layout.SectionPadding * 2);
+        int y = _exportDiagnosticsButton.Bounds.Bottom + 18;
+
+        BuildInfo build = BuildInfo.Current;
+        var infoLines = new List<(string Text, Color Color)>
+        {
+            ($"Version {build.GameVersion}  Build {build.ShortBuildId}  Commit {build.GitCommit}", MutedLabelColor),
+            ($"Session {DiagnosticsLog.SessionId}", MutedLabelColor),
+            ($"Logs: {UserDataPaths.Logs}", MutedLabelColor)
+        };
+
+        if (_exportStatus is not null)
+        {
+            infoLines.Add((_exportStatus, _exportStatusIsError ? new Color(235, 130, 120) : new Color(150, 220, 160)));
+        }
+
+        foreach ((string text, Color color) in infoLines)
+        {
+            DrawFittedLeft(spriteBatch, pixel, text, new Rectangle(textX, y, textWidth, 24), 2, color);
+            y += 30;
+        }
     }
 
     private void DrawDisplaySettings(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
@@ -699,14 +786,9 @@ public sealed class OptionsScene : IScene
             DrawFittedLeft(spriteBatch, pixel, displayAction, labelBounds, 2, LabelColor);
         }
 
-        if (IsSteamInputManagingControllers)
+        if (IsSteamInputManagingControllers && !layout.SteamNoteBounds.IsEmpty)
         {
-            Rectangle noteBounds = new(
-                layout.ControlSectionBounds.X + layout.SectionPadding,
-                layout.ControlRowsArea.Bottom + 8,
-                layout.ControlSectionBounds.Width - (layout.SectionPadding * 2),
-                22);
-            DrawFittedLeft(spriteBatch, pixel, "Managed by Steam Input", noteBounds, 1, MutedLabelColor);
+            DrawFittedLeft(spriteBatch, pixel, "Managed by Steam Input", layout.SteamNoteBounds, 1, MutedLabelColor);
             if (CanOpenSteamControllerConfig)
             {
                 _steamConfigButton.Draw(spriteBatch, pixel);
@@ -939,10 +1021,17 @@ public sealed class OptionsScene : IScene
     {
         LayoutMetrics layout = GetLayoutMetrics(_game.Viewport);
 
-        int tabWidth = Math.Max(140, (layout.ContentBounds.Width - 24) / 3);
+        int tabWidth = Math.Max(120, (layout.ContentBounds.Width - 36) / 4);
         _displayTabButton.Bounds = new Rectangle(layout.ContentBounds.X, layout.ContentBounds.Y, tabWidth, 44);
         _audioTabButton.Bounds = new Rectangle(_displayTabButton.Bounds.Right + 12, layout.ContentBounds.Y, tabWidth, 44);
         _controlsTabButton.Bounds = new Rectangle(_audioTabButton.Bounds.Right + 12, layout.ContentBounds.Y, tabWidth, 44);
+        _debugTabButton.Bounds = new Rectangle(_controlsTabButton.Bounds.Right + 12, layout.ContentBounds.Y, tabWidth, 44);
+
+        _exportDiagnosticsButton.Bounds = new Rectangle(
+            layout.DisplaySectionBounds.X + layout.SectionPadding,
+            layout.DisplayModeBounds.Y,
+            Math.Min(420, layout.DisplaySectionBounds.Width - (layout.SectionPadding * 2)),
+            layout.DisplayModeBounds.Height);
 
         _displayModeSelector.Bounds = layout.DisplayModeBounds;
         _resolutionDropdown.Bounds = layout.ResolutionBounds;
@@ -962,20 +1051,7 @@ public sealed class OptionsScene : IScene
 
         _backButton.Bounds = layout.BackButtonBounds;
         _applyButton.Bounds = layout.ApplyButtonBounds;
-
-        if (CanOpenSteamControllerConfig)
-        {
-            int steamW = Math.Min(420, layout.ControlSectionBounds.Width - (layout.SectionPadding * 2));
-            _steamConfigButton.Bounds = new Rectangle(
-                layout.ControlSectionBounds.X + layout.SectionPadding,
-                layout.ControlRowsArea.Bottom + 34,
-                steamW,
-                36);
-        }
-        else
-        {
-            _steamConfigButton.Bounds = Rectangle.Empty;
-        }
+        _steamConfigButton.Bounds = layout.SteamConfigButtonBounds;
     }
 
     private LayoutMetrics GetLayoutMetrics(Viewport viewport)
@@ -1010,7 +1086,14 @@ public sealed class OptionsScene : IScene
             + controlHeaderHeight + controlHeaderGap;
 
         int topBlockHeight = TitleHeight + titleToSectionsGap + 56 + sectionGap;
-        int buttonBlockHeight = ButtonHeight + sectionGap;
+        // Steam footer sits between control table and Back/Apply — reserve vertical space.
+        bool showSteamFooter = _activeSection == OptionsSection.Controls && CanOpenSteamControllerConfig;
+        const int steamNoteHeight = 22;
+        const int steamButtonHeight = 40;
+        int steamFooterHeight = showSteamFooter
+            ? 10 + steamNoteHeight + 8 + steamButtonHeight + 10
+            : 0;
+        int buttonBlockHeight = ButtonHeight + sectionGap + steamFooterHeight;
 
         int displayRows = 4;
         int displayContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing
@@ -1066,7 +1149,29 @@ public sealed class OptionsScene : IScene
 
         int buttonWidth = Math.Clamp(contentBounds.Width / 5, 128, 150);
         int buttonTotalWidth = (buttonWidth * 2) + ButtonGap;
-        int buttonY = controlSectionBounds.Bottom + sectionGap;
+        int steamNoteBoundsY = controlSectionBounds.Bottom + 10;
+        Rectangle steamNoteBounds = Rectangle.Empty;
+        Rectangle steamConfigButtonBounds = Rectangle.Empty;
+        if (showSteamFooter)
+        {
+            int steamInnerW = controlSectionBounds.Width - (sectionPadding * 2);
+            steamNoteBounds = new Rectangle(
+                controlSectionBounds.X + sectionPadding,
+                steamNoteBoundsY,
+                steamInnerW,
+                steamNoteHeight);
+            // Keep Steam button on its own row, left-aligned, never under Back/Apply.
+            int steamBtnW = Math.Min(480, steamInnerW);
+            steamConfigButtonBounds = new Rectangle(
+                controlSectionBounds.X + sectionPadding,
+                steamNoteBounds.Bottom + 8,
+                steamBtnW,
+                steamButtonHeight);
+        }
+
+        int buttonY = showSteamFooter
+            ? steamConfigButtonBounds.Bottom + 12
+            : controlSectionBounds.Bottom + sectionGap;
         int buttonX = panelBounds.Center.X - (buttonTotalWidth / 2);
         Rectangle backButtonBounds = new(buttonX, buttonY, buttonWidth, ButtonHeight);
         Rectangle applyButtonBounds = new(backButtonBounds.Right + ButtonGap, buttonY, buttonWidth, ButtonHeight);
@@ -1141,6 +1246,8 @@ public sealed class OptionsScene : IScene
             controlGamepadColumnWidth,
             controlCellPaddingH,
             controlCellPaddingV,
+            steamNoteBounds,
+            steamConfigButtonBounds,
             backButtonBounds,
             applyButtonBounds);
     }
@@ -1465,6 +1572,8 @@ public sealed class OptionsScene : IScene
         int ControlGamepadColumnWidth,
         int ControlCellPaddingH,
         int ControlCellPaddingV,
+        Rectangle SteamNoteBounds,
+        Rectangle SteamConfigButtonBounds,
         Rectangle BackButtonBounds,
         Rectangle ApplyButtonBounds);
 }

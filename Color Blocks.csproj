@@ -66,4 +66,18 @@
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
+  <!-- BuildInfo: regenerate Content\version.json (version, git commit/branch, config, fresh build GUID)
+       on every build/publish so the game and multiplayer handshake can identify the exact build. -->
+  <Target Name="GenerateBuildInfo" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\BuildTools\Generate-BuildInfo.ps1&quot; -ProjectRoot &quot;$(MSBuildProjectDirectory)&quot; -Configuration &quot;$(Configuration)&quot;"
+          ContinueOnError="true"
+          StandardOutputImportance="low" />
+    <ItemGroup>
+      <None Remove="Content\version.json" />
+      <None Include="Content\version.json" Condition="Exists('$(MSBuildProjectDirectory)\Content\version.json')">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </None>
+    </ItemGroup>
+  </Target>
 </Project>

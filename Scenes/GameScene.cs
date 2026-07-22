@@ -46,6 +46,7 @@ public sealed class GameScene : IScene
     private readonly ReplayRecorder _replayRecorder = new();
     private readonly GhostPlayer? _ghostPlayer;
     private readonly bool _ghostBestRunEnabled;
+    private readonly bool _editorTestMode;
     private bool _savedNewRecordReplay;
     private bool _photoMode;
 
@@ -66,18 +67,22 @@ public sealed class GameScene : IScene
         RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics,
         bool lavaRiseEnabled = false,
         bool ghostBestRunEnabled = false,
-        bool playerCollisionEnabled = false)
+        bool playerCollisionEnabled = false,
+        bool editorTestMode = false,
+        Level? levelOverride = null)
     {
         _game = game;
         _levelId = levelId;
         _ropeGameplayMode = ropeGameplayMode;
         _lavaRiseEnabled = lavaRiseEnabled;
         _playerCollisionEnabled = playerCollisionEnabled;
-        _ghostBestRunEnabled = ghostBestRunEnabled;
+        _ghostBestRunEnabled = ghostBestRunEnabled && !editorTestMode;
+        _editorTestMode = editorTestMode;
         int localOwnerId = _game.SteamLobby.IsAvailable
             ? SteamOwnerId.FromSteamId(_game.SteamLobby.LocalSteamId)
             : NetworkOwners.HostOwnerId;
-        _session = _game.SteamLobby.IsInLobby
+        MultiplayerDebug.ResetSessionCounters();
+        _session = !editorTestMode && _game.SteamLobby.IsInLobby
             ? GameSession.CreateOnline(
                 _game.Party.IsLeader ? GameSessionRole.Host : GameSessionRole.Client,
                 levelId,
@@ -85,27 +90,58 @@ public sealed class GameScene : IScene
                 localOwnerId,
                 _game.Steam.Username)
             : GameSession.CreateLocalTest(levelId, ropeGameplayMode);
+        MultiplayerDebug.LogSim(
+            $"GameScene start level={levelId} role={_session.Role} localOwner={localOwnerId} " +
+            $"inLobby={_game.SteamLobby.IsInLobby} partyMembers={_game.Party.Members.Count} " +
+            $"lobbyMembers={_game.SteamLobby.GetLobbyMemberCount()}");
         _session.LavaRiseEnabled = lavaRiseEnabled;
         _session.PlayerCollisionEnabled = playerCollisionEnabled;
-        _level = LevelLibrary.LoadLevel(levelId);
+        MultiplayerDebug.LogSim($"LevelLoadStarted level={levelId} override={levelOverride is not null}");
+        _level = levelOverride ?? LevelLibrary.LoadLevel(levelId);
+        MultiplayerDebug.LogSim($"LevelLoaded level={levelId} name='{_level.Name}'");
         _playerManager = new PlayerManager(_session, _level);
         _game.ActiveTuningPanel = _tuningPanel;
         _game.Party.ApplyPreferredInputForPrimaryLocalMember(_game.Input);
-        _game.Party.LockAssignments();
-        _playerManager.SpawnFromParty(_game.Party.Members, _game.Input);
-        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled, playerCollisionEnabled);
+        if (!_editorTestMode)
+        {
+            _game.Party.LockAssignments();
+        }
+
+        if (_editorTestMode)
+        {
+            _playerManager.SpawnSoloTest(_game.Party.Members, _game.Input);
+        }
+        else
+        {
+            _playerManager.SpawnFromParty(_game.Party.Members, _game.Input);
+        }
+
+        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled, playerCollisionEnabled)
+        {
+            RecordProgress = !_editorTestMode
+        };
+
+        MultiplayerDebug.ValidateGameplayStart(_game.SteamLobby, _game.Party, _session, _simulation);
+        MultiplayerDebug.LogSim(
+            $"GameplayInitialized level={levelId} role={_session.Role} " +
+            $"players={_simulation.Players.Count} ropes={_simulation.Ropes.Count}");
+        MultiplayerDebug.DumpEntityState(_session, _simulation);
         _camera = new Camera(GetPlayersCenter());
-        _replayRecorder.StartRecording(
-            _levelId,
-            _ropeGameplayMode,
-            _lavaRiseEnabled,
-            _session.Settings.SimulationTicksPerSecond,
-            _simulation.LavaRiseSpeed,
-            _level.Lava?.SurfaceY ?? 0f,
-            _level.ToData(),
-            ReplayRecordingMode.FullSession);
+        if (!_editorTestMode)
+        {
+            _replayRecorder.StartRecording(
+                _levelId,
+                _ropeGameplayMode,
+                _lavaRiseEnabled,
+                _session.Settings.SimulationTicksPerSecond,
+                _simulation.LavaRiseSpeed,
+                _level.Lava?.SurfaceY ?? 0f,
+                _level.ToData(),
+                ReplayRecordingMode.FullSession);
+            ReplayDiagnostics.ActiveRecorder = _replayRecorder;
+        }
+
         _simulation.FixedTickCompleted += OnSimulationFixedTick;
-        ReplayDiagnostics.ActiveRecorder = _replayRecorder;
 
         if (_ghostBestRunEnabled)
         {
@@ -113,7 +149,10 @@ public sealed class GameScene : IScene
             _ghostPlayer.TryLoadBestRun(_levelId);
         }
 
-        _game.SteamLobby.MemberLeft += OnLobbyMemberLeft;
+        if (!_editorTestMode)
+        {
+            _game.SteamLobby.MemberLeft += OnLobbyMemberLeft;
+        }
     }
 
     public void OnExit()
@@ -121,16 +160,20 @@ public sealed class GameScene : IScene
         _game.ActiveTuningPanel = null;
         _simulation.FixedTickCompleted -= OnSimulationFixedTick;
         ReplayDiagnostics.ActiveRecorder = null;
-        _game.SteamLobby.MemberLeft -= OnLobbyMemberLeft;
+        if (!_editorTestMode)
+        {
+            _game.SteamLobby.MemberLeft -= OnLobbyMemberLeft;
+            _game.Party.UnlockAssignments();
+            _replayRecorder.StopRecording();
+            FinalizeSessionRecording();
+        }
+
         _game.Input.GameplayInputBlocked = false;
         _game.Input.ClearGameplayBindings();
-        _game.Party.UnlockAssignments();
         _photoMode = false;
         _game.GameNetwork.Reset();
         GameAudio.StopAllLoops();
         _game.Music.Stop();
-        _replayRecorder.StopRecording();
-        FinalizeSessionRecording();
     }
 
     private void FinalizeSessionRecording()
@@ -206,7 +249,7 @@ public sealed class GameScene : IScene
         float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, MaxSceneFrameTime);
         Viewport viewport = _game.Viewport;
 
-        if (_game.Input.ReplayForceSavePressed)
+        if (!_editorTestMode && _game.Input.ReplayForceSavePressed)
         {
             ReplayData? forced = _replayRecorder.ExportReplay();
             if (forced is not null)
@@ -350,6 +393,15 @@ public sealed class GameScene : IScene
 
         GameNetworkCoordinator network = _game.GameNetwork;
         network.PumpIncoming(_session, _simulation);
+        MultiplayerDebug.UpdateRates(
+            _simulation.InputBuffer.FrameCount,
+            network.IsOnlineSession(_session));
+        if (network.IsOnlineSession(_session))
+        {
+            MultiplayerDebug.LogSimulationRunningOnce(_session, _simulation);
+            MultiplayerDebug.LogTickPeriodic(_session, _simulation);
+            MultiplayerDebug.CheckClientStall(_session, _simulation);
+        }
 
         if (_game.Party.TryHotSwapLocalInputFromActivity(_game.Input))
         {
@@ -362,7 +414,11 @@ public sealed class GameScene : IScene
             if (network.TryConsumeClientSnapshot(out GameSnapshot snapshot))
             {
                 _simulation.ApplySnapshot(snapshot);
-                _replayRecorder.RecordFrame(_simulation, _camera);
+                if (!_editorTestMode)
+                {
+                    _replayRecorder.RecordFrame(_simulation, _camera);
+                }
+
                 _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
                 UpdateGameplayAudio();
             }
@@ -416,7 +472,7 @@ public sealed class GameScene : IScene
             case PauseMenuChoice.BackToMenu:
                 _simulation.SetPaused(false);
                 _pauseMenu.Close();
-                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+                ReturnFromGameplay();
                 break;
         }
     }
@@ -450,7 +506,7 @@ public sealed class GameScene : IScene
                 }
                 break;
             case ConfirmActionKind.QuitToMenu:
-                _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+                ReturnFromGameplay();
                 break;
         }
     }
@@ -528,6 +584,11 @@ public sealed class GameScene : IScene
 
     private void OnSimulationFixedTick()
     {
+        if (_editorTestMode)
+        {
+            return;
+        }
+
         _replayRecorder.RecordFrame(_simulation, _camera);
     }
 
@@ -656,12 +717,27 @@ public sealed class GameScene : IScene
         _camera.Position = GetPlayersCenter();
         _camera.SetZoom(GetTargetCameraZoom(_game.Viewport));
         _ghostPlayer?.Reset();
-        _replayRecorder.ResetSession();
+        if (!_editorTestMode)
+        {
+            _replayRecorder.ResetSession();
+        }
+
         _savedNewRecordReplay = false;
     }
 
     private void ReturnToLevelSelect()
     {
+        ReturnFromGameplay();
+    }
+
+    private void ReturnFromGameplay()
+    {
+        if (_editorTestMode)
+        {
+            _game.ChangeScene(new EditorScene(_game, _levelId));
+            return;
+        }
+
         _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
     }
 
@@ -750,37 +826,25 @@ public sealed class GameScene : IScene
         SteamManager steam = _game.Steam;
         SteamLobbyService lobby = _game.SteamLobby;
         SteamInputManager steamInput = _game.SteamInput;
-        List<string> lines = new()
-        {
-            "PARTY",
-            $"MEMBERS {_game.Party.Members.Count}/{PartyManager.MaxMembers} LOCKED {FormatDebugBool(_game.Party.AssignmentsLocked)}",
-            $"LEADER {_game.Party.Leader?.DisplayName ?? "NONE"}",
-            $"LOBBY ID {(_game.Party.LobbyId?.ToString() ?? "NONE")}",
-            $"LOBBY OWNER {lobby.GetLobbyOwnerSteamId()}",
-            $"CURRENT LEVEL {_levelId}",
-            $"CURRENT ROPE {_ropeGameplayMode.ToDebugName()}",
-            $"TICK {_simulation.CurrentTick.Value} RATE {_simulation.TickRate.TicksPerSecond}",
-            $"SNAPS {_simulation.SnapshotCount} INPUT {_simulation.InputBuffer.FrameCount} DROPPED {_simulation.InputBuffer.DroppedFrameCount}",
-            $"ACTIVE CHECKPOINT {FormatCheckpointDebugText()}",
-            $"RESPAWN POS {FormatVector(_playerManager.RespawnPosition)}",
-            $"LAUNCH PADS {_level.LaunchPads.Count} LAST FORCE {FormatVector(_simulation.PhysicsWorld.LastLaunchForce)}",
-            $"SESSION {_session.Role} OWNER {_session.LocalOwnerId} HOST {_session.HostOwnerId}",
-            $"NET {_game.GameNetwork.GetOnlineRoleLabel(_session)} SNAP {_simulation.LastSnapshot.Sequence}",
-            $"STEAM INITIALIZED: {FormatDebugBool(steam.IsInitialized)}",
-            $"STEAM IN LOBBY: {FormatDebugBool(lobby.IsInLobby)}",
-            $"STEAM USERNAME: {steam.Username}",
-            $"STEAMID: {steam.SteamId}",
-            $"OWNER: {lobby.GetLobbyOwnerSteamId()}",
-            $"OVERLAY ENABLED: {FormatDebugBool(steam.IsOverlayEnabled)}",
-            $"STEAM STATUS: {steam.Status}",
-            $"STEAM INPUT: {(steamInput.IsInitialized ? "Enabled" : "Disabled")}",
-            $"STEAM ACTION SET: {steamInput.CurrentActionSetName}",
-            $"STEAM GLYPH SOURCE: {steamInput.GlyphSource}",
-            $"STEAM LAYOUT: {steamInput.ActiveLayoutLabel}",
-            $"STEAM LAYOUT REFRESH: {FormatLayoutRefresh(steamInput.LastLayoutRefreshUtc)}",
-            $"STEAM GLYPH CACHE: {steamInput.Glyphs.CachedGlyphCount} (v{steamInput.Glyphs.LayoutVersion})",
-            $"STEAM CONTROLLERS: {steamInput.ConnectedControllerCount}"
-        };
+
+        List<string> lines = MultiplayerDebug.BuildPanelLines(
+            lobby,
+            _game.Party,
+            _session,
+            _simulation,
+            _game.GameNetwork,
+            _levelId);
+
+        lines.Add(string.Empty);
+        lines.Add("STEAM / INPUT");
+        lines.Add($"STEAM INIT {FormatDebugBool(steam.IsInitialized)} STATUS {steam.Status}");
+        lines.Add($"STEAM USER {steam.Username} ID {steam.SteamId}");
+        lines.Add($"OVERLAY {FormatDebugBool(steam.IsOverlayEnabled)}");
+        lines.Add($"STEAM INPUT {(steamInput.IsInitialized ? "Enabled" : "Disabled")} SET {steamInput.CurrentActionSetName}");
+        lines.Add($"LAYOUT {steamInput.ActiveLayoutLabel} GLYPH {steamInput.GlyphSource}");
+        lines.Add($"CONTROLLERS {steamInput.ConnectedControllerCount}");
+        lines.Add($"CHECKPOINT {FormatCheckpointDebugText()} RESPAWN {FormatVector(_playerManager.RespawnPosition)}");
+        lines.Add($"SIM STEP {_simulation.PhysicsWorld.LastSimulationStepSeconds * 1000f:0.0}ms");
 
         for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
         {
@@ -795,33 +859,6 @@ public sealed class GameScene : IScene
                 $"PAD{i + 1} type={steamInput.GetControllerType(i)} label={steamInput.GetControllerLabel(i)} handle={handle} player={assigned}");
         }
 
-        foreach (PartyMember member in _game.Party.Members)
-        {
-            string leaderTag = member.IsLeader ? " LEADER" : string.Empty;
-            lines.Add(
-                $"MEMBER {member.DisplayName} NET{member.NetworkPlayerId} OWNER{member.OwnerId} TYPE {member.MemberType} INPUT {member.GetInputLabel()}{leaderTag}");
-        }
-
-        foreach (Player player in Players)
-        {
-            lines.Add(
-                $"PLAYER P{player.PlayerIndex + 1} SPD {player.Velocity.Length():0.#} FRIC {player.GroundFriction:0.#} VX {player.Velocity.X:0.#} VY {player.Velocity.Y:0.#}");
-            lines.Add(
-                $"PLAYER P{player.PlayerIndex + 1} PARTY{player.PartyMemberId.Value} N{player.NetworkId} INPUT {FormatInputDevice(player.AssignedInput)} {GetNetworkRoleText(player)} {GetAuthorityText(player)}");
-        }
-
-        foreach (Rope rope in Ropes)
-        {
-            int tension = (int)MathF.Round(rope.LastTension * 100f);
-            lines.Add(
-                $"ROPE LEN {rope.CurrentPathLength:0} TARGET {rope.TargetRestLength:0} SLACK {rope.SlackAmount:0} T{tension} {rope.TensionPhase}");
-            lines.Add(
-                $"ROPE PULL {rope.LastPullIntensity:0.00} FORCE {rope.LastEndpointForce:0} ITERS {rope.SolverIterations} NODES {rope.Nodes.Count} {(rope.IsPulling ? "PULLING" : "IDLE")}");
-            lines.Add($"ROPE N{rope.NetworkId} O{rope.OwnerId} {GetNetworkRoleText(rope)} {GetAuthorityText(rope)}");
-        }
-
-        lines.Add($"SIM STEP {_simulation.PhysicsWorld.LastSimulationStepSeconds * 1000f:0.0}ms");
-
         int y = Math.Max(margin, viewport.Height - margin - (lines.Count * lineHeight));
         Color ropeModeColor = _ropeGameplayMode == RopeGameplayMode.Neutral
             ? new Color(210, 180, 140)
@@ -830,9 +867,14 @@ public sealed class GameScene : IScene
         for (int i = 0; i < lines.Count; i++)
         {
             Vector2 position = new(margin, y + (i * lineHeight));
-            Color textColor = i == 0 ? ropeModeColor : Color.White;
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, lines[i], position + new Vector2(1f, 1f), scale, Color.Black * 0.55f);
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, lines[i], position, scale, textColor);
+            string line = lines[i];
+            Color textColor = i == 0
+                ? ropeModeColor
+                : line.StartsWith("  !", StringComparison.Ordinal)
+                    ? new Color(255, 120, 100)
+                    : Color.White;
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, line, position + new Vector2(1f, 1f), scale, Color.Black * 0.55f);
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, line, position, scale, textColor);
         }
     }
 
@@ -1038,6 +1080,13 @@ public sealed class GameScene : IScene
     {
         if (kind == ConfirmActionKind.RestartLevel)
         {
+            // No checkpoint → nothing to lose; skip confirm.
+            if (!_simulation.HasCheckpoint)
+            {
+                ExecuteConfirmedAction(ConfirmActionKind.RestartLevel);
+                return;
+            }
+
             _confirmPopup = new Popup(
                 "Restart Level",
                 "Restart from the beginning?\nProgress will be lost.",

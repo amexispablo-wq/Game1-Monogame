@@ -258,6 +258,12 @@ public sealed class PartyScene : IScene
 
     private void OnLevelStartReceived(PartyStartMessage message)
     {
+        if (!MultiplayerStartGate.ValidateClientStart(_game.SteamLobby, message, out string title, out string error))
+        {
+            _alertPopup = new AlertPopup(title, error);
+            return;
+        }
+
         _game.ChangeScene(new GameScene(_game, message.LevelId, message.RopeMode, message.LavaRiseEnabled));
     }
 

@@ -119,3 +119,5 @@ C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\Audio\Music\MainMen
 C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\Audio\SFX\launchpad.wav
 C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\Audio\SFX\levelcomplete.wav
 C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\Audio\SFX\Lost.wav
+C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\OfficialLevels\LEVEL_6.json
+C:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\version.json

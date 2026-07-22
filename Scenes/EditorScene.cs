@@ -22,6 +22,7 @@ public sealed class EditorScene : IScene
     private readonly Camera _camera;
     private readonly Button _backButton = new("Back to Menu") { TextScale = 2 };
     private readonly Button _applyButton = new("Apply") { TextScale = 2 };
+    private readonly Button _testButton = new("Test") { TextScale = 2 };
 
     private Platform _selectedPlatform;
     private Platform _hoveredPlatform;
@@ -103,6 +104,7 @@ public sealed class EditorScene : IScene
     private readonly UIFocusManager _uiFocus = new();
     private readonly FocusableButton _backFocus;
     private readonly FocusableButton _applyFocus;
+    private readonly FocusableButton _testFocus;
     private bool _gamepadPrimaryWasHeld;
 
     private bool IsGamepadCursorMode() =>
@@ -144,6 +146,7 @@ public sealed class EditorScene : IScene
         _camera = new Camera(new Vector2(game.Viewport.Width * 0.5f, game.Viewport.Height * 0.5f));
         _backFocus = new FocusableButton(_backButton);
         _applyFocus = new FocusableButton(_applyButton);
+        _testFocus = new FocusableButton(_testButton);
         _uiFocus.ResetFocus();
     }
 
@@ -184,6 +187,12 @@ public sealed class EditorScene : IScene
             return;
         }
 
+        if (!IsGamepadCursorMode() && _testFocus.WasActivated)
+        {
+            StartEditorTest();
+            return;
+        }
+
         if (_game.Input.ExitPressed)
         {
             _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
@@ -202,6 +211,7 @@ public sealed class EditorScene : IScene
         bool cameraBlockedByUi = _colorPanelBounds.Contains(UiPointer)
             || _backButton.IsHovered
             || _applyButton.IsHovered
+            || _testButton.IsHovered
             || (mouseOverToolbar && !IsDraggingToolbarObject);
         HandleCameraInput(cameraBlockedByUi, gameTime);
 
@@ -301,6 +311,12 @@ public sealed class EditorScene : IScene
             return true;
         }
 
+        if (_testButton.Bounds.Contains(UiPointer))
+        {
+            StartEditorTest();
+            return true;
+        }
+
         if (_backButton.Bounds.Contains(UiPointer))
         {
             _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
@@ -320,6 +336,7 @@ public sealed class EditorScene : IScene
         _uiFocus.Clear();
         int backIndex = _uiFocus.Add(_backFocus, "Back");
         int applyIndex = _uiFocus.Add(_applyFocus, "Apply");
+        int testIndex = _uiFocus.Add(_testFocus, "Test");
 
         NavigationGraph nav = _uiFocus.Navigation;
 
@@ -339,10 +356,12 @@ public sealed class EditorScene : IScene
             nav.LinkHorizontal(backIndex, minusIndex);
             nav.LinkHorizontal(minusIndex, plusIndex);
             nav.LinkHorizontal(plusIndex, applyIndex);
+            nav.LinkHorizontal(applyIndex, testIndex);
         }
         else
         {
             nav.LinkHorizontal(backIndex, applyIndex);
+            nav.LinkHorizontal(applyIndex, testIndex);
         }
 
         _uiFocus.FinalizeFocus("Back");
@@ -379,7 +398,7 @@ public sealed class EditorScene : IScene
         _level.DrawLaunchPads(spriteBatch, pixel, debugDraw: false, isEditorMode: true);
         _level.DrawGoals(spriteBatch, pixel, debugDraw: false);
         _level.DrawCheckpointFlags(spriteBatch, pixel, debugDraw: false);
-        DrawPlayerSpawnMarker(spriteBatch, pixel, _level.PlayerStart, 1f);
+        DrawPlayerSpawnMarker(spriteBatch, pixel, _level.PlayerStart, _level.PlayerStartColor, 1f);
         if (_playerSpawnSelected || _playerSpawnHovered)
         {
             DrawHelper.DrawBorder(spriteBatch, pixel, GetPlayerSpawnBounds(), new Color(255, 220, 80), GetWorldLineThickness(3));
@@ -492,6 +511,7 @@ public sealed class EditorScene : IScene
         DrawLavaSpeedPanel(spriteBatch, pixel);
         UpdateEditorChromeButtonHover();
         DrawApplyButton(spriteBatch, pixel);
+        _testButton.Draw(spriteBatch, pixel);
         _backButton.Draw(spriteBatch, pixel);
         _uiFocus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
         if (_virtualCursor.IsActive)
@@ -790,6 +810,7 @@ public sealed class EditorScene : IScene
         {
             ClearSelection();
             _playerSpawnSelected = true;
+            _selectedColor = Level.NormalizePlayerStartColor(_level.PlayerStartColor);
             StartPlayerSpawnDrag(mouse);
             return;
         }
@@ -1592,10 +1613,10 @@ public sealed class EditorScene : IScene
         _isDirty = true;
     }
 
-    private static void DrawPlayerSpawnMarker(SpriteBatch spriteBatch, Texture2D pixel, Vector2 position, float alpha)
+    private static void DrawPlayerSpawnMarker(SpriteBatch spriteBatch, Texture2D pixel, Vector2 position, GameColor color, float alpha)
     {
         Rectangle bounds = new((int)position.X, (int)position.Y, 40, 40);
-        spriteBatch.Draw(pixel, bounds, Color.Red * alpha);
+        spriteBatch.Draw(pixel, bounds, color.ToXnaColor() * alpha);
         DrawHelper.DrawBorder(spriteBatch, pixel, bounds, Color.Black, 2);
     }
 
@@ -1631,7 +1652,7 @@ public sealed class EditorScene : IScene
 
     private void ApplyColorToSelection(GameColor color)
     {
-        bool changedAnyPlatform = false;
+        bool changedAny = false;
         foreach (Platform selectedPlatform in _selectedPlatforms)
         {
             if (selectedPlatform.PlatformColor == color)
@@ -1640,10 +1661,20 @@ public sealed class EditorScene : IScene
             }
 
             selectedPlatform.PlatformColor = color;
-            changedAnyPlatform = true;
+            changedAny = true;
         }
 
-        if (changedAnyPlatform)
+        if (_playerSpawnSelected && color != GameColor.White)
+        {
+            GameColor spawnColor = Level.NormalizePlayerStartColor(color);
+            if (_level.PlayerStartColor != spawnColor)
+            {
+                _level.PlayerStartColor = spawnColor;
+                changedAny = true;
+            }
+        }
+
+        if (changedAny)
         {
             _isDirty = true;
         }
@@ -1947,6 +1978,7 @@ public sealed class EditorScene : IScene
     {
         return _backButton.Bounds.Contains(UiPointer)
             || _applyButton.Bounds.Contains(UiPointer)
+            || _testButton.Bounds.Contains(UiPointer)
             || (_lavaSelected && _lavaSpeedPanelBounds.Contains(UiPointer));
     }
 
@@ -1955,6 +1987,7 @@ public sealed class EditorScene : IScene
         return _colorPanelBounds.Contains(UiPointer)
             || _backButton.Bounds.Contains(UiPointer)
             || _applyButton.Bounds.Contains(UiPointer)
+            || _testButton.Bounds.Contains(UiPointer)
             || IsMouseOverToolbar()
             || (_lavaSelected && _lavaSpeedPanelBounds.Contains(UiPointer));
     }
@@ -2285,7 +2318,7 @@ public sealed class EditorScene : IScene
                     break;
                 }
             case EditorObjectKind.PlayerSpawn:
-                DrawPlayerSpawnMarker(spriteBatch, pixel, new Vector2(position.X, position.Y), 0.55f);
+                DrawPlayerSpawnMarker(spriteBatch, pixel, new Vector2(position.X, position.Y), _level.PlayerStartColor, 0.55f);
                 break;
         }
     }
@@ -2461,10 +2494,12 @@ public sealed class EditorScene : IScene
         int gap = 10;
         int backWidth = Math.Min(180, Math.Max(120, (int)(viewport.Width * 0.14f)));
         int applyWidth = Math.Min(120, Math.Max(90, backWidth - 40));
+        int testWidth = Math.Min(100, Math.Max(80, applyWidth - 10));
         int x = _colorPanelBounds.Left;
         int y = _colorPanelBounds.Bottom + gap;
 
         _applyButton.Bounds = new Rectangle(x, y, applyWidth, height);
+        _testButton.Bounds = new Rectangle(x + applyWidth + gap, y, testWidth, height);
         _backButton.Bounds = new Rectangle(x, y + height + gap, backWidth, height);
     }
 
@@ -2473,11 +2508,13 @@ public sealed class EditorScene : IScene
         if (IsGamepadCursorMode())
         {
             _applyButton.SetPointerHover(_applyButton.Bounds.Contains(UiPointer));
+            _testButton.SetPointerHover(_testButton.Bounds.Contains(UiPointer));
             _backButton.SetPointerHover(_backButton.Bounds.Contains(UiPointer));
             return;
         }
 
         _applyButton.Update(_game.Input, _game.Input.Navigation);
+        _testButton.Update(_game.Input, _game.Input.Navigation);
         _backButton.Update(_game.Input, _game.Input.Navigation);
     }
 
@@ -2508,6 +2545,26 @@ public sealed class EditorScene : IScene
     private void ApplyChanges()
     {
         SaveLevel(force: true);
+    }
+
+    private void StartEditorTest()
+    {
+        if (_isDirty)
+        {
+            SaveLevel(force: true);
+        }
+
+        Level testLevel = Level.FromData(_level.ToData());
+        RopeGameplayMode ropeMode = LevelRules.ClampRopeMode(testLevel, RopeGameplayMode.ColoredPhysics);
+        _game.ChangeScene(new GameScene(
+            _game,
+            _levelId,
+            ropeMode,
+            lavaRiseEnabled: testLevel.LavaRise,
+            ghostBestRunEnabled: false,
+            playerCollisionEnabled: testLevel.PlayerCollision,
+            editorTestMode: true,
+            levelOverride: testLevel));
     }
 
     private void BeginHistoryGesture()

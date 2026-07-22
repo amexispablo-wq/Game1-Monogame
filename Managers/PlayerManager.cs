@@ -50,6 +50,11 @@ public sealed class PlayerManager
                 _session.ReserveNetworkId(networkId);
             }
             NetworkEntityOwnership ownership = new(networkId, ownerId, isLocal, isHostControlled);
+            string role = isLocal ? "LocalPlayer" : "RemotePlayer";
+            MultiplayerDebug.LogSpawn(
+                $"Create {role} '{indicatorLabel}' idx={i} NetworkId={networkId} OwnerId={ownerId} " +
+                $"hostCtrl={isHostControlled} input={assignedInput.DeviceType} " +
+                $"(from party NetworkPlayerId={member.NetworkPlayerId} — no spawn packet)");
             Player player = new(
                 GetPlayerId(i),
                 i,
@@ -59,6 +64,7 @@ public sealed class PlayerManager
                 ownership,
                 indicatorLabel);
             Players.Add(player);
+            ApplySpawnColor(player);
             if (member.IsLocallyOwned)
             {
                 string? skinId = SkinLibraryStorage.GetSelectedSkinId(member.Id);
@@ -77,10 +83,32 @@ public sealed class PlayerManager
                 assignedInput,
                 member.DisplayName,
                 member.Id));
+            MultiplayerDebug.LogSpawn(
+                $"Register NetworkId={networkId} OwnerId={ownerId} sessionPlayers={_session.Players.Count}");
         }
 
         input.SetGameplayBindings(bindings);
+        MultiplayerDebug.LogSpawn($"SpawnFromParty done players={Players.Count} role={_session.Role}");
         return Players;
+    }
+
+    public IReadOnlyList<Player> SpawnSoloTest(
+        IReadOnlyList<PartyMember> partyMembers,
+        InputManager input)
+    {
+        List<PartyMember> solo = new(1);
+        for (int i = 0; i < partyMembers.Count; i++)
+        {
+            if (!partyMembers[i].IsLocallyOwned)
+            {
+                continue;
+            }
+
+            solo.Add(partyMembers[i]);
+            break;
+        }
+
+        return SpawnFromParty(solo, input);
     }
 
     public void SyncInputDevicesFromParty(IReadOnlyList<PartyMember> members, InputManager input)
@@ -140,7 +168,14 @@ public sealed class PlayerManager
     public void RespawnPlayer(Player player)
     {
         player.RespawnAt(RespawnPosition);
-        ApplyCheckpointColor(player);
+        if (HasCheckpoint)
+        {
+            ApplyCheckpointColor(player);
+        }
+        else
+        {
+            ApplySpawnColor(player);
+        }
     }
 
     public void ReviveAllAtStart()
@@ -148,6 +183,7 @@ public sealed class PlayerManager
         for (int i = 0; i < Players.Count; i++)
         {
             Players[i].Revive(GetSpawnPosition(i));
+            ApplySpawnColor(Players[i]);
         }
     }
 
@@ -199,6 +235,11 @@ public sealed class PlayerManager
         }
     }
 
+    private void ApplySpawnColor(Player player)
+    {
+        player.RestoreColor(Level.NormalizePlayerStartColor(_level.PlayerStartColor));
+    }
+
     public Player SpawnRemotePlayer(
         PlayerId playerId,
         int playerIndex,
@@ -234,6 +275,7 @@ public sealed class PlayerManager
         NetworkEntityOwnership ownership = new(networkId, ownerId, isLocal, isHostControlled);
         Player player = new(playerId, playerIndex, partyMemberId, spawnPosition, assignedInput, ownership, displayName);
         Players.Add(player);
+        ApplySpawnColor(player);
 
         _session.RegisterPlayer(new PlayerSessionInfo(
             networkId,
