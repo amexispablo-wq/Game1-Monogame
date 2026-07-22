@@ -2,7 +2,8 @@
 namespace ColorBlocks;
 
 /// <summary>
-/// Steam Input digital/analog action names. Must match steam_input_manifest.vdf.
+/// Steam Input action names. Must match steam_input_manifest.vdf.
+/// Gameplay-only — menus synthesize from these in InputManager.
 /// </summary>
 public static class SteamInputActionNames
 {
@@ -15,23 +16,16 @@ public static class SteamInputActionNames
     public const string ColorRed = "ColorRed";
     public const string ColorGreen = "ColorGreen";
     public const string ColorBlue = "ColorBlue";
-    public const string MenuAccept = "MenuAccept";
-    public const string MenuCancel = "MenuCancel";
-    public const string MenuBack = "MenuBack";
-    public const string MenuStart = "MenuStart";
-
     public const string Move = "Move";
-    public const string MenuNavigate = "MenuNavigate";
 
     public static readonly string[] DigitalActions =
     {
         Jump, PullRope, Respawn, Pause,
-        ColorRed, ColorGreen, ColorBlue,
-        MenuAccept, MenuCancel, MenuBack, MenuStart
+        ColorRed, ColorGreen, ColorBlue
     };
 
     public static readonly string[] AnalogActions =
     {
-        Move, MenuNavigate
+        Move
     };
 }

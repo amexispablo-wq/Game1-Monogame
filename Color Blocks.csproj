@@ -30,6 +30,7 @@
     </None>
     <None Update="Content\Audio\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
     <None Update="Content\OfficialLevels\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

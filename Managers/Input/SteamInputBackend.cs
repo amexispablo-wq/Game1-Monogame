@@ -1,21 +1,20 @@
 #nullable enable
 using System;
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Input;
 
 namespace ColorBlocks;
 
 /// <summary>
-/// Reads gameplay + menu actions from Steam Input for a local player slot.
+/// Steam Input gameplay backend only. No menu knowledge — InputManager synthesizes UI.
 /// </summary>
 public sealed class SteamInputBackend
 {
     private readonly SteamInputManager _steam;
     private readonly bool[] _prevDigital = new bool[SteamInputActionNames.DigitalActions.Length];
     private readonly bool[] _currDigital = new bool[SteamInputActionNames.DigitalActions.Length];
-    // Per-slot edge tracking: [slot, actionIndex]
     private readonly bool[,] _prevBySlot = new bool[InputManager.MaxLocalPlayers, SteamInputActionNames.DigitalActions.Length];
     private readonly bool[,] _currBySlot = new bool[InputManager.MaxLocalPlayers, SteamInputActionNames.DigitalActions.Length];
+    private readonly Vector2[] _moveBySlot = new Vector2[InputManager.MaxLocalPlayers];
 
     public SteamInputBackend(SteamInputManager steam)
     {
@@ -24,15 +23,37 @@ public sealed class SteamInputBackend
 
     public bool IsActive => _steam.IsInitialized && _steam.ConnectedControllerCount > 0;
 
+    /// <summary>Aggregated Move vector (strongest magnitude across connected slots).</summary>
+    public Vector2 MoveVector { get; private set; }
+
     public bool HasController(int localPlayerSlot) =>
         _steam.IsInitialized && _steam.GetHandleForSlot(localPlayerSlot).m_InputHandle != 0;
 
+    public Vector2 GetMoveVector(int localPlayerSlot)
+    {
+        if (localPlayerSlot < 0 || localPlayerSlot >= InputManager.MaxLocalPlayers)
+        {
+            return Vector2.Zero;
+        }
+
+        return _moveBySlot[localPlayerSlot];
+    }
+
     public void BeginFrame()
     {
+        MoveVector = Vector2.Zero;
         if (!_steam.IsInitialized)
         {
+            for (int slot = 0; slot < InputManager.MaxLocalPlayers; slot++)
+            {
+                _moveBySlot[slot] = Vector2.Zero;
+            }
+
             return;
         }
+
+        float bestLenSq = 0f;
+        Vector2 best = Vector2.Zero;
 
         for (int slot = 0; slot < InputManager.MaxLocalPlayers; slot++)
         {
@@ -41,7 +62,23 @@ public sealed class SteamInputBackend
                 _prevBySlot[slot, a] = _currBySlot[slot, a];
                 _currBySlot[slot, a] = _steam.GetDigital(slot, SteamInputActionNames.DigitalActions[a]);
             }
+
+            Vector2 move = Vector2.Zero;
+            if (_steam.TryGetAnalog(slot, SteamInputActionNames.Move, out float ax, out float ay))
+            {
+                move = GamepadDefaults.ProcessLeftStick(new Vector2(ax, ay));
+            }
+
+            _moveBySlot[slot] = move;
+            float lenSq = move.LengthSquared();
+            if (lenSq > bestLenSq)
+            {
+                bestLenSq = lenSq;
+                best = move;
+            }
         }
+
+        MoveVector = best;
 
         for (int a = 0; a < SteamInputActionNames.DigitalActions.Length; a++)
         {
@@ -65,14 +102,8 @@ public sealed class SteamInputBackend
             return PlayerInputState.Empty;
         }
 
-        float moveX = 0f;
-        float moveY = 0f;
-        if (_steam.TryGetAnalog(localPlayerSlot, SteamInputActionNames.Move, out float ax, out float ay))
-        {
-            Vector2 processed = GamepadDefaults.ProcessLeftStick(new Vector2(ax, ay));
-            moveX = Math.Clamp(processed.X, -1f, 1f);
-            moveY = processed.Y;
-        }
+        Vector2 move = GetMoveVector(localPlayerSlot);
+        float moveX = Math.Clamp(move.X, -1f, 1f);
 
         GameColor? color = null;
         if (WasPressed(localPlayerSlot, SteamInputActionNames.ColorRed))
@@ -88,106 +119,15 @@ public sealed class SteamInputBackend
             color = GameColor.Green;
         }
 
-        bool fastFall = moveY < -GamepadDefaults.FastFallProcessedThreshold;
-        bool pullRope = IsHeld(localPlayerSlot, SteamInputActionNames.PullRope);
-
         return new PlayerInputState(
             moveX,
             WasPressed(localPlayerSlot, SteamInputActionNames.Jump),
             WasPressed(localPlayerSlot, SteamInputActionNames.Respawn),
-            fastFall,
-            pullRope,
-            color);
-    }
-
-    public void MergeMenuFlags(ref MenuInputFlags flags)
-    {
-        if (!IsActive)
-        {
-            return;
-        }
-
-        if (WasPressedAny(SteamInputActionNames.MenuAccept))
-        {
-            flags.ConfirmPressed = true;
-            flags.Activity = true;
-        }
-
-        if (IsHeldAny(SteamInputActionNames.MenuAccept))
-        {
-            flags.ConfirmHeld = true;
-        }
-
-        if (WasPressedAny(SteamInputActionNames.MenuCancel))
-        {
-            flags.CancelPressed = true;
-            flags.Activity = true;
-        }
-
-        if (WasPressedAny(SteamInputActionNames.MenuBack))
-        {
-            flags.BackPressed = true;
-            flags.Activity = true;
-        }
-
-        if (WasPressedAny(SteamInputActionNames.Pause) || WasPressedAny(SteamInputActionNames.MenuStart))
-        {
-            flags.PausePressed = true;
-            flags.Activity = true;
-        }
-
-        float navX = 0f;
-        float navY = 0f;
-        bool hasNav = false;
-        for (int slot = 0; slot < InputManager.MaxLocalPlayers; slot++)
-        {
-            if (!_steam.TryGetAnalog(slot, SteamInputActionNames.MenuNavigate, out float x, out float y))
-            {
-                continue;
-            }
-
-            Vector2 processed = GamepadDefaults.ProcessLeftStick(new Vector2(x, y));
-            if (MathF.Abs(processed.X) > MathF.Abs(navX))
-            {
-                navX = processed.X;
-            }
-
-            if (MathF.Abs(processed.Y) > MathF.Abs(navY))
-            {
-                navY = processed.Y;
-            }
-
-            hasNav = true;
-        }
-
-        if (!hasNav)
-        {
-            return;
-        }
-
-        if (navY > GamepadDefaults.MenuStickDirectionThreshold)
-        {
-            flags.StickUpHeld = true;
-            flags.Activity = true;
-        }
-
-        if (navY < -GamepadDefaults.MenuStickDirectionThreshold)
-        {
-            flags.StickDownHeld = true;
-            flags.Activity = true;
-        }
-
-        if (navX < -GamepadDefaults.MenuStickDirectionThreshold)
-        {
-            flags.StickLeftHeld = true;
-            flags.Activity = true;
-        }
-
-        if (navX > GamepadDefaults.MenuStickDirectionThreshold)
-        {
-            flags.StickRightHeld = true;
-            flags.Activity = true;
-        }
+            move.Y < -GamepadDefaults.FastFallProcessedThreshold,
+            IsHeld(localPlayerSlot, SteamInputActionNames.PullRope),
+            color,
+            move,
+            MenuNavigate: default);
     }
 
     public bool WasPressed(int localPlayerSlot, string actionName)
@@ -241,21 +181,4 @@ public sealed class SteamInputBackend
 
         return -1;
     }
-}
-
-/// <summary>
-/// Scratch flags merged from Steam menu actions into InputManager.
-/// </summary>
-public struct MenuInputFlags
-{
-    public bool ConfirmPressed;
-    public bool ConfirmHeld;
-    public bool CancelPressed;
-    public bool BackPressed;
-    public bool PausePressed;
-    public bool StickUpHeld;
-    public bool StickDownHeld;
-    public bool StickLeftHeld;
-    public bool StickRightHeld;
-    public bool Activity;
 }

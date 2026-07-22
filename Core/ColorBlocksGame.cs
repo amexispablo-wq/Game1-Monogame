@@ -166,6 +166,20 @@ public class ColorBlocksGame : Game
         ApplySceneMusic(scene);
     }
 
+    /// <summary>
+    /// Single place that decides whether Steam Move drives gameplay or UI.
+    /// Uses prior-frame GameplayInputBlocked so pause/menus take stick without per-scene logic.
+    /// </summary>
+    private AnalogInputContext ResolveAnalogInputContext()
+    {
+        if (_currentScene is GameScene && !_input.GameplayInputBlocked)
+        {
+            return AnalogInputContext.Gameplay;
+        }
+
+        return AnalogInputContext.Menu;
+    }
+
     private void ApplySceneMusic(IScene scene)
     {
         switch (scene)
@@ -238,6 +252,7 @@ public class ColorBlocksGame : Game
         _steam.RunCallbacks();
         _steamInput.RunFrame();
         _input.ConfigurePointerTransform(Window.ClientBounds, GraphicsDevice.Viewport, _presentation);
+        _input.AnalogContext = ResolveAnalogInputContext();
         _input.Update();
         GameAudio.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
 

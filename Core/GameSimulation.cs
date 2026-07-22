@@ -259,7 +259,9 @@ public sealed class GameSimulation
                     latched.RespawnPressed || current.RespawnPressed,
                     current.FastFallHeld,
                     current.PullRopeHeld,
-                    current.RequestedColor ?? latched.RequestedColor);
+                    current.RequestedColor ?? latched.RequestedColor,
+                    current.Move,
+                    current.MenuNavigate);
             }
             else
             {
@@ -290,7 +292,9 @@ public sealed class GameSimulation
                 false,
                 input.FastFallHeld,
                 input.PullRopeHeld,
-                null);
+                null,
+                input.Move,
+                input.MenuNavigate);
         }
 
         return frame;

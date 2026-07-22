@@ -78,11 +78,6 @@
 					"title" "#Action_Move"
 					"input_mode" "joystick_move"
 				}
-				"MenuNavigate"
-				{
-					"title" "#Action_MenuNavigate"
-					"input_mode" "joystick_move"
-				}
 			}
 			"AnalogTrigger"
 			{
@@ -96,10 +91,6 @@
 				"ColorRed" "#Action_ColorRed"
 				"ColorGreen" "#Action_ColorGreen"
 				"ColorBlue" "#Action_ColorBlue"
-				"MenuAccept" "#Action_MenuAccept"
-				"MenuCancel" "#Action_MenuCancel"
-				"MenuBack" "#Action_MenuBack"
-				"MenuStart" "#Action_MenuStart"
 			}
 		}
 	}
@@ -109,7 +100,6 @@
 		{
 			"Set_Gameplay" "Gameplay"
 			"Action_Move" "Move"
-			"Action_MenuNavigate" "Menu Navigate"
 			"Action_Jump" "Jump"
 			"Action_PullRope" "Pull Rope"
 			"Action_Respawn" "Respawn"
@@ -117,10 +107,6 @@
 			"Action_ColorRed" "Color Red"
 			"Action_ColorGreen" "Color Green"
 			"Action_ColorBlue" "Color Blue"
-			"Action_MenuAccept" "Menu Accept"
-			"Action_MenuCancel" "Menu Cancel"
-			"Action_MenuBack" "Menu Back"
-			"Action_MenuStart" "Menu Start"
 			"Title_Gamepad" "Official Gamepad"
 			"Description_Gamepad" "Default Color Blocks controller layout."
 		}
@@ -128,7 +114,6 @@
 		{
 			"Set_Gameplay" "Juego"
 			"Action_Move" "Mover"
-			"Action_MenuNavigate" "Navegar menú"
 			"Action_Jump" "Saltar"
 			"Action_PullRope" "Tirar cuerda"
 			"Action_Respawn" "Reaparecer"
@@ -136,10 +121,6 @@
 			"Action_ColorRed" "Color rojo"
 			"Action_ColorGreen" "Color verde"
 			"Action_ColorBlue" "Color azul"
-			"Action_MenuAccept" "Aceptar menú"
-			"Action_MenuCancel" "Cancelar menú"
-			"Action_MenuBack" "Atrás menú"
-			"Action_MenuStart" "Inicio menú"
 			"Title_Gamepad" "Mando oficial"
 			"Description_Gamepad" "Disposición predeterminada de Color Blocks."
 		}

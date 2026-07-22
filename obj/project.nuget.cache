@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "nknGTXydVc8=",
+  "dgSpecHash": "I2Us5BoQWoc=",
   "success": true,
   "projectFilePath": "C:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj",
   "expectedPackageFiles": [
@@ -15,8 +15,12 @@
     "C:\\Users\\amexi\\.nuget\\packages\\system.memory\\4.5.3\\system.memory.4.5.3.nupkg.sha512",
     "C:\\Users\\amexi\\.nuget\\packages\\system.valuetuple\\4.5.0\\system.valuetuple.4.5.0.nupkg.sha512",
     "C:\\Users\\amexi\\.nuget\\packages\\microsoft.netcore.app.ref\\9.0.15\\microsoft.netcore.app.ref.9.0.15.nupkg.sha512",
+    "C:\\Users\\amexi\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\9.0.15\\microsoft.netcore.app.runtime.win-x64.9.0.15.nupkg.sha512",
     "C:\\Users\\amexi\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\9.0.15\\microsoft.windowsdesktop.app.ref.9.0.15.nupkg.sha512",
+    "C:\\Users\\amexi\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\9.0.15\\microsoft.windowsdesktop.app.runtime.win-x64.9.0.15.nupkg.sha512",
     "C:\\Users\\amexi\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\9.0.15\\microsoft.aspnetcore.app.ref.9.0.15.nupkg.sha512",
+    "C:\\Users\\amexi\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\9.0.15\\microsoft.aspnetcore.app.runtime.win-x64.9.0.15.nupkg.sha512",
+    "C:\\Users\\amexi\\.nuget\\packages\\microsoft.netcore.app.crossgen2.win-x64\\9.0.15\\microsoft.netcore.app.crossgen2.win-x64.9.0.15.nupkg.sha512",
     "C:\\Users\\amexi\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\9.0.15\\microsoft.netcore.app.host.win-x64.9.0.15.nupkg.sha512"
   ],
   "logs": []

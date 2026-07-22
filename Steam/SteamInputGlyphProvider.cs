@@ -114,12 +114,7 @@ public sealed class SteamInputGlyphProvider
             DumpDigital(handle, SteamInputActionNames.ColorRed);
             DumpDigital(handle, SteamInputActionNames.ColorGreen);
             DumpDigital(handle, SteamInputActionNames.ColorBlue);
-            DumpDigital(handle, SteamInputActionNames.MenuAccept);
-            DumpDigital(handle, SteamInputActionNames.MenuCancel);
-            DumpDigital(handle, SteamInputActionNames.MenuBack);
-            DumpDigital(handle, SteamInputActionNames.MenuStart);
             DumpAnalog(handle, SteamInputActionNames.Move);
-            DumpAnalog(handle, SteamInputActionNames.MenuNavigate);
         }
 
         Console.WriteLine("[SteamInput] === end dump ===");

@@ -1,4 +1,5 @@
 #nullable enable
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
 namespace ColorBlocks;
@@ -46,13 +47,18 @@ public sealed class KeyboardBackend
             requestedColor = GameColor.Green;
         }
 
+        float fastFallY = current.IsKeyDown(fastFall) ? -1f : 0f;
+        Vector2 move = new(horizontalMovement, fastFallY);
+
         return new PlayerInputState(
             horizontalMovement,
             IsNewKeyPress(current, previous, jump),
             IsNewKeyPress(current, previous, respawn),
             current.IsKeyDown(fastFall),
             current.IsKeyDown(pullRope),
-            requestedColor);
+            requestedColor,
+            move,
+            MenuNavigate: default);
     }
 
     private static bool IsNewKeyPress(KeyboardState current, KeyboardState previous, Keys key) =>

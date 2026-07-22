@@ -1,7 +1,7 @@
 "controller_mappings"
 {
 	"version"		"3"
-	"revision"		"1"
+	"revision"		"3"
 	"title"		"#Title_Gamepad"
 	"description"		"#Description_Gamepad"
 	"controller_type"		"controller_generic"
@@ -86,6 +86,19 @@
 		"name"		"D-Pad"
 		"inputs"
 		{
+			"click"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"game_action Gameplay Move, Move"
+						}
+					}
+				}
+			}
 		}
 	}
 	"group"
@@ -157,7 +170,6 @@
 						"bindings"
 						{
 							"binding"		"game_action Gameplay Pause, Pause"
-							"binding"		"game_action Gameplay MenuStart, Menu Start"
 						}
 					}
 				}
@@ -180,64 +192,6 @@
 						"bindings"
 						{
 							"binding"		"game_action Gameplay Respawn, Respawn"
-							"binding"		"game_action Gameplay MenuBack, Menu Back"
-						}
-					}
-				}
-			}
-		}
-	}
-	"group"
-	{
-		"id"		"7"
-		"mode"		"four_buttons"
-		"name"		"Menu Face"
-		"inputs"
-		{
-			"button_a"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"game_action Gameplay MenuAccept, Menu Accept"
-						}
-					}
-				}
-			}
-			"button_b"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"game_action Gameplay MenuCancel, Menu Cancel"
-						}
-					}
-				}
-			}
-		}
-	}
-	"group"
-	{
-		"id"		"8"
-		"mode"		"joystick_move"
-		"name"		"Menu Stick"
-		"inputs"
-		{
-			"edge"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"game_action Gameplay MenuNavigate, Menu Navigate"
 						}
 					}
 				}
@@ -253,8 +207,6 @@
 		"4"		"right_trigger active"
 		"5"		"start active"
 		"6"		"select active"
-		"7"		"button_diamond active"
-		"8"		"left_joystick active"
 	}
 	"settings"
 	{

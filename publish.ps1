@@ -170,10 +170,11 @@ function Sync-ShippedContent {
         New-Item -ItemType Directory -Path $contentDest -Force | Out-Null
     }
 
-    # Ship only runtime level data — not store art, MGCB, or obj intermediates.
+    # Ship runtime data. Audio must include MGCB-built .xnb companions for Song/MediaPlayer.
     $shipGlobs = @(
         @{ Rel = "level.json"; IsDir = $false },
-        @{ Rel = "OfficialLevels"; IsDir = $true }
+        @{ Rel = "OfficialLevels"; IsDir = $true },
+        @{ Rel = "Audio"; IsDir = $true }
     )
 
     foreach ($item in $shipGlobs) {
@@ -195,6 +196,17 @@ function Sync-ShippedContent {
             }
             Copy-Item -LiteralPath $src -Destination $dst -Force
         }
+    }
+
+    # Overlay pipeline-built songs (.xnb + processed .ogg). Raw source ogg alone is not enough
+    # for Content.Load<Song> / MediaPlayer on DesktopGL.
+    $mgcbAudio = Join-Path $SourceContent "bin\DesktopGL\Content\Audio"
+    $audioDest = Join-Path $contentDest "Audio"
+    if (Test-Path -LiteralPath $mgcbAudio) {
+        Write-Host "Overlaying MGCB Audio from Content\bin\DesktopGL\Content\Audio"
+        Copy-Item -Path (Join-Path $mgcbAudio "*") -Destination $audioDest -Recurse -Force
+    } else {
+        $MissingAssets.Add("MGCB Audio output missing: Content\bin\DesktopGL\Content\Audio (run a build first)")
     }
 }
 
@@ -301,7 +313,7 @@ function Test-ContentAssets {
         $requiredRelPaths.Add("Content\level.json")
     }
 
-    foreach ($sub in @("OfficialLevels")) {
+    foreach ($sub in @("OfficialLevels", "Audio")) {
         $srcDir = Join-Path $SourceContent $sub
         if (Test-Path -LiteralPath $srcDir) {
             Get-ChildItem -LiteralPath $srcDir -Recurse -File -Force |
@@ -310,6 +322,18 @@ function Test-ContentAssets {
                     $rel = $_.FullName.Substring($SourceContent.Length).TrimStart("\", "/")
                     $requiredRelPaths.Add(("Content\" + $rel))
                 }
+        }
+    }
+
+    # Song assets require pipeline .xnb next to companion .ogg (MediaPlayer).
+    foreach ($music in @(
+        "Content\Audio\Music\MainMenu.xnb",
+        "Content\Audio\Music\MainMenu.ogg",
+        "Content\Audio\Music\levelEditor.xnb",
+        "Content\Audio\Music\levelEditor.ogg"
+    )) {
+        if (-not $requiredRelPaths.Contains($music)) {
+            $requiredRelPaths.Add($music)
         }
     }
 

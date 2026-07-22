@@ -29,6 +29,16 @@ internal static class ContentResolver
             {
                 Console.WriteLine($"Content song load failed '{assetPath}': {ex.Message}");
             }
+
+            // Some publish layouts nest under an extra Content folder.
+            try
+            {
+                return _game.Content.Load<Song>("Content/" + assetPath);
+            }
+            catch
+            {
+                // Fall through to raw file load.
+            }
         }
 
         return TryLoadSongFromFile(assetPath);

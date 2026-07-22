@@ -129,6 +129,17 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public bool GameplayInputBlocked { get; set; }
 
+    /// <summary>
+    /// Central routing for Steam Move analog. Gameplay vs menu — set by ColorBlocksGame each frame.
+    /// </summary>
+    public AnalogInputContext AnalogContext { get; set; } = AnalogInputContext.Menu;
+
+    /// <summary>Routed Move vector this frame (Steam Move when active; else aggregated from backends).</summary>
+    public Vector2 Move { get; private set; }
+
+    /// <summary>Routed menu navigation vector this frame (Steam Move when Menu context).</summary>
+    public Vector2 MenuNavigate { get; private set; }
+
     private bool _virtualLeftClickRequested;
     private int _mouseInactiveFrames;
 
@@ -152,6 +163,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         }
 
         _steamBackend?.BeginFrame();
+        RouteAnalogVectors();
 
         UpdateMenuNavigation();
         UpdateSystemButtons();
@@ -161,6 +173,24 @@ public sealed class InputManager : ILocalPlayerInputSource
         RequestedColor = GetEditorColorRequest();
         _virtualLeftClickRequested = false;
         UpdateReplayViewerInput();
+    }
+
+    private void RouteAnalogVectors()
+    {
+        Vector2 steamMove = _steamBackend is { IsActive: true }
+            ? _steamBackend.MoveVector
+            : Vector2.Zero;
+
+        if (AnalogContext == AnalogInputContext.Gameplay)
+        {
+            Move = steamMove;
+            MenuNavigate = Vector2.Zero;
+        }
+        else
+        {
+            Move = Vector2.Zero;
+            MenuNavigate = steamMove;
+        }
     }
 
     public InputGlyph GetActionGlyph(GameplayInputAction action, int localPlayerSlot = 0)
@@ -683,26 +713,78 @@ public sealed class InputManager : ILocalPlayerInputSource
         MenuStickLeftHeld = stickLeft;
         MenuStickRightHeld = stickRight;
 
-        if (_steamBackend is not null && _steamBackend.IsActive)
+        SynthesizeSteamMenuFromGameplayActions();
+    }
+
+    /// <summary>
+    /// Map Steam gameplay actions → menu flags by AnalogContext (Celeste-style).
+    /// Jump→Accept, ColorBlue→Cancel/Back, Pause→Pause, Move→stick nav.
+    /// </summary>
+    private void SynthesizeSteamMenuFromGameplayActions()
+    {
+        if (_steamBackend is null || !_steamBackend.IsActive)
         {
-            MenuInputFlags steamMenu = default;
-            _steamBackend.MergeMenuFlags(ref steamMenu);
-            MenuConfirmPressed |= steamMenu.ConfirmPressed;
-            MenuConfirmHeld |= steamMenu.ConfirmHeld;
-            MenuCancelPressed |= steamMenu.CancelPressed;
-            GamepadMenuConfirmPressed |= steamMenu.ConfirmPressed;
-            GamepadMenuCancelPressed |= steamMenu.CancelPressed;
-            GamepadBackPressed |= steamMenu.BackPressed;
-            GameplayPausePressed |= steamMenu.PausePressed;
-            MenuStickUpHeld |= steamMenu.StickUpHeld;
-            MenuStickDownHeld |= steamMenu.StickDownHeld;
-            MenuStickLeftHeld |= steamMenu.StickLeftHeld;
-            MenuStickRightHeld |= steamMenu.StickRightHeld;
-            if (steamMenu.Activity)
-            {
-                GamepadActivityThisFrame = true;
-                GamepadMenuActivityThisFrame = true;
-            }
+            return;
+        }
+
+        // Pause always available (open/close pause / popups).
+        if (_steamBackend.WasPressedAny(SteamInputActionNames.Pause))
+        {
+            GameplayPausePressed = true;
+            GamepadActivityThisFrame = true;
+            GamepadMenuActivityThisFrame = true;
+        }
+
+        if (AnalogContext != AnalogInputContext.Menu)
+        {
+            return;
+        }
+
+        if (_steamBackend.WasPressedAny(SteamInputActionNames.Jump))
+        {
+            MenuConfirmPressed = true;
+            GamepadMenuConfirmPressed = true;
+            GamepadActivityThisFrame = true;
+            GamepadMenuActivityThisFrame = true;
+        }
+
+        if (_steamBackend.IsHeldAny(SteamInputActionNames.Jump))
+        {
+            MenuConfirmHeld = true;
+        }
+
+        if (_steamBackend.WasPressedAny(SteamInputActionNames.ColorBlue))
+        {
+            MenuCancelPressed = true;
+            GamepadMenuCancelPressed = true;
+            GamepadBackPressed = true;
+            GamepadActivityThisFrame = true;
+            GamepadMenuActivityThisFrame = true;
+        }
+
+        Vector2 nav = _steamBackend.MoveVector;
+        if (nav.Y > GamepadDefaults.MenuStickDirectionThreshold)
+        {
+            MenuStickUpHeld = true;
+            GamepadActivityThisFrame = true;
+        }
+
+        if (nav.Y < -GamepadDefaults.MenuStickDirectionThreshold)
+        {
+            MenuStickDownHeld = true;
+            GamepadActivityThisFrame = true;
+        }
+
+        if (nav.X < -GamepadDefaults.MenuStickDirectionThreshold)
+        {
+            MenuStickLeftHeld = true;
+            GamepadActivityThisFrame = true;
+        }
+
+        if (nav.X > GamepadDefaults.MenuStickDirectionThreshold)
+        {
+            MenuStickRightHeld = true;
+            GamepadActivityThisFrame = true;
         }
     }
 
@@ -881,6 +963,12 @@ public sealed class InputManager : ILocalPlayerInputSource
         {
             if (_steamBackend is not null && _steamBackend.HasController(i))
             {
+                // Colors are gameplay-only; in menus ColorBlue is Cancel.
+                if (AnalogContext != AnalogInputContext.Gameplay)
+                {
+                    continue;
+                }
+
                 if (_steamBackend.WasPressed(i, SteamInputActionNames.ColorRed))
                 {
                     return GameColor.Red;

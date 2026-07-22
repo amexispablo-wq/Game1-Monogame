@@ -1,0 +1,4 @@
+﻿# SteamBuild staging folders (filled by publish.ps1)
+*
+!.gitignore
+

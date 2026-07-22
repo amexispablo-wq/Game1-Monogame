@@ -58,7 +58,9 @@ public sealed class GamepadBackend
             WasBindingPressed(current, previous, respawn, GameplayInputAction.Respawn),
             fastFallHeld,
             pullRope,
-            requestedColor);
+            requestedColor,
+            processedStick,
+            MenuNavigate: default);
     }
 
     private static bool WasBindingPressed(
