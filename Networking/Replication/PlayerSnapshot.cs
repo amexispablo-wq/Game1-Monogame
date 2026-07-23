@@ -12,4 +12,5 @@ public readonly record struct PlayerSnapshot(
     PlayerState State,
     bool IsGrounded,
     bool IsFrozen,
-    string CosmeticSkinId = "");
+    string CosmeticSkinId = "",
+    byte[]? CosmeticSkinPixels = null);

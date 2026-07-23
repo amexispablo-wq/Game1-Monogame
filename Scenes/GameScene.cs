@@ -29,9 +29,11 @@ public sealed class GameScene : IScene
     private bool _newRecord;
     private float _completionUiElapsed;
     private Rectangle _completionReplayBounds;
+    private Rectangle _completionNextBounds;
     private Rectangle _completionMenuBounds;
     private readonly UIFocusManager _completionFocus = new();
     private readonly List<FocusableGridCell> _completionOptionFocusables = new();
+    private AlertPopup? _alertPopup;
     private Rectangle _deathRespawnStartBounds;
     private Rectangle _deathCheckpointBounds;
     private Rectangle _deathQuitBounds;
@@ -43,12 +45,18 @@ public sealed class GameScene : IScene
     private bool _disconnectPending;
     private float _disconnectTimer;
     private const float DisconnectReturnDelay = 2.5f;
+    private const float ClientSnapshotStallSeconds = 2f;
     private readonly ReplayRecorder _replayRecorder = new();
     private readonly GhostPlayer? _ghostPlayer;
-    private readonly bool _ghostBestRunEnabled;
+    private readonly GhostPlayer? _worldRecordGhost;
+    private readonly GhostMode _ghostMode;
     private readonly bool _editorTestMode;
+    private bool _exited;
     private bool _savedNewRecordReplay;
     private bool _photoMode;
+    private bool _observedGameplayActive;
+    private bool _clientReceivedSnapshot;
+    private float _clientSecondsWithoutSnapshot;
 
     public bool IsPhotoModeActive => _photoMode;
 
@@ -66,7 +74,7 @@ public sealed class GameScene : IScene
         string levelId = "level_1",
         RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics,
         bool lavaRiseEnabled = false,
-        bool ghostBestRunEnabled = false,
+        GhostMode ghostMode = GhostMode.None,
         bool playerCollisionEnabled = false,
         bool editorTestMode = false,
         Level? levelOverride = null)
@@ -76,7 +84,7 @@ public sealed class GameScene : IScene
         _ropeGameplayMode = ropeGameplayMode;
         _lavaRiseEnabled = lavaRiseEnabled;
         _playerCollisionEnabled = playerCollisionEnabled;
-        _ghostBestRunEnabled = ghostBestRunEnabled && !editorTestMode;
+        _ghostMode = editorTestMode ? GhostMode.None : ghostMode;
         _editorTestMode = editorTestMode;
         int localOwnerId = _game.SteamLobby.IsAvailable
             ? SteamOwnerId.FromSteamId(_game.SteamLobby.LocalSteamId)
@@ -113,7 +121,7 @@ public sealed class GameScene : IScene
         }
         else
         {
-            _playerManager.SpawnFromParty(_game.Party.Members, _game.Input);
+            _playerManager.SpawnFromParty(_game.Party.Members, _game.Input, _game.SteamLobby);
         }
 
         _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled, playerCollisionEnabled)
@@ -143,26 +151,74 @@ public sealed class GameScene : IScene
 
         _simulation.FixedTickCompleted += OnSimulationFixedTick;
 
-        if (_ghostBestRunEnabled)
+        if (_ghostMode.IncludesPersonalBest())
         {
             _ghostPlayer = new GhostPlayer();
             _ghostPlayer.TryLoadBestRun(_levelId);
         }
 
+        if (_ghostMode.IncludesWorldRecord() && SteamGhostService.SupportsWorldRecordGhost(_levelId))
+        {
+            _worldRecordGhost = new GhostPlayer { BorderColor = new Color(255, 210, 90) };
+            if (_game.SteamGhosts.TryLoadWorldRecordGhost(_levelId, _playerManager.Players.Count, out ReplayFile cachedWorldRecord))
+            {
+                _worldRecordGhost.TryLoadReplayFile(cachedWorldRecord);
+            }
+        }
+
+        // Official/Workshop levels always refresh the cached World Record ghost in the
+        // background for this run's player count; if a newer ghost lands while playing,
+        // it is picked up live.
+        if (!_editorTestMode && SteamGhostService.SupportsWorldRecordGhost(_levelId))
+        {
+            int wrPlayerCount = _playerManager.Players.Count;
+            _game.SteamGhosts.EnsureWorldRecordGhost(_levelId, wrPlayerCount, ready =>
+            {
+                if (!ready || _exited || _worldRecordGhost is null)
+                {
+                    return;
+                }
+
+                if (_game.SteamGhosts.TryLoadWorldRecordGhost(_levelId, wrPlayerCount, out ReplayFile downloaded))
+                {
+                    _worldRecordGhost.TryLoadReplayFile(downloaded);
+                }
+            });
+        }
+
         if (!_editorTestMode)
         {
             _game.SteamLobby.MemberLeft += OnLobbyMemberLeft;
+            _game.SteamLobby.LevelLeaveReceived += OnLevelLeaveReceived;
+
+            if (_session.Role == GameSessionRole.Host && _game.SteamLobby.IsInLobby)
+            {
+                _game.SteamLobby.SetGameplayActive(true);
+            }
+
+            if (_session.Role == GameSessionRole.Client && _game.SteamLobby.IsGameplayActive)
+            {
+                _observedGameplayActive = true;
+            }
         }
     }
 
     public void OnExit()
     {
+        _exited = true;
         _game.ActiveTuningPanel = null;
         _simulation.FixedTickCompleted -= OnSimulationFixedTick;
         ReplayDiagnostics.ActiveRecorder = null;
         if (!_editorTestMode)
         {
+            if (_session.Role == GameSessionRole.Host && _game.SteamLobby.IsInLobby)
+            {
+                _game.SteamLobby.SetGameplayActive(false);
+            }
+
             _game.SteamLobby.MemberLeft -= OnLobbyMemberLeft;
+            _game.SteamLobby.LevelLeaveReceived -= OnLevelLeaveReceived;
+
             _game.Party.UnlockAssignments();
             _replayRecorder.StopRecording();
             FinalizeSessionRecording();
@@ -194,18 +250,211 @@ public sealed class GameScene : IScene
                 _simulation.FinalTime,
                 _playerManager.Players.Count);
             ReplayStorage.SaveBestReplay(replayFile);
+            UploadRecordToSteamLeaderboard();
         }
+    }
+
+    /// <summary>
+    /// Publishes a new official record to the Steam leaderboard for Official/Workshop
+    /// levels. Host-only in online sessions so a party run produces exactly one entry
+    /// (carrying every participant's Steam id). Local levels are never uploaded.
+    /// Runs asynchronously via Steam callbacks; never blocks gameplay.
+    /// </summary>
+    private void UploadRecordToSteamLeaderboard()
+    {
+        if (!SteamLeaderboardService.SupportsLeaderboards(_levelId)
+            || !_game.SteamLeaderboards.IsAvailable
+            || _session.Role == GameSessionRole.Client
+            || _simulation.ForceUnofficial)
+        {
+            if (_simulation.ForceUnofficial)
+            {
+                MultiplayerDebug.LogSim("Skip Steam leaderboard upload — run ForceUnofficial");
+            }
+
+            return;
+        }
+
+        int levelVersion = LevelLibrary.GetLevel(_levelId)?.Version ?? 1;
+        float finalTime = _simulation.FinalTime;
+        int playerCount = _playerManager.Players.Count;
+
+        var steamIds = new List<ulong>();
+        foreach (PartyMember member in _game.Party.Members)
+        {
+            if (member.OwningSteamId != 0 && !steamIds.Contains(member.OwningSteamId))
+            {
+                steamIds.Add(member.OwningSteamId);
+            }
+        }
+
+        string levelId = _levelId;
+        string replayPath = ReplayStorage.GetBestReplayPath(levelId);
+        ColorBlocksGame game = _game;
+        int scoreCentiseconds = (int)MathF.Round(BestTimeStorage.RoundToCentiseconds(finalTime) * 100f);
+
+        game.SteamReplays.ShareReplayFile(
+            replayPath,
+            SteamReplayService.GetRemoteReplayName(levelId, playerCount, scoreCentiseconds),
+            ugcHandle =>
+            {
+                game.SteamLeaderboards.UploadRecord(
+                    new SteamLeaderboardRecord
+                    {
+                        LevelId = levelId,
+                        LevelVersion = levelVersion,
+                        TimeSeconds = finalTime,
+                        PlayerCount = playerCount,
+                        SteamIds = steamIds,
+                        ReplayUgcHandle = ugcHandle
+                    },
+                    success =>
+                    {
+                        if (success)
+                        {
+                            // Drop stale WR cache for this player-count board, then pull newest.
+                            SteamGhostService.InvalidateWorldRecordGhost(levelId, playerCount);
+                            game.SteamGhosts.EnsureWorldRecordGhost(levelId, playerCount);
+                        }
+                    });
+            });
     }
 
     private void OnLobbyMemberLeft(ulong steamId)
     {
-        if (!_game.SteamLobby.IsInLobby || steamId == _game.SteamLobby.LocalSteamId)
+        if (_exited || _editorTestMode || !_game.SteamLobby.IsInLobby)
         {
             return;
         }
 
+        if (steamId == _game.SteamLobby.LocalSteamId)
+        {
+            return;
+        }
+
+        // Mid-run disconnect: despawn peer, continue unofficial — do not kick host.
+        if (_session.Role == GameSessionRole.Host)
+        {
+            HandlePeerLeftSimulation(steamId, "MemberLeft");
+            return;
+        }
+
+        // Client: if host left lobby, end session.
+        if (steamId == _game.SteamLobby.GetLobbyOwnerSteamId()
+            || steamId == _game.Party.Leader?.OwningSteamId)
+        {
+            BeginSessionEndDisconnect($"MemberLeft host/leader sid={steamId}");
+        }
+    }
+
+    private void OnLevelLeaveReceived(ulong steamId)
+    {
+        if (_exited || _editorTestMode)
+        {
+            return;
+        }
+
+        // Echo on the client that just broadcast — already leaving.
+        if (_session.Role == GameSessionRole.Client)
+        {
+            return;
+        }
+
+        HandlePeerLeftSimulation(steamId, "LevelLeaveReceived");
+    }
+
+    private void HandlePeerLeftSimulation(ulong steamId, string reason)
+    {
+        int removed = _simulation.RemovePeerFromSimulation(steamId);
+        MultiplayerDebug.LogSim(
+            $"HandlePeerLeftSimulation ({reason}) steam={steamId} removed={removed} " +
+            $"players={_simulation.Players.Count} unofficial={_simulation.ForceUnofficial}");
+
+        if (_simulation.Players.Count == 0)
+        {
+            BeginSessionEndDisconnect($"{reason} — no players left");
+        }
+    }
+
+    private void NotifyHostLeftLevelIfClient()
+    {
+        if (_editorTestMode || _session.Role != GameSessionRole.Client || !_game.SteamLobby.IsInLobby)
+        {
+            return;
+        }
+
+        _game.SteamLobby.BroadcastLeaveLevel();
+    }
+
+    private void BeginSessionEndDisconnect(string reason)
+    {
+        if (_disconnectPending || _editorTestMode)
+        {
+            return;
+        }
+
+        MultiplayerDebug.LogSim($"Session end → return to Party ({reason})");
         _disconnectPending = true;
         _disconnectTimer = DisconnectReturnDelay;
+    }
+
+    private void CancelSessionEndDisconnect(string reason)
+    {
+        if (!_disconnectPending)
+        {
+            return;
+        }
+
+        MultiplayerDebug.LogSim($"Session end cancelled ({reason})");
+        _disconnectPending = false;
+        _disconnectTimer = 0f;
+        _clientSecondsWithoutSnapshot = 0f;
+    }
+
+    private void CheckClientSessionEnd(float dt)
+    {
+        if (_session.Role != GameSessionRole.Client || _editorTestMode)
+        {
+            return;
+        }
+
+        if (_disconnectPending)
+        {
+            // Host started another level while we were still exiting — stay for START handler.
+            if (_game.SteamLobby.IsGameplayActive)
+            {
+                CancelSessionEndDisconnect("lobby gameplay=1 during disconnect");
+                _observedGameplayActive = true;
+            }
+
+            return;
+        }
+
+        if (_game.SteamLobby.IsGameplayActive)
+        {
+            _observedGameplayActive = true;
+            // While host marks gameplay active, never treat snapshot silence as disconnect
+            // (unreliable drops / backlog must not flash "Player disconnected").
+            _clientSecondsWithoutSnapshot = 0f;
+            return;
+        }
+
+        if (_observedGameplayActive)
+        {
+            BeginSessionEndDisconnect("lobby gameplay=0 (host left level)");
+            return;
+        }
+
+        // Fallback only when gameplay already idle: host left without clearing flag edge-case.
+        if (_clientReceivedSnapshot)
+        {
+            _clientSecondsWithoutSnapshot += dt;
+            if (_clientSecondsWithoutSnapshot >= ClientSnapshotStallSeconds)
+            {
+                BeginSessionEndDisconnect(
+                    $"snapshot stall {_clientSecondsWithoutSnapshot:0.0}s after host left (gameplay idle)");
+            }
+        }
     }
 
     private IReadOnlyList<Player> Players => _simulation.Players;
@@ -271,6 +520,18 @@ public sealed class GameScene : IScene
                 _game.ChangeScene(new PartyScene(_game));
                 return;
             }
+        }
+
+        if (_alertPopup is not null)
+        {
+            _game.Input.GameplayInputBlocked = true;
+            _alertPopup.Update(gameTime, _game.Input, viewport.Width, viewport.Height);
+            if (_alertPopup.IsDismissed)
+            {
+                _alertPopup = null;
+            }
+
+            return;
         }
 
         if (_confirmPopup is not null)
@@ -375,6 +636,7 @@ public sealed class GameScene : IScene
         if (_game.Input.GameplayPausePressed)
         {
             _simulation.SetPaused(true);
+            _game.GameNetwork.ClearClientLatchedInput();
             _pauseMenu.Open();
             return;
         }
@@ -401,6 +663,7 @@ public sealed class GameScene : IScene
             MultiplayerDebug.LogSimulationRunningOnce(_session, _simulation);
             MultiplayerDebug.LogTickPeriodic(_session, _simulation);
             MultiplayerDebug.CheckClientStall(_session, _simulation);
+            CheckClientSessionEnd(dt);
         }
 
         if (_game.Party.TryHotSwapLocalInputFromActivity(_game.Input))
@@ -413,6 +676,8 @@ public sealed class GameScene : IScene
             network.SendLocalInput(_session, _simulation, _game.Input);
             if (network.TryConsumeClientSnapshot(out GameSnapshot snapshot))
             {
+                _clientReceivedSnapshot = true;
+                _clientSecondsWithoutSnapshot = 0f;
                 _simulation.ApplySnapshot(snapshot);
                 if (!_editorTestMode)
                 {
@@ -420,6 +685,7 @@ public sealed class GameScene : IScene
                 }
 
                 _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
+                _worldRecordGhost?.SyncToGameplayTick(_simulation.CurrentTick.Value);
                 UpdateGameplayAudio();
             }
 
@@ -430,6 +696,7 @@ public sealed class GameScene : IScene
 
         _simulation.Advance(dt, _game.Input);
         _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
+        _worldRecordGhost?.SyncToGameplayTick(_simulation.CurrentTick.Value);
         UpdateGameplayAudio();
         BeginCompletionUi();
         if (_simulation.IsLevelComplete && _simulation.NewRecord)
@@ -437,10 +704,7 @@ public sealed class GameScene : IScene
             _savedNewRecordReplay = true;
         }
 
-        if (_session.Role == GameSessionRole.Host)
-        {
-            network.BroadcastSnapshot(_session, _simulation.LastSnapshot);
-        }
+        // Snapshots broadcast from OnSimulationFixedTick (once per sim tick) — not every render frame.
 
         UpdateCamera(gameTime);
     }
@@ -529,7 +793,8 @@ public sealed class GameScene : IScene
             gameTime,
             _debugDraw,
             _ghostPlayer,
-            drawPlayerIndicators: !_photoMode);
+            drawPlayerIndicators: !_photoMode,
+            worldRecordGhost: _worldRecordGhost);
 
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         if (!_photoMode)
@@ -562,6 +827,11 @@ public sealed class GameScene : IScene
             _confirmPopup.Draw(gameTime, spriteBatch, _game.Pixel);
         }
 
+        if (_alertPopup is not null)
+        {
+            _alertPopup.Draw(spriteBatch, _game.Pixel, viewport.Width, viewport.Height, gameTime, _game.Input);
+        }
+
         if (_disconnectPending)
         {
             DrawDisconnectOverlay(spriteBatch, _game.Pixel, viewport);
@@ -590,6 +860,12 @@ public sealed class GameScene : IScene
         }
 
         _replayRecorder.RecordFrame(_simulation, _camera);
+
+        // Host: one snapshot per fixed tick (≤60 Hz). Per-frame broadcast flooded Steam (~1000/s).
+        if (_session.Role == GameSessionRole.Host)
+        {
+            _game.GameNetwork.BroadcastSnapshot(_session, _simulation.LastSnapshot);
+        }
     }
 
     private Vector2 GetPlayersCenter()
@@ -628,16 +904,38 @@ public sealed class GameScene : IScene
     {
         LayoutCompletionUi();
 
+        bool showNext = CanGoToNextLevel();
         _completionOptionFocusables.Clear();
         _completionFocus.Clear();
         _completionOptionFocusables.Add(new FocusableGridCell(_completionReplayBounds, () => true));
+        if (showNext)
+        {
+            _completionOptionFocusables.Add(new FocusableGridCell(_completionNextBounds, () => true));
+        }
+
         _completionOptionFocusables.Add(new FocusableGridCell(_completionMenuBounds, () => true));
 
         int replayIndex = _completionFocus.Add(_completionOptionFocusables[0], "Replay");
-        int menuIndex = _completionFocus.Add(_completionOptionFocusables[1], "BackToMenu");
-        _completionFocus.Navigation.LinkHorizontal(replayIndex, menuIndex);
+        int nextIndex = -1;
+        int focusSlot = 1;
+        if (showNext)
+        {
+            nextIndex = _completionFocus.Add(_completionOptionFocusables[focusSlot], "NextLevel");
+            focusSlot++;
+        }
 
-        _completionFocus.FinalizeFocus("Replay");
+        int menuIndex = _completionFocus.Add(_completionOptionFocusables[focusSlot], "BackToMenu");
+        if (showNext)
+        {
+            _completionFocus.Navigation.LinkHorizontal(replayIndex, nextIndex);
+            _completionFocus.Navigation.LinkHorizontal(nextIndex, menuIndex);
+        }
+        else
+        {
+            _completionFocus.Navigation.LinkHorizontal(replayIndex, menuIndex);
+        }
+
+        _completionFocus.FinalizeFocus(showNext ? "NextLevel" : "Replay");
         _completionFocus.Update(gameTime, _game.Input);
 
         InputManager input = _game.Input;
@@ -646,6 +944,12 @@ public sealed class GameScene : IScene
             if (_completionReplayBounds.Contains(input.UiPointerPosition))
             {
                 ReplayLevel();
+                return;
+            }
+
+            if (showNext && _completionNextBounds.Contains(input.UiPointerPosition))
+            {
+                GoToNextLevel();
                 return;
             }
 
@@ -663,15 +967,7 @@ public sealed class GameScene : IScene
                 continue;
             }
 
-            if (i == 0)
-            {
-                ReplayLevel();
-            }
-            else
-            {
-                ReturnToLevelSelect();
-            }
-
+            ActivateCompletionOption(i, showNext);
             return;
         }
 
@@ -685,15 +981,7 @@ public sealed class GameScene : IScene
                 continue;
             }
 
-            if (i == 0)
-            {
-                ReplayLevel();
-            }
-            else
-            {
-                ReturnToLevelSelect();
-            }
-
+            ActivateCompletionOption(i, showNext);
             return;
         }
 
@@ -701,6 +989,78 @@ public sealed class GameScene : IScene
         {
             ReturnToLevelSelect();
         }
+    }
+
+    private void ActivateCompletionOption(int optionIndex, bool showNext)
+    {
+        if (optionIndex == 0)
+        {
+            ReplayLevel();
+            return;
+        }
+
+        if (showNext && optionIndex == 1)
+        {
+            GoToNextLevel();
+            return;
+        }
+
+        ReturnToLevelSelect();
+    }
+
+    private bool CanGoToNextLevel()
+    {
+        if (_editorTestMode)
+        {
+            return false;
+        }
+
+        if (_game.SteamLobby.IsInLobby && !_game.Party.IsLeader)
+        {
+            return false;
+        }
+
+        return LevelLibrary.TryGetNextLevelId(_levelId, out _);
+    }
+
+    private void GoToNextLevel()
+    {
+        if (!CanGoToNextLevel() || !LevelLibrary.TryGetNextLevelId(_levelId, out string nextLevelId))
+        {
+            return;
+        }
+
+        Level nextLevel = LevelLibrary.LoadLevel(nextLevelId);
+        (RopeGameplayMode ropeMode, bool lavaRise, bool playerCollision) =
+            LevelRules.ResolvePredefinedPlaySettings(nextLevel, _ropeGameplayMode);
+
+        if (_game.SteamLobby.IsInLobby)
+        {
+            if (!_game.Party.IsLeader)
+            {
+                return;
+            }
+
+            MultiplayerDebug.LogSim(
+                $"HOST NEXT LEVEL level={nextLevelId} partyMembers={_game.Party.Members.Count} " +
+                $"rope={ropeMode} lava={lavaRise} collision={playerCollision}");
+            if (!_game.SteamLobby.BroadcastLevelStart(nextLevelId, ropeMode, lavaRise))
+            {
+                _alertPopup = new AlertPopup(
+                    "VERSION MISMATCH",
+                    $"Host: {SessionDiagnostics.HostBuildLabel} Client: {SessionDiagnostics.ClientBuildLabel}");
+                return;
+            }
+        }
+
+        LevelSelectScene.SyncPlaySettings(ropeMode, lavaRise, playerCollision);
+        _game.ChangeScene(new GameScene(
+            _game,
+            nextLevelId,
+            ropeMode,
+            lavaRise,
+            _ghostMode,
+            playerCollision));
     }
 
     private void ReplayLevel()
@@ -717,6 +1077,7 @@ public sealed class GameScene : IScene
         _camera.Position = GetPlayersCenter();
         _camera.SetZoom(GetTargetCameraZoom(_game.Viewport));
         _ghostPlayer?.Reset();
+        _worldRecordGhost?.Reset();
         if (!_editorTestMode)
         {
             _replayRecorder.ResetSession();
@@ -738,14 +1099,18 @@ public sealed class GameScene : IScene
             return;
         }
 
+        NotifyHostLeftLevelIfClient();
         _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
     }
 
     private void LayoutCompletionUi()
     {
         Viewport viewport = _game.Viewport;
-        int margin = Math.Max(12, (int)(viewport.Width * 0.08f));
-        int panelWidth = Math.Min(620, Math.Max(1, viewport.Width - (margin * 2)));
+        bool showNext = CanGoToNextLevel();
+        int buttonCount = showNext ? 3 : 2;
+        int margin = Math.Max(12, (int)(viewport.Width * 0.06f));
+        int maxPanelWidth = showNext ? 780 : 620;
+        int panelWidth = Math.Min(maxPanelWidth, Math.Max(1, viewport.Width - (margin * 2)));
         int panelHeight = Math.Min(340, Math.Max(220, (int)(viewport.Height * 0.46f)));
         panelHeight = Math.Min(panelHeight, Math.Max(1, viewport.Height - (margin * 2)));
         Rectangle panel = new(
@@ -754,14 +1119,37 @@ public sealed class GameScene : IScene
             panelWidth,
             panelHeight);
 
-        int buttonGap = Math.Max(14, panel.Width / 24);
+        int buttonGap = Math.Max(10, panel.Width / 32);
         int buttonHeight = Math.Clamp(panel.Height / 5, 44, 58);
-        int buttonWidth = (panel.Width - buttonGap - (panelWidth / 6)) / 2;
+        int sidePad = Math.Max(16, panelWidth / 10);
+        int buttonWidth = (panel.Width - (buttonGap * (buttonCount - 1)) - sidePad) / buttonCount;
         int buttonsY = panel.Bottom - buttonHeight - Math.Max(18, panel.Height / 10);
-        int buttonsX = panel.X + ((panel.Width - ((buttonWidth * 2) + buttonGap)) / 2);
+        int totalButtonsWidth = (buttonWidth * buttonCount) + (buttonGap * (buttonCount - 1));
+        int buttonsX = panel.X + ((panel.Width - totalButtonsWidth) / 2);
 
         _completionReplayBounds = new Rectangle(buttonsX, buttonsY, buttonWidth, buttonHeight);
-        _completionMenuBounds = new Rectangle(_completionReplayBounds.Right + buttonGap, buttonsY, buttonWidth, buttonHeight);
+        if (showNext)
+        {
+            _completionNextBounds = new Rectangle(
+                _completionReplayBounds.Right + buttonGap,
+                buttonsY,
+                buttonWidth,
+                buttonHeight);
+            _completionMenuBounds = new Rectangle(
+                _completionNextBounds.Right + buttonGap,
+                buttonsY,
+                buttonWidth,
+                buttonHeight);
+        }
+        else
+        {
+            _completionNextBounds = Rectangle.Empty;
+            _completionMenuBounds = new Rectangle(
+                _completionReplayBounds.Right + buttonGap,
+                buttonsY,
+                buttonWidth,
+                buttonHeight);
+        }
     }
 
     private static string FormatTime(float seconds)
@@ -941,8 +1329,10 @@ public sealed class GameScene : IScene
         LayoutCompletionUi();
 
         float fade = MathHelper.Clamp(_completionUiElapsed / 0.45f, 0f, 1f);
-        int margin = Math.Max(12, (int)(viewport.Width * 0.08f));
-        int panelWidth = Math.Min(620, Math.Max(1, viewport.Width - (margin * 2)));
+        bool showNext = CanGoToNextLevel();
+        int margin = Math.Max(12, (int)(viewport.Width * 0.06f));
+        int maxPanelWidth = showNext ? 780 : 620;
+        int panelWidth = Math.Min(maxPanelWidth, Math.Max(1, viewport.Width - (margin * 2)));
         int panelHeight = Math.Min(340, Math.Max(220, (int)(viewport.Height * 0.46f)));
         panelHeight = Math.Min(panelHeight, Math.Max(1, viewport.Height - (margin * 2)));
         Rectangle panel = new(
@@ -981,6 +1371,11 @@ public sealed class GameScene : IScene
         }
 
         DrawCompletionButton(spriteBatch, pixel, _completionReplayBounds, "REPLAY", fade);
+        if (showNext)
+        {
+            DrawCompletionButton(spriteBatch, pixel, _completionNextBounds, "NEXT LEVEL", fade);
+        }
+
         DrawCompletionButton(spriteBatch, pixel, _completionMenuBounds, "BACK TO MENU", fade);
 
         if (_completionOptionFocusables.Count >= 2)

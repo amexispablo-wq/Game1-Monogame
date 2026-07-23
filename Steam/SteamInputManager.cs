@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using Steamworks;
@@ -15,6 +16,12 @@ public sealed class SteamInputManager
 {
     private static readonly TimeSpan DetectionRetryInterval = TimeSpan.FromSeconds(1);
 
+    /// <summary>Consecutive raw-live frames required before sticky live turns on.</summary>
+    private const int LiveGainConsecutiveFrames = 2;
+
+    /// <summary>Consecutive raw-not-live frames required before sticky live turns off (~80ms @ 60fps).</summary>
+    private const int LiveDropConsecutiveFrames = 5;
+
     private readonly SteamManager _steam;
     private readonly InputHandle_t[] _connectedHandles = new InputHandle_t[Constants.STEAM_INPUT_MAX_COUNT];
     private readonly InputHandle_t[] _slotHandles = new InputHandle_t[InputManager.MaxLocalPlayers];
@@ -22,6 +29,9 @@ public sealed class SteamInputManager
     private readonly InputAnalogActionHandle_t[] _analogHandles;
     private readonly string[] _digitalNames;
     private readonly string[] _analogNames;
+    private readonly bool[] _slotStickyLive = new bool[InputManager.MaxLocalPlayers];
+    private readonly int[] _slotLivePassCount = new int[InputManager.MaxLocalPlayers];
+    private readonly int[] _slotLiveFailCount = new int[InputManager.MaxLocalPlayers];
 
     private bool _isInitialized;
     private int _connectedCount;
@@ -34,6 +44,10 @@ public sealed class SteamInputManager
     private DateTime _lastDetectionAttemptUtc = DateTime.MinValue;
     private int _detectionRetryCount;
     private bool _actionHandlesComplete;
+    private string _resolvedManifestPath = string.Empty;
+    private float _softClaimSeconds;
+    private DateTime _lastSoftClaimWarnUtc = DateTime.MinValue;
+    private readonly EInputActionOrigin[] _originsScratch = new EInputActionOrigin[Constants.STEAM_INPUT_MAX_ORIGINS];
 
     public SteamInputManager(SteamManager steam)
     {
@@ -61,6 +75,62 @@ public sealed class SteamInputManager
     /// <summary>How many 1s detection retries have run while no controller was connected.</summary>
     public int DetectionRetryCount => _detectionRetryCount;
 
+    /// <summary>True when action-set + digital/analog handles all resolved non-zero.</summary>
+    public bool AreActionHandlesValid => _actionHandlesComplete;
+
+    /// <summary>
+    /// Steam Input drives pads only when at least one slot has a live action set
+    /// (handles valid + action bActive). Soft-claimed handles fall through to GamepadBackend.
+    /// </summary>
+    public bool IsControllerAvailable
+    {
+        get
+        {
+            if (!_isInitialized || !_actionHandlesComplete || _connectedCount <= 0)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
+            {
+                if (IsSlotLive(i))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>Resolved manifest path used at init, or empty when missing.</summary>
+    public string ResolvedManifestPath => _resolvedManifestPath;
+
+    /// <summary>True when any slot has a handle but no live Jump/Move actions.</summary>
+    public bool HasAnySoftClaim
+    {
+        get
+        {
+            if (!_isInitialized)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
+            {
+                if (HasSoftClaim(i))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>Seconds the soft-claim state has persisted continuously.</summary>
+    public float SoftClaimSeconds => _softClaimSeconds;
+
     public void Initialize()
     {
         if (_isInitialized)
@@ -79,18 +149,9 @@ public sealed class SteamInputManager
 
         try
         {
-            // Manifest path must be registered before SteamInput.Init so Steam
-            // resolves in-game actions from the bundled VDF instead of Workshop.
-            string manifestPath = Path.Combine(AppContext.BaseDirectory, "steam_input_manifest.vdf");
-            if (File.Exists(manifestPath))
-            {
-                bool manifestOk = SteamInput.SetInputActionManifestFilePath(manifestPath);
-                SteamInputLog.Log($"SetInputActionManifestFilePath('{manifestPath}') -> {manifestOk}");
-            }
-            else
-            {
-                SteamInputLog.Log($"Manifest NOT FOUND at '{manifestPath}' — relying on Steam-side config");
-            }
+            // Manifest must be registered before SteamInput.Init so Steam loads
+            // bundled official layouts instead of empty/Workshop configs.
+            TrySetActionManifestPath();
 
             if (!SteamInput.Init(bExplicitlyCallRunFrame: true))
             {
@@ -125,6 +186,32 @@ public sealed class SteamInputManager
         }
     }
 
+    /// <summary>
+    /// Sticky live: handle present, Jump/Move bActive + origins, with hysteresis so
+    /// brief bActive/origin flickers do not thrash Steam↔XInput ownership.
+    /// Soft claim (handle, not sticky-live) must not own the slot.
+    /// </summary>
+    public bool IsSlotLive(int localPlayerSlot)
+    {
+        if (!_isInitialized || !_actionHandlesComplete)
+        {
+            return false;
+        }
+
+        if (localPlayerSlot < 0 || localPlayerSlot >= InputManager.MaxLocalPlayers)
+        {
+            return false;
+        }
+
+        return _slotStickyLive[localPlayerSlot];
+    }
+
+    /// <summary>Handle mapped but actions not sticky-live — InputManager must use GamepadBackend.</summary>
+    public bool HasSoftClaim(int localPlayerSlot)
+    {
+        return GetSlotHandleRaw(localPlayerSlot) != 0 && !IsSlotLive(localPlayerSlot);
+    }
+
     public void RunFrame()
     {
         if (!_isInitialized)
@@ -137,12 +224,99 @@ public sealed class SteamInputManager
             SteamInput.RunFrame();
             PeriodicDetectionTick();
             ActivateGameplaySetOnAll();
+            UpdateSlotLiveHysteresis();
+            UpdateSoftClaimTracking();
         }
         catch (Exception ex) when (IsRecoverableException(ex))
         {
             _isInitialized = false;
             InitializationStatus = $"RunFrame exception: {ex.GetType().Name}";
             SteamInputLog.Log($"RunFrame EXCEPTION: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Raw per-frame live check (no hysteresis). Used only to update sticky state once per RunFrame.
+    /// </summary>
+    private bool EvaluateSlotLiveRaw(int localPlayerSlot)
+    {
+        if (!_isInitialized || !_actionHandlesComplete)
+        {
+            return false;
+        }
+
+        InputHandle_t handle = GetHandleForSlot(localPlayerSlot);
+        if (handle.m_InputHandle == 0)
+        {
+            return false;
+        }
+
+        bool jumpLive = IsDigitalActionActive(handle, SteamInputActionNames.Jump)
+            && HasDigitalActionOrigin(handle, SteamInputActionNames.Jump);
+        bool moveLive = IsAnalogActionActive(handle, SteamInputActionNames.Move)
+            && HasAnalogActionOrigin(handle, SteamInputActionNames.Move);
+        return jumpLive || moveLive;
+    }
+
+    private void UpdateSlotLiveHysteresis()
+    {
+        for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
+        {
+            if (GetSlotHandleRaw(i) == 0)
+            {
+                _slotStickyLive[i] = false;
+                _slotLivePassCount[i] = 0;
+                _slotLiveFailCount[i] = 0;
+                continue;
+            }
+
+            if (EvaluateSlotLiveRaw(i))
+            {
+                _slotLiveFailCount[i] = 0;
+                if (_slotLivePassCount[i] < LiveGainConsecutiveFrames)
+                {
+                    _slotLivePassCount[i]++;
+                }
+
+                if (!_slotStickyLive[i] && _slotLivePassCount[i] >= LiveGainConsecutiveFrames)
+                {
+                    _slotStickyLive[i] = true;
+                }
+            }
+            else
+            {
+                _slotLivePassCount[i] = 0;
+                if (_slotLiveFailCount[i] < LiveDropConsecutiveFrames)
+                {
+                    _slotLiveFailCount[i]++;
+                }
+
+                if (_slotStickyLive[i] && _slotLiveFailCount[i] >= LiveDropConsecutiveFrames)
+                {
+                    _slotStickyLive[i] = false;
+                }
+            }
+        }
+    }
+
+    private void UpdateSoftClaimTracking()
+    {
+        if (HasAnySoftClaim)
+        {
+            // Approximate 1 frame at 60fps when dt unavailable here; PeriodicDetectionTick is ~1s.
+            _softClaimSeconds += 1f / 60f;
+            if (_softClaimSeconds >= 3f
+                && (DateTime.UtcNow - _lastSoftClaimWarnUtc).TotalSeconds >= 5.0)
+            {
+                _lastSoftClaimWarnUtc = DateTime.UtcNow;
+                SteamInputLog.Log(
+                    $"SOFT CLAIM persisting {_softClaimSeconds:0.0}s — actions not live; " +
+                    "falling back to GamepadBackend. Open Steam Controller Configuration / Official layout.");
+            }
+        }
+        else
+        {
+            _softClaimSeconds = 0f;
         }
     }
 
@@ -170,6 +344,9 @@ public sealed class SteamInputManager
             _connectedCount = 0;
             Array.Clear(_connectedHandles, 0, _connectedHandles.Length);
             Array.Clear(_slotHandles, 0, _slotHandles.Length);
+            Array.Clear(_slotStickyLive, 0, _slotStickyLive.Length);
+            Array.Clear(_slotLivePassCount, 0, _slotLivePassCount.Length);
+            Array.Clear(_slotLiveFailCount, 0, _slotLiveFailCount.Length);
         }
     }
 
@@ -435,6 +612,56 @@ public sealed class SteamInputManager
         return sb?.ToString() ?? string.Empty;
     }
 
+    /// <summary>Steam-only lines for diagnostics export / F3 / session snapshots.</summary>
+    public IReadOnlyList<string> BuildDiagnosticsLines()
+    {
+        var lines = new List<string>
+        {
+            "--- Steam Input ---",
+            $"Init: {InitializationStatus}",
+            $"Initialized: {_isInitialized}",
+            $"Manifest: {(string.IsNullOrEmpty(_resolvedManifestPath) ? "MISSING" : _resolvedManifestPath)}",
+            $"ActionSet: {CurrentActionSetName} (0x{GameplayActionSetRaw:X})",
+            $"ActionHandlesValid: {_actionHandlesComplete}",
+            $"Controllers: {_connectedCount} retries={_detectionRetryCount}",
+            $"ControllerAvailable: {IsControllerAvailable}",
+            $"HasAnySoftClaim: {HasAnySoftClaim} softClaimSeconds={_softClaimSeconds:0.0}",
+            $"Layout: {ActiveLayoutLabel} refreshUtc={LastLayoutRefreshUtc:HH:mm:ss}"
+        };
+
+        string missing = GetMissingActionSummary();
+        lines.Add(missing.Length > 0
+            ? $"MISSING HANDLES: {missing}"
+            : "MISSING HANDLES: (none)");
+
+        bool anySlot = false;
+        for (int slot = 0; slot < InputManager.MaxLocalPlayers; slot++)
+        {
+            ulong handle = GetSlotHandleRaw(slot);
+            if (handle == 0)
+            {
+                continue;
+            }
+
+            anySlot = true;
+            bool live = IsSlotLive(slot);
+            bool soft = HasSoftClaim(slot);
+            TryGetAnalog(slot, SteamInputActionNames.Move, out float mx, out float my);
+            string digital = GetDigitalStateSummary(slot);
+            lines.Add(
+                $"Slot[{slot}]: handle=0x{handle:X} type={GetControllerLabel(slot)} " +
+                $"live={live} softClaim={soft} Move=({mx:0.00},{my:0.00})" +
+                (digital.Length > 0 ? $" pressed=[{digital}]" : string.Empty));
+        }
+
+        if (!anySlot)
+        {
+            lines.Add("Slots: (none mapped)");
+        }
+
+        return lines;
+    }
+
     /// <summary>Compact snapshot of pressed digital actions for one slot, e.g. "Jump ColorRed".</summary>
     public string GetDigitalStateSummary(int localPlayerSlot)
     {
@@ -518,6 +745,109 @@ public sealed class SteamInputManager
             // Cheap periodic re-sync so slot mapping stays correct even if a
             // connect/disconnect callback was missed.
             RefreshConnectedControllers(reason: null);
+        }
+    }
+
+    private void TrySetActionManifestPath()
+    {
+        string baseDir = AppContext.BaseDirectory;
+        string[] candidates =
+        {
+            Path.Combine(baseDir, "Steam", "steam_input_manifest.vdf"),
+            Path.Combine(baseDir, "steam_input_manifest.vdf")
+        };
+
+        foreach (string candidate in candidates)
+        {
+            if (!File.Exists(candidate))
+            {
+                SteamInputLog.Log($"Manifest candidate missing: '{candidate}'");
+                continue;
+            }
+
+            bool ok = SteamInput.SetInputActionManifestFilePath(candidate);
+            _resolvedManifestPath = candidate;
+            SteamInputLog.Log($"SetInputActionManifestFilePath('{candidate}') -> {ok}");
+            return;
+        }
+
+        _resolvedManifestPath = string.Empty;
+        SteamInputLog.Log("Manifest NOT FOUND under Steam/ or exe root — relying on Steam-side/Partner config");
+    }
+
+    private bool IsDigitalActionActive(InputHandle_t handle, string actionName)
+    {
+        InputDigitalActionHandle_t action = GetDigitalHandle(actionName);
+        if (action.m_InputDigitalActionHandle == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            InputDigitalActionData_t data = SteamInput.GetDigitalActionData(handle, action);
+            return data.bActive != 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private bool IsAnalogActionActive(InputHandle_t handle, string actionName)
+    {
+        InputAnalogActionHandle_t action = GetAnalogHandle(actionName);
+        if (action.m_InputAnalogActionHandle == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            InputAnalogActionData_t data = SteamInput.GetAnalogActionData(handle, action);
+            return data.bActive != 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private bool HasDigitalActionOrigin(InputHandle_t handle, string actionName)
+    {
+        InputDigitalActionHandle_t action = GetDigitalHandle(actionName);
+        if (action.m_InputDigitalActionHandle == 0 || _gameplaySet.m_InputActionSetHandle == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            int count = SteamInput.GetDigitalActionOrigins(handle, _gameplaySet, action, _originsScratch);
+            return count > 0 && _originsScratch[0] != EInputActionOrigin.k_EInputActionOrigin_None;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private bool HasAnalogActionOrigin(InputHandle_t handle, string actionName)
+    {
+        InputAnalogActionHandle_t action = GetAnalogHandle(actionName);
+        if (action.m_InputAnalogActionHandle == 0 || _gameplaySet.m_InputActionSetHandle == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            int count = SteamInput.GetAnalogActionOrigins(handle, _gameplaySet, action, _originsScratch);
+            return count > 0 && _originsScratch[0] != EInputActionOrigin.k_EInputActionOrigin_None;
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 

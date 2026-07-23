@@ -13,6 +13,9 @@ public sealed class SteamLobbyService
     private readonly HashSet<ulong> _buildMismatchNotified = new();
     private CSteamID _currentLobby;
     private bool _isCreatingLobby;
+    private ulong _pendingJoinLobbyId;
+    private bool _openInviteWhenReady;
+    private PartyStartMessage? _pendingLevelStart;
 
     public SteamLobbyService(SteamManager steam, SteamCallbackManager callbacks)
     {
@@ -23,9 +26,7 @@ public sealed class SteamLobbyService
         _callbacks.LobbyChatUpdate += OnLobbyChatUpdate;
         _callbacks.LobbyDataUpdate += OnLobbyDataUpdate;
         _callbacks.LobbyInvite += OnLobbyInvite;
-        _callbacks.GameLobbyJoinRequested += OnGameLobbyJoinRequested;
         _callbacks.LobbyMatchList += OnLobbyMatchList;
-        _callbacks.GameRichPresenceJoinRequested += OnGameRichPresenceJoinRequested;
         _callbacks.LobbyChatMsg += OnLobbyChatMsg;
     }
 
@@ -41,8 +42,31 @@ public sealed class SteamLobbyService
     public event Action? LobbyStateChanged;
     public event Action? LobbyReady;
     public event Action<PartyStartMessage>? LevelStartReceived;
+    /// <summary>Fired when any peer broadcasts LEAVE_LEVEL:&lt;steamId&gt; (guest quit mid-run).</summary>
+    public event Action<ulong>? LevelLeaveReceived;
     public event Action<SteamPartyError, string>? ErrorOccurred;
     public event Action<ulong>? MemberLeft;
+
+    /// <summary>
+    /// Consumes a START that arrived while no scene was listening (ephemeral lobby chat).
+    /// </summary>
+    public bool TryConsumePendingLevelStart(out PartyStartMessage message)
+    {
+        if (_pendingLevelStart is null)
+        {
+            message = default;
+            return false;
+        }
+
+        message = _pendingLevelStart.Value;
+        _pendingLevelStart = null;
+        return true;
+    }
+
+    public void ClearPendingLevelStart()
+    {
+        _pendingLevelStart = null;
+    }
 
     public bool IsLobbyOwner()
     {
@@ -129,6 +153,12 @@ public sealed class SteamLobbyService
             return;
         }
 
+        if (_pendingJoinLobbyId != 0)
+        {
+            MultiplayerDebug.LogLobby($"EnsurePartyLobby skip — pendingJoin={_pendingJoinLobbyId}");
+            return;
+        }
+
         if (IsInLobby || _isCreatingLobby)
         {
             MultiplayerDebug.LogLobby($"EnsurePartyLobby skip (inLobby={IsInLobby} creating={_isCreatingLobby})");
@@ -154,6 +184,28 @@ public sealed class SteamLobbyService
             return;
         }
 
+        if (IsInLobby && CurrentLobbyId == lobbyId)
+        {
+            MultiplayerDebug.LogLobby($"JoinLobby ignored — already in lobby {lobbyId}");
+            return;
+        }
+
+        if (IsInLobby)
+        {
+            MultiplayerDebug.LogLobby(
+                $"JoinLobby leaving current lobby {CurrentLobbyId} before joining {lobbyId}");
+            LeaveLobby();
+        }
+
+        if (_isCreatingLobby)
+        {
+            _pendingJoinLobbyId = lobbyId;
+            MultiplayerDebug.LogLobby(
+                $"JoinLobby deferred — create in flight, pendingJoin={lobbyId}");
+            return;
+        }
+
+        _pendingJoinLobbyId = 0;
         MultiplayerDebug.LogLobby($"JoinLobby request id={lobbyId}");
         SteamMatchmaking.JoinLobby(new CSteamID(lobbyId));
     }
@@ -180,11 +232,30 @@ public sealed class SteamLobbyService
 
         if (!IsInLobby)
         {
+            _openInviteWhenReady = true;
+            MultiplayerDebug.LogLobby("InviteFriends deferred — waiting for lobby ready");
             EnsurePartyLobby();
             return;
         }
 
+        OpenInviteOverlayNow();
+    }
+
+    private void OpenInviteOverlayNow()
+    {
+        _openInviteWhenReady = false;
+        MultiplayerDebug.LogLobby($"ActivateGameOverlayInviteDialog lobby={_currentLobby.m_SteamID}");
         SteamFriends.ActivateGameOverlayInviteDialog(_currentLobby);
+    }
+
+    private void TryOpenDeferredInviteOverlay()
+    {
+        if (!_openInviteWhenReady || !IsInLobby)
+        {
+            return;
+        }
+
+        OpenInviteOverlayNow();
     }
 
     public void SetLobbyData(string key, string value)
@@ -202,6 +273,12 @@ public sealed class SteamLobbyService
         if (!IsInLobby)
         {
             MultiplayerDebug.LogLobby($"SetLocalMemberData '{key}' DROPPED — not in lobby");
+            return;
+        }
+
+        string existing = SteamMatchmaking.GetLobbyMemberData(_currentLobby, SteamUser.GetSteamID(), key);
+        if (string.Equals(existing, value, StringComparison.Ordinal))
+        {
             return;
         }
 
@@ -243,6 +320,43 @@ public sealed class SteamLobbyService
 
         SetLobbyData(SteamConstants.LobbyDataPartyRoster, rosterData);
     }
+
+    /// <summary>
+    /// Host-only: mark whether a GameScene session is active. Clients watch this to leave
+    /// the level when the host backs to menu without leaving the Steam lobby.
+    /// </summary>
+    public void SetGameplayActive(bool active)
+    {
+        if (!IsInLobby || !IsLobbyOwner())
+        {
+            return;
+        }
+
+        string value = active ? "1" : "0";
+        SetLobbyData(SteamConstants.LobbyDataGameplay, value);
+        MultiplayerDebug.LogLobby($"SetGameplayActive={value}");
+    }
+
+    public bool IsGameplayActive =>
+        IsInLobby && GetLobbyData(SteamConstants.LobbyDataGameplay) == "1";
+
+    /// <summary>
+    /// Any lobby member can signal they left the level. Host removes them from sim (run continues unofficial).
+    /// Does not leave the Steam lobby.
+    /// </summary>
+    public void BroadcastLeaveLevel()
+    {
+        if (!IsInLobby)
+        {
+            return;
+        }
+
+        string message = $"{SteamConstants.ChatPrefixLeaveLevel}{LocalSteamId}";
+        byte[] bytes = Encoding.UTF8.GetBytes(message);
+        SteamMatchmaking.SendLobbyChatMsg(_currentLobby, bytes, bytes.Length);
+        MultiplayerDebug.LogLobby($"BroadcastLeaveLevel from local={LocalSteamId}");
+    }
+
 
     public bool ValidateLobbyVersion()
     {
@@ -418,10 +532,32 @@ public sealed class SteamLobbyService
         if (callback.m_eResult != EResult.k_EResultOK)
         {
             ErrorOccurred?.Invoke(SteamPartyError.CreateFailed, $"Lobby create failed: {callback.m_eResult}");
+            if (_pendingJoinLobbyId != 0)
+            {
+                ulong pending = _pendingJoinLobbyId;
+                _pendingJoinLobbyId = 0;
+                MultiplayerDebug.LogLobby($"OnLobbyCreated failed → JoinLobby pending={pending}");
+                JoinLobby(pending);
+            }
+
             return;
         }
 
-        _currentLobby = new CSteamID(callback.m_ulSteamIDLobby);
+        ulong createdId = callback.m_ulSteamIDLobby;
+        if (_pendingJoinLobbyId != 0)
+        {
+            ulong pending = _pendingJoinLobbyId;
+            _pendingJoinLobbyId = 0;
+            MultiplayerDebug.LogLobby(
+                $"OnLobbyCreated abandon own lobby={createdId} → JoinLobby pending={pending}");
+            SteamMatchmaking.LeaveLobby(new CSteamID(createdId));
+            ClearLobbyState();
+            LobbyStateChanged?.Invoke();
+            JoinLobby(pending);
+            return;
+        }
+
+        _currentLobby = new CSteamID(createdId);
         MultiplayerDebug.LogLobby($"OnLobbyCreated ok id={_currentLobby.m_SteamID}");
 
         string sessionId = DiagnosticsLog.CreateSessionId(_currentLobby.m_SteamID);
@@ -432,6 +568,7 @@ public sealed class SteamLobbyService
         PublishLocalBuildInfo();
         LobbyStateChanged?.Invoke();
         LobbyReady?.Invoke();
+        TryOpenDeferredInviteOverlay();
     }
 
     private void OnLobbyEnter(LobbyEnter_t callback)
@@ -445,6 +582,19 @@ public sealed class SteamLobbyService
         }
 
         _currentLobby = new CSteamID(callback.m_ulSteamIDLobby);
+        if (_pendingJoinLobbyId != 0 && _pendingJoinLobbyId != _currentLobby.m_SteamID)
+        {
+            // Entered an unexpected lobby while a join was pending — abandon and retry pending.
+            ulong pending = _pendingJoinLobbyId;
+            _pendingJoinLobbyId = 0;
+            MultiplayerDebug.LogLobby(
+                $"OnLobbyEnter unexpected id={_currentLobby.m_SteamID} → leave + JoinLobby pending={pending}");
+            LeaveLobby();
+            JoinLobby(pending);
+            return;
+        }
+
+        _pendingJoinLobbyId = 0;
         if (!ValidateLobbyVersion())
         {
             MultiplayerDebug.LogLobby($"OnLobbyEnter version mismatch → leave id={_currentLobby.m_SteamID}");
@@ -466,10 +616,10 @@ public sealed class SteamLobbyService
         AdoptLobbySessionId();
         PublishLocalBuildInfo();
         LogLobbyMemberList("enter");
-        UpdateRichPresence();
         RefreshMetadataFromLobby();
         LobbyStateChanged?.Invoke();
         LobbyReady?.Invoke();
+        TryOpenDeferredInviteOverlay();
     }
 
     /// <summary>Client reply half of the build handshake: publish this build as lobby member data.</summary>
@@ -521,10 +671,13 @@ public sealed class SteamLobbyService
         ValidateMemberBuilds();
 
         bool isLobbyMetadata = callback.m_ulSteamIDMember == callback.m_ulSteamIDLobby;
-        bool willFire = isLobbyMetadata || IsLobbyOwner();
+        // Own member-data writes must not re-enter LobbyStateChanged → ForceSync → PublishLocalMemberData
+        // (that loop flooded logs and froze/crashed Party open).
+        bool isOwnMemberData = !isLobbyMetadata && callback.m_ulSteamIDMember == LocalSteamId;
+        bool willFire = isLobbyMetadata || (IsLobbyOwner() && !isOwnMemberData);
         MultiplayerDebug.LogLobby(
             $"OnLobbyDataUpdate source={(isLobbyMetadata ? "LOBBY-METADATA" : $"MEMBER {callback.m_ulSteamIDMember}")} " +
-            $"→ LobbyStateChanged={(willFire ? "FIRE" : "SUPPRESSED (non-owner ignores member-data updates)")}");
+            $"→ LobbyStateChanged={(willFire ? "FIRE" : (isOwnMemberData ? "SUPPRESSED (own member data)" : "SUPPRESSED (non-owner ignores member-data updates)"))}");
         if (willFire)
         {
             LobbyStateChanged?.Invoke();
@@ -533,16 +686,9 @@ public sealed class SteamLobbyService
 
     private void OnLobbyInvite(LobbyInvite_t callback)
     {
+        // Notification only — join happens on GameLobbyJoinRequested (user Accept) via SteamInviteManager.
         MultiplayerDebug.LogLobby(
-            $"InviteReceived lobby={callback.m_ulSteamIDLobby} from={callback.m_ulSteamIDUser}");
-        JoinLobby(callback.m_ulSteamIDLobby);
-    }
-
-    private void OnGameLobbyJoinRequested(GameLobbyJoinRequested_t callback)
-    {
-        MultiplayerDebug.LogLobby(
-            $"InviteAccepted lobby={callback.m_steamIDLobby.m_SteamID} friend={callback.m_steamIDFriend.m_SteamID}");
-        JoinLobby(callback.m_steamIDLobby.m_SteamID);
+            $"InviteReceived lobby={callback.m_ulSteamIDLobby} from={callback.m_ulSteamIDUser} (await Accept)");
     }
 
     private void OnLobbyMatchList(LobbyMatchList_t callback)
@@ -555,22 +701,6 @@ public sealed class SteamLobbyService
 
         CSteamID lobbyId = SteamMatchmaking.GetLobbyByIndex(0);
         JoinLobby(lobbyId.m_SteamID);
-    }
-
-    private void OnGameRichPresenceJoinRequested(GameRichPresenceJoinRequested_t callback)
-    {
-        string connect = callback.m_rgchConnect;
-        if (connect.StartsWith("+connect_lobby_", StringComparison.OrdinalIgnoreCase)
-            && ulong.TryParse(connect.AsSpan("+connect_lobby_".Length), out ulong lobbyId))
-        {
-            JoinLobby(lobbyId);
-            return;
-        }
-
-        if (ulong.TryParse(connect, out ulong directLobbyId))
-        {
-            JoinLobby(directLobbyId);
-        }
     }
 
     public void KickMember(ulong steamId)
@@ -619,6 +749,22 @@ public sealed class SteamLobbyService
             return;
         }
 
+        if (message.StartsWith(SteamConstants.ChatPrefixLeaveLevel, StringComparison.Ordinal))
+        {
+            string payload = message[SteamConstants.ChatPrefixLeaveLevel.Length..];
+            ulong leaveSteamId = LocalSteamId;
+            if (!ulong.TryParse(payload, out leaveSteamId) || leaveSteamId == 0)
+            {
+                // Legacy bare LEAVE_LEVEL: cannot map peer — ignore for despawn.
+                MultiplayerDebug.LogWarn($"LevelLeaveReceived missing steam id payload='{payload}'");
+                return;
+            }
+
+            MultiplayerDebug.LogLobby($"LevelLeaveReceived steam={leaveSteamId}");
+            LevelLeaveReceived?.Invoke(leaveSteamId);
+            return;
+        }
+
         if (!message.StartsWith(SteamConstants.ChatPrefixStart, StringComparison.Ordinal))
         {
             return;
@@ -632,8 +778,9 @@ public sealed class SteamLobbyService
         }
 
         string? levelHash = parts.Length >= 4 && !string.IsNullOrWhiteSpace(parts[3]) ? parts[3] : null;
-        LevelStartReceived?.Invoke(
-            new PartyStartMessage(parts[0], (RopeGameplayMode)ropeMode, lavaRise == 1, levelHash));
+        PartyStartMessage startMessage = new(parts[0], (RopeGameplayMode)ropeMode, lavaRise == 1, levelHash);
+        _pendingLevelStart = startMessage;
+        LevelStartReceived?.Invoke(startMessage);
         MultiplayerDebug.LogLobby(
             $"StartLevelReceived level={parts[0]} rope={(RopeGameplayMode)ropeMode} lava={lavaRise == 1} " +
             $"hash={SessionDiagnostics.ShortHash(levelHash ?? string.Empty)}");
@@ -654,30 +801,19 @@ public sealed class SteamLobbyService
     private void InitializeLobbyDefaults()
     {
         PublishLobbySettings(null, RopeGameplayMode.ColoredPhysics, false);
-        UpdateRichPresence();
+        SetGameplayActive(false);
     }
 
-    private void UpdateRichPresence()
-    {
-        if (!IsInLobby)
-        {
-            return;
-        }
-
-        SteamFriends.SetRichPresence(SteamConstants.RichPresenceConnectKey, $"+connect_lobby_{_currentLobby.m_SteamID}");
-        SteamFriends.SetRichPresence("steam_display", "#StatusInParty");
-    }
-
+    // Rich Presence set/clear lives in SteamInviteManager, driven by LobbyStateChanged.
     private void ClearLobbyState()
     {
         _currentLobby = CSteamID.Nil;
         CurrentLevelId = null;
         CurrentLavaRiseEnabled = false;
         CurrentRopeMode = RopeGameplayMode.ColoredPhysics;
+        _pendingLevelStart = null;
         _buildMismatchNotified.Clear();
         DiagnosticsLog.ResetSessionId();
         SessionDiagnostics.ResetSessionState();
-        SteamFriends.SetRichPresence(SteamConstants.RichPresenceConnectKey, string.Empty);
-        SteamFriends.SetRichPresence("steam_display", string.Empty);
     }
 }

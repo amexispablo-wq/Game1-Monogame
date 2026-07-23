@@ -58,6 +58,13 @@
 				"path" "controller_gamepad.vdf"
 			}
 		}
+		"controller_neptune"
+		{
+			"0"
+			{
+				"path" "controller_gamepad.vdf"
+			}
+		}
 		"controller_steamcontroller_gordon"
 		{
 			"0"

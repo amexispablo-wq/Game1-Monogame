@@ -29,6 +29,7 @@ public static class SteamInputLog
         string line = $"{DateTime.Now:HH:mm:ss.fff} {message}";
         Console.WriteLine($"[SteamInput] {line}");
         System.Diagnostics.Debug.WriteLine($"[SteamInput] {line}");
+        DiagnosticsLog.Info("SteamInput", message);
 
         Ring[_next] = line;
         _next = (_next + 1) % Capacity;

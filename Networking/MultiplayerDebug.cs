@@ -46,6 +46,10 @@ public static class MultiplayerDebug
     public static double SnapshotsPerSecond { get; private set; }
     public static List<string> StartupValidationErrors { get; } = new();
 
+    // Rich Presence / invite state (set by SteamInviteManager, session-independent).
+    public static string RichPresenceConnect { get; set; } = string.Empty;
+    public static bool JoinRequestCallbackActive { get; set; }
+
     public static void ResetSessionCounters()
     {
         PacketsSent = 0;
@@ -562,7 +566,13 @@ public static class MultiplayerDebug
             $"PKT RECV {PacketsReceived} (IN {InputPacketsReceived}/SNAP {SnapshotPacketsReceived})",
             $"INPUT BUF {simulation.InputBuffer.FrameCount} DROP {simulation.InputBuffer.DroppedFrameCount}",
             $"LOCAL OWNER {session.LocalOwnerId} HOST OWNER {session.HostOwnerId}",
-            $"LEVEL {levelId} LOBBY {(lobby.IsInLobby ? lobby.CurrentLobbyId.ToString() : "NONE")}",
+            $"LEVEL {levelId}",
+            string.Empty,
+            "STEAM",
+            $"RICH PRESENCE {(RichPresenceConnect.Length > 0 ? "Enabled" : "Off")}",
+            $"CURRENT LOBBY {(lobby.IsInLobby ? lobby.CurrentLobbyId.ToString() : "NONE")}",
+            $"CONNECT STRING {(RichPresenceConnect.Length > 0 ? RichPresenceConnect : "NONE")}",
+            $"JOIN REQUEST CALLBACK {(JoinRequestCallbackActive ? "Active" : "Inactive")}",
             string.Empty,
             $"LOBBY MEMBERS {lobby.GetLobbyMemberCount()}"
         };

@@ -1,0 +1,8 @@
+"lang"
+{
+	"Language"	"english"
+	"Tokens"
+	{
+		"#StatusInParty"	"In Party"
+	}
+}

@@ -88,22 +88,22 @@ public static class BestTimeStorage
     {
         LevelSource source = LevelIdentity.GetSource(levelId);
         Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll(source);
-        if (!bestTimes.TryGetValue(levelId, out LevelBestTimesRecord? record) || record.Official is not float official)
+        if (bestTimes.TryGetValue(levelId, out LevelBestTimesRecord? record) && record.Official is float official)
         {
-            return;
+            if (record.Unofficial is float unofficial)
+            {
+                record.Unofficial = MathF.Min(official, unofficial);
+            }
+            else
+            {
+                record.Unofficial = official;
+            }
+
+            record.Official = null;
+            SaveAll(source, bestTimes);
         }
 
-        if (record.Unofficial is float unofficial)
-        {
-            record.Unofficial = MathF.Min(official, unofficial);
-        }
-        else
-        {
-            record.Unofficial = official;
-        }
-
-        record.Official = null;
-        SaveAll(source, bestTimes);
+        // Always invalidate replays/WR ghosts — content changed even when no official PB exists.
         ReplayInvalidation.OnLevelEdited(levelId);
     }
 

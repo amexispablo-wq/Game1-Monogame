@@ -27,6 +27,16 @@ public static class GamepadDefaults
     // Raw-axis edge threshold for binding capture prompts.
     public const float FastFallStickThreshold = 0.45f;
 
+    /// <summary>
+    /// Soft-claim XInput fallback often reports stuck diagonal corners (e.g. -1,1)
+    /// while Steam is managing the pad. Both axes near full deflection = untrusted.
+    /// </summary>
+    public const float HollowCornerStickThreshold = 0.9f;
+
+    public static bool IsHollowCornerStick(Vector2 raw) =>
+        MathF.Abs(raw.X) >= HollowCornerStickThreshold
+        && MathF.Abs(raw.Y) >= HollowCornerStickThreshold;
+
     public static float ProcessAxis(float raw, float deadzone = MoveDeadZone)
     {
         float abs = MathF.Abs(raw);

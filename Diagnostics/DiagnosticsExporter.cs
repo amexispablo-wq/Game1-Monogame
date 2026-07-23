@@ -16,7 +16,7 @@ public static class DiagnosticsExporter
     public static string ExportDirectory => Path.Combine(UserDataPaths.Root, "Diagnostics");
 
     /// <summary>Returns the created zip path, or throws with a readable message.</summary>
-    public static string Export()
+    public static string Export(InputManager? input = null)
     {
         Directory.CreateDirectory(ExportDirectory);
         string zipPath = Path.Combine(ExportDirectory, $"Diagnostics_{DateTime.Now:yyyyMMdd_HHmmss}.zip");
@@ -30,9 +30,11 @@ public static class DiagnosticsExporter
             TryAddFile(zip, Path.Combine(AppContext.BaseDirectory, "Content", "version.json"), "version.json");
             TryAddFile(zip, UserDataPaths.SettingsFile, "Settings/settings.json");
             AddText(zip, "ReplayMetadata.txt", BuildReplayMetadata());
-            AddText(zip, "SteamInputDiagnostics.txt", BuildSteamInputDiagnostics());
+            AddText(zip, "SteamInputDiagnostics.txt", BuildSteamInputDiagnostics(input));
+            AddText(zip, "GamepadDiagnostics.txt", BuildGamepadDiagnostics(input));
             AddText(zip, "NetworkDiagnostics.txt", BuildNetworkDiagnostics());
             AddText(zip, "LastSessionSummary.txt", BuildLastSessionSummary());
+            AddText(zip, "FRIEND_PAD_NOTES.txt", BuildFriendPadNotes());
         }
 
         DiagnosticsLog.Info("Export", "Export diagnostics complete");
@@ -72,21 +74,63 @@ public static class DiagnosticsExporter
         return sb.ToString();
     }
 
-    private static string BuildSteamInputDiagnostics()
+    private static string BuildSteamInputDiagnostics(InputManager? input)
     {
         List<string> lines = new()
         {
             $"steam_input_manifest.vdf SHA256: {SessionDiagnostics.SteamInputManifestHash}",
-            $"controller_gamepad.vdf SHA256  : {SessionDiagnostics.ControllerConfigHash}"
+            $"controller_gamepad.vdf SHA256  : {SessionDiagnostics.ControllerConfigHash}",
+            ""
         };
 
-        for (int i = 0; i < SteamInputLog.Count; i++)
+        if (input is not null)
         {
-            lines.Add(SteamInputLog.GetLine(i));
+            lines.AddRange(input.BuildInputDiagnosticsSnapshot());
+            lines.Add("");
+        }
+        else
+        {
+            lines.Add("(InputManager not passed to Export — live snapshot unavailable)");
+            lines.Add("");
+        }
+
+        lines.Add("=== RECENT SteamInputLog RING ===");
+        if (SteamInputLog.Count == 0)
+        {
+            lines.Add("(empty)");
+        }
+        else
+        {
+            for (int i = 0; i < SteamInputLog.Count; i++)
+            {
+                lines.Add(SteamInputLog.GetLine(i));
+            }
         }
 
         return string.Join(Environment.NewLine, lines);
     }
+
+    private static string BuildGamepadDiagnostics(InputManager? input)
+    {
+        if (input is null)
+        {
+            return "InputManager not passed to Export.";
+        }
+
+        return InputDiagnostics.BuildGamepadOnlyText(input);
+    }
+
+    private static string BuildFriendPadNotes() =>
+        string.Join(Environment.NewLine, new[]
+        {
+            "Friend pad troubleshooting",
+            "==========================",
+            "1. If Steam sees a handle but live=no and XInput connected=false → Steam soft-claim / hollow pad.",
+            "   Workaround: Steam → Color Blocks → Properties → Controller → Steam Input = Disabled.",
+            "2. If live=no but XInput connected=true and sticks move → ownership/party-join bug (send this zip).",
+            "3. If live=yes and Move moves but PartyLastUsed stays Keyboard → party join bug (send this zip).",
+            "4. Prefer official layout; after game update verify install has Steam\\*.vdf."
+        });
 
     private static string BuildNetworkDiagnostics()
     {

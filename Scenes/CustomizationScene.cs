@@ -285,6 +285,12 @@ public sealed class CustomizationScene : IScene
 
     public void OnExit()
     {
+        ApplyChanges();
+        if (_game.SteamLobby.IsInLobby)
+        {
+            _game.SteamParty.PublishLocalMemberData(_game.Party);
+        }
+
         _virtualCursor.Reset();
         _game.Input.SetUiPointerOverride(null);
         _game.Input.Navigation.PreferMouse();
@@ -520,6 +526,11 @@ public sealed class CustomizationScene : IScene
 
         PartyMember member = _localMembers[_activeMemberIndex];
         SkinLibraryStorage.SetSelectedSkinId(member.Id, _selectedSkinId);
+
+        if (_game.SteamLobby.IsInLobby)
+        {
+            _game.SteamParty.PublishLocalMemberData(_game.Party);
+        }
     }
 
     private void HandlePaintingInput()

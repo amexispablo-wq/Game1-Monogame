@@ -5,7 +5,7 @@ namespace ColorBlocks;
 
 public static class NetworkPacketCodec
 {
-    private const byte PacketVersion = 1;
+    private const byte PacketVersion = 2;
 
     public static byte[] EncodeInputFrame(InputFrame frame)
     {
@@ -226,6 +226,11 @@ public static class NetworkPacketCodec
         buffer.WriteByte((byte)player.State);
         buffer.WriteBool(player.IsGrounded);
         buffer.WriteBool(player.IsFrozen);
+        buffer.WriteString(player.CosmeticSkinId ?? string.Empty);
+        byte[] pixels = player.CosmeticSkinPixels is { Length: PlayerSkinCodec.PackedByteCount }
+            ? player.CosmeticSkinPixels
+            : new byte[PlayerSkinCodec.PackedByteCount];
+        buffer.WriteBytes(pixels);
     }
 
     private static PlayerSnapshot ReadPlayer(ref PacketReader reader)
@@ -241,7 +246,9 @@ public static class NetworkPacketCodec
             (GameColor)reader.ReadByte(),
             (PlayerState)reader.ReadByte(),
             reader.ReadBool(),
-            reader.ReadBool());
+            reader.ReadBool(),
+            reader.ReadString(),
+            reader.ReadBytes(PlayerSkinCodec.PackedByteCount));
     }
 
     private static void WriteRope(PacketBuffer buffer, RopeSnapshot rope)

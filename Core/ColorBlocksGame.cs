@@ -16,10 +16,17 @@ public class ColorBlocksGame : Game
     private readonly SteamLobbyService _steamLobby;
     private readonly SteamPartyService _steamParty;
     private readonly SteamGameNetworkService _steamGameNetwork;
+    private readonly SteamInviteManager _steamInvites;
     private readonly GameNetworkCoordinator _gameNetwork;
+    private readonly LevelStartRouter _levelStartRouter;
+    private readonly SteamReplayService _steamReplays;
+    private readonly SteamLeaderboardService _steamLeaderboards;
+    private readonly SteamGhostService _steamGhosts;
+    private readonly SteamWorkshopService _steamWorkshop;
     private readonly PartyHudOverlay _partyHud = new();
     private readonly MusicManager _music = new();
     private readonly SfxManager _sfx = new();
+    private readonly AudioOutputHotSwap _audioOutputHotSwap = new();
     private readonly PresentationManager _presentation = new();
     private readonly ReplayBackgroundRenderer _replayBackground = new();
     private readonly BenchmarkOverlay _benchmarkOverlay = new();
@@ -61,7 +68,13 @@ public class ColorBlocksGame : Game
         _steamInput = new SteamInputManager(_steam);
         _steamParty = new SteamPartyService(_steamLobby);
         _steamGameNetwork = new SteamGameNetworkService(_steam, _steamCallbacks);
+        _steamInvites = new SteamInviteManager(_steam, _steamCallbacks, _steamLobby);
         _gameNetwork = new GameNetworkCoordinator(_steamGameNetwork, _steamLobby);
+        _levelStartRouter = new LevelStartRouter(this);
+        _steamReplays = new SteamReplayService(_steam);
+        _steamLeaderboards = new SteamLeaderboardService(_steam);
+        _steamGhosts = new SteamGhostService(_steamLeaderboards, _steamReplays);
+        _steamWorkshop = new SteamWorkshopService(_steam);
     }
 
     public InputManager Input => _input;
@@ -72,7 +85,13 @@ public class ColorBlocksGame : Game
     public SteamLobbyService SteamLobby => _steamLobby;
     public SteamInputManager SteamInput => _steamInput;
     public SteamPartyService SteamParty => _steamParty;
+    public SteamInviteManager SteamInvites => _steamInvites;
     public GameNetworkCoordinator GameNetwork => _gameNetwork;
+    public LevelStartRouter LevelStartRouter => _levelStartRouter;
+    public SteamReplayService SteamReplays => _steamReplays;
+    public SteamLeaderboardService SteamLeaderboards => _steamLeaderboards;
+    public SteamGhostService SteamGhosts => _steamGhosts;
+    public SteamWorkshopService SteamWorkshop => _steamWorkshop;
     public MusicManager Music => _music;
     public SfxManager Sfx => _sfx;
     public Viewport Viewport => _presentation.LogicalViewport;
@@ -171,6 +190,36 @@ public class ColorBlocksGame : Game
         _currentScene = scene;
         NavigationDebug.CurrentScene = scene.GetType().Name;
         ApplySceneMusic(scene);
+
+        // Menu scenes: eat leftover A/Enter so Party Play (etc.) cannot fire from same press.
+        if (scene is not GameScene)
+        {
+            _input?.SuppressMenuConfirmUntilRelease();
+        }
+
+        // Guest may have received START while on a scene that did not listen yet.
+        _levelStartRouter.TryApplyPending();
+    }
+
+    /// <summary>
+    /// Friends-panel invite / Join Game land the invitee in Party UI.
+    /// Host CreateLobby is owner → no navigate. Already on Party/Game → leave alone.
+    /// </summary>
+    private void OnSteamLobbyReadyForExternalJoin()
+    {
+        if (!_steamLobby.IsInLobby || _steamLobby.IsLobbyOwner())
+        {
+            return;
+        }
+
+        if (_currentScene is PartyScene or GameScene)
+        {
+            return;
+        }
+
+        MultiplayerDebug.LogLobby(
+            $"ExternalJoin → PartyScene lobby={_steamLobby.CurrentLobbyId} from={_currentScene?.GetType().Name ?? "null"}");
+        ChangeScene(new PartyScene(this));
     }
 
     /// <summary>
@@ -211,6 +260,7 @@ public class ColorBlocksGame : Game
     {
         _currentScene?.OnExit();
         Party.LeaveParty();
+        _steamInvites.ClearPresence();
         Exit();
     }
 
@@ -226,6 +276,11 @@ public class ColorBlocksGame : Game
                 "Steam",
                 $"SteamInput.Init ok={_steamInput.IsInitialized} status='{_steamInput.InitializationStatus}'");
             Party.BindSteamServices(_steamLobby, _steamParty);
+            _levelStartRouter.Bind();
+            _steamLobby.LobbyReady += OnSteamLobbyReadyForExternalJoin;
+            _steamWorkshop.Initialize();
+            _steamWorkshop.SyncSubscribedItems();
+            _steamInvites.TryConsumeLaunchJoin(Environment.GetCommandLineArgs());
         }
 
         _input = new InputManager();
@@ -264,8 +319,10 @@ public class ColorBlocksGame : Game
         _steamInput.RunFrame();
         _input.ConfigurePointerTransform(Window.ClientBounds, GraphicsDevice.Viewport, _presentation);
         _input.AnalogContext = ResolveAnalogInputContext();
-        _input.Update();
-        GameAudio.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
+        _input.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
+        float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+        GameAudio.Update(dt);
+        _audioOutputHotSwap.Update(dt);
 
         if (_input.SteamInputOriginDumpPressed && _steamInput.IsInitialized)
         {
@@ -321,7 +378,7 @@ public class ColorBlocksGame : Game
         {
             _benchmarkOverlay.Draw(_spriteBatch, _pixel, Viewport, BenchmarkManager.Runner);
             BenchmarkDebugOverlay.Draw(_spriteBatch, _pixel, Viewport, BenchmarkManager.Runner);
-            UserDataDebugOverlay.Draw(_spriteBatch, _pixel, Viewport, _steamInput);
+            UserDataDebugOverlay.Draw(_spriteBatch, _pixel, Viewport, _steamInput, _input);
         }
 
         ReplayDebugOverlay.Draw(_spriteBatch, _pixel, Viewport);
@@ -345,8 +402,11 @@ public class ColorBlocksGame : Game
     {
         if (disposing)
         {
+            _levelStartRouter.Unbind();
             _presentation.Dispose();
+            _steamInvites.ClearPresence();
             _steamInput.Shutdown();
+            _steamWorkshop.Dispose();
             _steamCallbacks.Dispose();
             _steam.Shutdown();
         }

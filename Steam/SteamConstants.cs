@@ -20,13 +20,27 @@ public static class SteamConstants
     public const string LobbyDataLavaRise = "lava_rise";
     public const string LobbyDataPartyRoster = "party_roster";
     public const string LobbyDataLeaderSteam = "leader_steam";
+    /// <summary>"1" while host GameScene is active; "0" when host leaves gameplay (party lobby stays).</summary>
+    public const string LobbyDataGameplay = "gameplay";
 
     public const string LobbyMemberDataLocals = "locals";
     public const string LobbyMemberDataBuild = "build_info";
+    /// <summary>Comma-separated base64 16×16 packs, same order as <see cref="LobbyMemberDataLocals"/>.</summary>
+    public const string LobbyMemberDataSkins = "skins";
 
     public const string ChatPrefixStart = "START:";
     public const string ChatPrefixKick = "KICK:";
+    /// <summary>Guest intentional leave of GameScene; host ends level too. Lobby stays.</summary>
+    public const string ChatPrefixLeaveLevel = "LEAVE_LEVEL:";
     public const string RichPresenceConnectKey = "connect";
+    public const string RichPresenceDisplayKey = "steam_display";
+    public const string RichPresencePlayerGroupKey = "steam_player_group";
+    public const string RichPresencePlayerGroupSizeKey = "steam_player_group_size";
+    public const string RichPresenceInPartyToken = "#StatusInParty";
+    public const string RichPresenceConnectPrefix = "lobby:";
+    public const string RichPresenceLegacyConnectPrefix = "+connect_lobby_";
+    /// <summary>Steam classic launch flag; lobby id follows as the next argv token.</summary>
+    public const string RichPresenceConnectLobbyFlag = "+connect_lobby";
 }
 
 public enum SteamPartyError

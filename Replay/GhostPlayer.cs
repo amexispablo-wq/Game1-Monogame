@@ -13,6 +13,9 @@ public sealed class GhostPlayer
   public bool IsActive { get; private set; }
   public ReplayWorld? World => _player.World;
 
+  /// <summary>Border tint used to tell ghosts apart (white = personal best, gold = world record).</summary>
+  public Color BorderColor { get; set; } = Color.White;
+
   public bool TryLoadBestRun(string levelId)
   {
     Unload();
@@ -21,10 +24,28 @@ public sealed class GhostPlayer
       return false;
     }
 
+    LoadReplayFile(replayFile);
+    return true;
+  }
+
+  /// <summary>Loads any replay file (e.g. a downloaded World Record ghost) into this ghost overlay.</summary>
+  public bool TryLoadReplayFile(ReplayFile? replayFile)
+  {
+    Unload();
+    if (replayFile is null)
+    {
+      return false;
+    }
+
+    LoadReplayFile(replayFile);
+    return true;
+  }
+
+  private void LoadReplayFile(ReplayFile replayFile)
+  {
     _player.Load(replayFile.Data, ReplayCameraMode.Recorded, ReplayPlaybackEndMode.Stop);
     IsActive = true;
     Reset();
-    return true;
   }
 
   public void Unload()
@@ -82,7 +103,7 @@ public sealed class GhostPlayer
         PlayerSkinRenderer.DrawSkinOverlay(spriteBatch, pixel, body, skin);
       }
 
-      DrawHelper.DrawBorder(spriteBatch, pixel, body, Color.White * (ghostAlpha * 0.8f), 2);
+      DrawHelper.DrawBorder(spriteBatch, pixel, body, BorderColor * (ghostAlpha * 0.8f), 2);
     }
   }
 }

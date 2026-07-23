@@ -2561,7 +2561,7 @@ public sealed class EditorScene : IScene
             _levelId,
             ropeMode,
             lavaRiseEnabled: testLevel.LavaRise,
-            ghostBestRunEnabled: false,
+            ghostMode: GhostMode.None,
             playerCollisionEnabled: testLevel.PlayerCollision,
             editorTestMode: true,
             levelOverride: testLevel));

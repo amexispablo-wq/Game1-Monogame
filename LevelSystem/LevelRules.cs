@@ -110,6 +110,19 @@ public static class LevelRules
     public static bool SupportsPlayerCollision(Level level) => level.PlayerCollision;
 
     /// <summary>
+    /// Baked play options from the level JSON (official-matching defaults).
+    /// Rope prefers <paramref name="preferredRope"/> when the level allows it.
+    /// </summary>
+    public static (RopeGameplayMode RopeMode, bool LavaRiseEnabled, bool PlayerCollisionEnabled)
+        ResolvePredefinedPlaySettings(Level level, RopeGameplayMode preferredRope)
+    {
+        return (
+            ClampRopeMode(level, preferredRope),
+            SupportsLavaRise(level),
+            SupportsPlayerCollision(level));
+    }
+
+    /// <summary>
     /// Official runs must match level rules exactly for features,
     /// and use an allowed rope mode / player count.
     /// Turning OFF a level feature or ON a disallowed one → unofficial.

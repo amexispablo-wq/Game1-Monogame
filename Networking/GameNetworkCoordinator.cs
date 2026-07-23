@@ -1,4 +1,5 @@
 #nullable enable
+using System;
 using System.Collections.Generic;
 
 namespace ColorBlocks;
@@ -9,6 +10,14 @@ public sealed class GameNetworkCoordinator
     private readonly SteamLobbyService _lobby;
     private readonly Dictionary<int, PlayerInputState> _clientLatchedInput = new();
     private bool _onlineSessionLogged;
+    private DateTime _lastActiveRemoteInputLogUtc = DateTime.MinValue;
+    private DateTime _lastEmptyRemoteInputLogUtc = DateTime.MinValue;
+    private int _loggedInputRecv;
+    private int _loggedSnapshotLatch;
+    private int _loggedInputSend;
+    private int _loggedSnapshotBroadcast;
+    private int _lastLatchedSnapshotSequence = -1;
+    private long _lastLatchedSnapshotTick = -1;
 
     public GameNetworkCoordinator(
         SteamGameNetworkService transport,
@@ -56,18 +65,49 @@ public sealed class GameNetworkCoordinator
             {
                 inputFrame.Tick = simulation.CurrentTick.Value;
                 simulation.InputBuffer.StoreFrame(inputFrame);
-                MultiplayerDebug.LogNet(
-                    $"Host recv InputFrame from sid={packet.SenderSteamId} owner={inputFrame.OwnerId} " +
-                    $"players={inputFrame.PlayerInputs.Count} → tick={inputFrame.Tick}");
+                if (_loggedInputRecv < 3 || (_loggedInputRecv % 120) == 0)
+                {
+                    MultiplayerDebug.LogNet(
+                        $"Host recv InputFrame #{_loggedInputRecv + 1} from sid={packet.SenderSteamId} " +
+                        $"owner={inputFrame.OwnerId} players={inputFrame.PlayerInputs.Count} tick={inputFrame.Tick}");
+                }
+
+                _loggedInputRecv++;
+                LogHostRemoteInputSample(packet.SenderSteamId, inputFrame);
                 continue;
             }
 
             if (!session.IsHost && packetType == NetworkPacketType.GameSnapshot && snapshot is not null)
             {
+                // Host RestartLevel used to zero Sequence; accept tick+seq rewind as session restart.
+                if (_lastLatchedSnapshotSequence >= 0
+                    && snapshot.Sequence < _lastLatchedSnapshotSequence
+                    && snapshot.Tick < _lastLatchedSnapshotTick)
+                {
+                    MultiplayerDebug.LogNet(
+                        $"Client snapshot latch RESET — restart detect seq {_lastLatchedSnapshotSequence}→{snapshot.Sequence} " +
+                        $"tick {_lastLatchedSnapshotTick}→{snapshot.Tick}");
+                    _lastLatchedSnapshotSequence = -1;
+                    _lastLatchedSnapshotTick = -1;
+                }
+
+                // Keep newest only — drop stale/equal seq (unreliable reordering / duplicates).
+                if (snapshot.Sequence <= _lastLatchedSnapshotSequence)
+                {
+                    continue;
+                }
+
+                _lastLatchedSnapshotSequence = snapshot.Sequence;
+                _lastLatchedSnapshotTick = snapshot.Tick;
                 _latestClientSnapshot = snapshot;
-                MultiplayerDebug.LogNet(
-                    $"Client latch GameSnapshot seq={snapshot.Sequence} tick={snapshot.Tick} " +
-                    $"players={snapshot.Players.Count} ropes={snapshot.Ropes.Count}");
+                if (_loggedSnapshotLatch < 3 || (_loggedSnapshotLatch % 120) == 0)
+                {
+                    MultiplayerDebug.LogNet(
+                        $"Client latch GameSnapshot #{_loggedSnapshotLatch + 1} seq={snapshot.Sequence} " +
+                        $"tick={snapshot.Tick} players={snapshot.Players.Count} ropes={snapshot.Ropes.Count}");
+                }
+
+                _loggedSnapshotLatch++;
             }
         }
     }
@@ -87,9 +127,14 @@ public sealed class GameNetworkCoordinator
             if (_transport.SendToUser(hostSteamId, payload, snapshot: false))
             {
                 MultiplayerDebug.RecordPacketSent(snapshot: false, payload.Length);
-                MultiplayerDebug.LogNet(
-                    $"Client send InputFrame → host={hostSteamId} owner={frame.OwnerId} " +
-                    $"players={frame.PlayerInputs.Count} tick={frame.Tick}");
+                if (_loggedInputSend < 3 || (_loggedInputSend % 120) == 0)
+                {
+                    MultiplayerDebug.LogNet(
+                        $"Client send InputFrame #{_loggedInputSend + 1} → host={hostSteamId} " +
+                        $"owner={frame.OwnerId} players={frame.PlayerInputs.Count} tick={frame.Tick}");
+                }
+
+                _loggedInputSend++;
             }
         }
     }
@@ -119,9 +164,14 @@ public sealed class GameNetworkCoordinator
 
         if (sent > 0)
         {
-            MultiplayerDebug.LogNet(
-                $"Host BroadcastSnapshot seq={snapshot.Sequence} tick={snapshot.Tick} " +
-                $"recipients={sent} players={snapshot.Players.Count} ropes={snapshot.Ropes.Count}");
+            if (_loggedSnapshotBroadcast < 3 || (_loggedSnapshotBroadcast % 120) == 0)
+            {
+                MultiplayerDebug.LogNet(
+                    $"Host BroadcastSnapshot #{_loggedSnapshotBroadcast + 1} seq={snapshot.Sequence} " +
+                    $"tick={snapshot.Tick} recipients={sent} players={snapshot.Players.Count} ropes={snapshot.Ropes.Count}");
+            }
+
+            _loggedSnapshotBroadcast++;
         }
     }
 
@@ -143,9 +193,69 @@ public sealed class GameNetworkCoordinator
         _latestClientSnapshot = null;
         _clientLatchedInput.Clear();
         _onlineSessionLogged = false;
+        _lastActiveRemoteInputLogUtc = DateTime.MinValue;
+        _lastEmptyRemoteInputLogUtc = DateTime.MinValue;
+        _loggedInputRecv = 0;
+        _loggedSnapshotLatch = 0;
+        _loggedInputSend = 0;
+        _loggedSnapshotBroadcast = 0;
+        _lastLatchedSnapshotSequence = -1;
+        _lastLatchedSnapshotTick = -1;
         _transport.CloseAllSessions();
         MultiplayerDebug.LogNet("GameNetworkCoordinator.Reset");
         MultiplayerDebug.ResetSessionCounters();
+    }
+
+    /// <summary>Drop client edge latch (e.g. local pause) so resume cannot fire a stale Jump/Color.</summary>
+    public void ClearClientLatchedInput() => _clientLatchedInput.Clear();
+
+    private void LogHostRemoteInputSample(ulong senderSteamId, InputFrame inputFrame)
+    {
+        bool anyActive = false;
+        float maxAbsMove = 0f;
+        bool anyJump = false;
+        int networkId = -1;
+        foreach (PlayerInputEntry entry in inputFrame.PlayerInputs)
+        {
+            networkId = entry.NetworkId;
+            float absH = Math.Abs(entry.Input.HorizontalMovement);
+            float absMove = Math.Max(Math.Abs(entry.Input.Move.X), Math.Abs(entry.Input.Move.Y));
+            maxAbsMove = Math.Max(maxAbsMove, Math.Max(absH, absMove));
+            if (entry.Input.JumpPressed)
+            {
+                anyJump = true;
+            }
+
+            if (absH > 0.01f || absMove > 0.01f || entry.Input.JumpPressed || entry.Input.PullRopeHeld)
+            {
+                anyActive = true;
+            }
+        }
+
+        DateTime now = DateTime.UtcNow;
+        if (anyActive)
+        {
+            if ((now - _lastActiveRemoteInputLogUtc).TotalSeconds < 1.0)
+            {
+                return;
+            }
+
+            _lastActiveRemoteInputLogUtc = now;
+            MultiplayerDebug.LogNet(
+                $"Host recv InputFrame ACTIVE sid={senderSteamId} owner={inputFrame.OwnerId} " +
+                $"N{networkId} move={maxAbsMove:0.00} jump={anyJump} tick={inputFrame.Tick}");
+            return;
+        }
+
+        if ((now - _lastEmptyRemoteInputLogUtc).TotalSeconds < 5.0)
+        {
+            return;
+        }
+
+        _lastEmptyRemoteInputLogUtc = now;
+        MultiplayerDebug.LogNet(
+            $"Host recv InputFrame EMPTY sid={senderSteamId} owner={inputFrame.OwnerId} " +
+            $"players={inputFrame.PlayerInputs.Count} tick={inputFrame.Tick}");
     }
 
     public string GetOnlineRoleLabel(GameSession session) =>

@@ -54,6 +54,11 @@ internal sealed class PacketBuffer
         _stream.Write(buffer);
     }
 
+    public void WriteBytes(ReadOnlySpan<byte> value)
+    {
+        _stream.Write(value);
+    }
+
     public void WriteString(string value)
     {
         string text = value ?? string.Empty;
@@ -103,6 +108,14 @@ internal ref struct PacketReader
         string text = Encoding.UTF8.GetString(_data.Slice(_offset, length));
         _offset += length;
         return text;
+    }
+
+    public byte[] ReadBytes(int length)
+    {
+        Ensure(length);
+        byte[] value = _data.Slice(_offset, length).ToArray();
+        _offset += length;
+        return value;
     }
 
     private T Read<T>(ReadSpan<T> reader) where T : struct

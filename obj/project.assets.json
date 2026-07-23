@@ -483,16 +483,16 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\amexi\\.nuget\\packages\\": {}
+    "C:\\Users\\amexi\\AppData\\Local\\Temp\\cursor-sandbox-cache\\6db3a919399549985c3a263fc5f3c3cc\\nuget": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj",
+      "projectUniqueName": "c:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj",
       "projectName": "Color Blocks",
-      "projectPath": "C:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj",
-      "packagesPath": "C:\\Users\\amexi\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\amexi\\Desktop\\Color Blocks\\obj\\",
+      "projectPath": "c:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj",
+      "packagesPath": "C:\\Users\\amexi\\AppData\\Local\\Temp\\cursor-sandbox-cache\\6db3a919399549985c3a263fc5f3c3cc\\nuget",
+      "outputPath": "c:\\Users\\amexi\\Desktop\\Color Blocks\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\amexi\\AppData\\Roaming\\NuGet\\NuGet.Config",

@@ -190,11 +190,22 @@ public sealed class OptionsScene : IScene
         InitializeSoundEffectToggles(pending);
     }
 
+    /// <summary>
+    /// Steam Input owns a live controller with valid actions.
+    /// Init-only is NOT enough — otherwise gamepad rebind stays locked with no pad.
+    /// </summary>
     private bool IsSteamInputManagingControllers =>
-        _game.SteamInput.IsInitialized && _game.Steam.IsInitialized;
+        _game.Input.IsSteamInputManagingControllers;
 
+    private bool HasSteamInputSoftClaim =>
+        _game.Input.SteamInput?.HasAnySoftClaim == true;
+
+    /// <summary>
+    /// Allow Steam binding panel when live OR soft-claimed (soft-claim needs Official layout fix).
+    /// </summary>
     private bool CanOpenSteamControllerConfig =>
-        IsSteamInputManagingControllers && _game.Steam.IsOverlayEnabled;
+        _game.Steam.IsOverlayEnabled
+        && (IsSteamInputManagingControllers || HasSteamInputSoftClaim);
 
     private void InitializeSoundEffectToggles(GameSettings pending)
     {
@@ -375,7 +386,7 @@ public sealed class OptionsScene : IScene
     {
         try
         {
-            string zipPath = DiagnosticsExporter.Export();
+            string zipPath = DiagnosticsExporter.Export(_game.Input);
             _exportStatus = $"Exported: {zipPath}";
             _exportStatusIsError = false;
         }
@@ -786,9 +797,12 @@ public sealed class OptionsScene : IScene
             DrawFittedLeft(spriteBatch, pixel, displayAction, labelBounds, 2, LabelColor);
         }
 
-        if (IsSteamInputManagingControllers && !layout.SteamNoteBounds.IsEmpty)
+        if ((IsSteamInputManagingControllers || HasSteamInputSoftClaim) && !layout.SteamNoteBounds.IsEmpty)
         {
-            DrawFittedLeft(spriteBatch, pixel, "Managed by Steam Input", layout.SteamNoteBounds, 1, MutedLabelColor);
+            string note = HasSteamInputSoftClaim && !IsSteamInputManagingControllers
+                ? "Steam config not live — open Official layout"
+                : "Managed by Steam Input";
+            DrawFittedLeft(spriteBatch, pixel, note, layout.SteamNoteBounds, 1, MutedLabelColor);
             if (CanOpenSteamControllerConfig)
             {
                 _steamConfigButton.Draw(spriteBatch, pixel);
@@ -1087,7 +1101,8 @@ public sealed class OptionsScene : IScene
 
         int topBlockHeight = TitleHeight + titleToSectionsGap + 56 + sectionGap;
         // Steam footer sits between control table and Back/Apply — reserve vertical space.
-        bool showSteamFooter = _activeSection == OptionsSection.Controls && CanOpenSteamControllerConfig;
+        bool showSteamFooter = _activeSection == OptionsSection.Controls
+            && (CanOpenSteamControllerConfig || HasSteamInputSoftClaim);
         const int steamNoteHeight = 22;
         const int steamButtonHeight = 40;
         int steamFooterHeight = showSteamFooter

@@ -149,7 +149,8 @@ public sealed class Player : INetworkEntity
             State,
             IsGrounded,
             IsFrozen,
-            _cosmeticSkinId);
+            _cosmeticSkinId,
+            PlayerSkinCodec.Pack(_cosmeticSkin));
     }
 
     public void ApplySnapshot(PlayerSnapshot snapshot)
@@ -173,7 +174,25 @@ public sealed class Player : INetworkEntity
 
     private void ApplyCosmeticSkinFromSnapshot(PlayerSnapshot snapshot)
     {
+        if (snapshot.CosmeticSkinPixels is { Length: PlayerSkinCodec.PackedByteCount } pixels)
+        {
+            if (string.Equals(_cosmeticSkinId, snapshot.CosmeticSkinId, StringComparison.Ordinal)
+                && PlayerSkinCodec.PackedEquals(_cosmeticSkin, pixels))
+            {
+                return;
+            }
+
+            SetCosmeticSkin(PlayerSkinCodec.Unpack(pixels), snapshot.CosmeticSkinId);
+            return;
+        }
+
         if (string.IsNullOrEmpty(snapshot.CosmeticSkinId))
+        {
+            return;
+        }
+
+        if (string.Equals(_cosmeticSkinId, snapshot.CosmeticSkinId, StringComparison.Ordinal)
+            && _cosmeticSkin is not null)
         {
             return;
         }

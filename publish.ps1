@@ -6,13 +6,18 @@
 .DESCRIPTION
   Builds a self-contained win-x64 Release publish into Publish/,
   strips developer/user data, validates Content + Steam deps,
-  stages SteamBuild/content/ for SteamPipe upload.
+  then wipe+copies into Steamworks ContentBuilder\content for SteamPipe upload.
 
   Does not modify gameplay code or change game behavior.
+
+.PARAMETER SteamPipeContent
+  Target SteamPipe content folder (wipe+copy of Publish). Override if SDK lives elsewhere.
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [string]$SteamPipeContent = "C:\Users\amexi\Desktop\sdk\tools\ContentBuilder\content"
+)
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -23,7 +28,6 @@ Set-Location -LiteralPath $ScriptRoot
 $ProjectFile     = Join-Path $ScriptRoot "Color Blocks.csproj"
 $PublishDir      = Join-Path $ScriptRoot "Publish"
 $SteamBuildRoot  = Join-Path $ScriptRoot "SteamBuild"
-$SteamContent    = Join-Path $SteamBuildRoot "content"
 $SteamOutput     = Join-Path $SteamBuildRoot "output"
 $SteamScripts    = Join-Path $SteamBuildRoot "scripts"
 $SourceContent   = Join-Path $ScriptRoot "Content"
@@ -93,10 +97,17 @@ function Remove-PublishTree {
 }
 
 function Ensure-SteamBuildFolders {
-    foreach ($dir in @($SteamBuildRoot, $SteamScripts, $SteamOutput, $SteamContent)) {
+    foreach ($dir in @($SteamBuildRoot, $SteamScripts, $SteamOutput)) {
         if (-not (Test-Path -LiteralPath $dir)) {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
         }
+    }
+}
+
+function Assert-SteamPipeContentTarget {
+    $parent = Split-Path -Parent $SteamPipeContent
+    if ([string]::IsNullOrWhiteSpace($parent) -or -not (Test-Path -LiteralPath $parent)) {
+        Fail "SteamPipe ContentBuilder folder missing: $parent`nOverride with -SteamPipeContent if SDK path moved."
     }
 }
 
@@ -147,18 +158,17 @@ function Copy-RequiredSteamAssets {
     foreach ($v in $vdfSources) {
         $src = Join-Path $ScriptRoot $v.Src
         $dst = Join-Path $PublishDir $v.Dest
-        if (Test-Path -LiteralPath $src) {
-            $dstDir = Split-Path -Parent $dst
-            if (-not (Test-Path -LiteralPath $dstDir)) {
-                New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
-            }
-            if (-not (Test-Path -LiteralPath $dst)) {
-                Copy-Item -LiteralPath $src -Destination $dst -Force
-                Write-Host "Copied $($v.Dest)"
-            }
-        } else {
-            $Warnings.Add("Steam VDF source missing: $($v.Src)")
+        if (-not (Test-Path -LiteralPath $src)) {
+            Fail "Steam VDF source missing: $($v.Src)"
         }
+
+        $dstDir = Split-Path -Parent $dst
+        if (-not (Test-Path -LiteralPath $dstDir)) {
+            New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+        }
+
+        Copy-Item -LiteralPath $src -Destination $dst -Force
+        Write-Host "Copied $($v.Dest)"
     }
 }
 
@@ -380,6 +390,14 @@ function Test-PublishOutput {
     }
     Write-Host "OK Steamworks.NET.dll"
 
+    foreach ($vdfRel in @("Steam\steam_input_manifest.vdf", "Steam\controller_gamepad.vdf")) {
+        $vdfPath = Join-Path $PublishDir $vdfRel
+        if (-not (Test-Path -LiteralPath $vdfPath)) {
+            Fail "$vdfRel missing from Publish (Steam Input official configs)"
+        }
+        Write-Host "OK $vdfRel"
+    }
+
     $sdl = Join-Path $PublishDir "SDL2.dll"
     if (-not (Test-Path -LiteralPath $sdl)) {
         Fail "SDL2.dll missing (MonoGame native dependency)"
@@ -466,39 +484,29 @@ function Write-VersionFile {
     Write-Host "Wrote version.json"
 }
 
-function Sync-SteamBuildContent {
-    Write-Step "Staging SteamBuild/content"
+function Sync-SteamPipeContent {
+    Write-Step "Staging SteamPipe content: $SteamPipeContent"
 
-    Ensure-SteamBuildFolders
+    Assert-SteamPipeContentTarget
 
-    $contentGitignore = Join-Path $SteamContent ".gitignore"
-    $gitignoreBackup = $null
-    if (Test-Path -LiteralPath $contentGitignore) {
-        $gitignoreBackup = Get-Content -LiteralPath $contentGitignore -Raw
+    if (-not (Test-Path -LiteralPath $SteamPipeContent)) {
+        New-Item -ItemType Directory -Path $SteamPipeContent -Force | Out-Null
     }
 
-    if (Test-Path -LiteralPath $SteamContent) {
-        Get-ChildItem -LiteralPath $SteamContent -Force | Remove-Item -Recurse -Force
-    } else {
-        New-Item -ItemType Directory -Path $SteamContent -Force | Out-Null
-    }
+    # Full replace — no stale merge from previous uploads.
+    Get-ChildItem -LiteralPath $SteamPipeContent -Force -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force
 
     # -Path (not -LiteralPath) so the * wildcard expands.
-    Copy-Item -Path (Join-Path $PublishDir "*") -Destination $SteamContent -Recurse -Force
+    Copy-Item -Path (Join-Path $PublishDir "*") -Destination $SteamPipeContent -Recurse -Force
 
     # BuildReport is audit-only — keep out of SteamPipe depot content.
-    $stagedReport = Join-Path $SteamContent "BuildReport.txt"
+    $stagedReport = Join-Path $SteamPipeContent "BuildReport.txt"
     if (Test-Path -LiteralPath $stagedReport) {
         Remove-Item -LiteralPath $stagedReport -Force
     }
 
-    if ($null -ne $gitignoreBackup) {
-        Set-Content -LiteralPath $contentGitignore -Value $gitignoreBackup -Encoding UTF8 -NoNewline
-    } elseif (-not (Test-Path -LiteralPath $contentGitignore)) {
-        Set-Content -LiteralPath $contentGitignore -Value ("# SteamBuild staging folders (filled by publish.ps1)`n*`n!.gitignore`n") -Encoding UTF8
-    }
-
-    Write-Host "Copied Publish -> SteamBuild/content"
+    Write-Host "Copied Publish -> $SteamPipeContent"
 }
 
 function Write-BuildReport {
@@ -534,7 +542,7 @@ function Write-BuildReport {
         "PublishReadyToRun   : true"
         "PublishTrimmed      : false (MonoGame incompatible)"
         "Output              : Publish/"
-        "Steam stage         : SteamBuild/content/"
+        "SteamPipe content   : $SteamPipeContent"
         "Executable          : Publish/$ExeName"
         "GameVersion         : $gameVer"
         "GitCommit           : $gitCommit"
@@ -577,6 +585,7 @@ try {
     Write-Host "Root: $ScriptRoot"
 
     Remove-PublishTree
+    Assert-SteamPipeContentTarget
     Ensure-SteamBuildFolders
     Invoke-DotNetPublish
     Copy-RequiredSteamAssets
@@ -585,7 +594,7 @@ try {
     Write-VersionFile
     Test-ContentAssets
     Test-PublishOutput
-    Sync-SteamBuildContent
+    Sync-SteamPipeContent
 
     $elapsed = (Get-Date) - $BuildStart
     $sizeBytes = [long](Get-DirectorySizeBytes $PublishDir)
@@ -600,7 +609,8 @@ try {
     Write-Host "Build size     : $(Format-Size $sizeBytes)"
     Write-Host "File count     : $fileCount"
     Write-Host "Executable     : $exePath"
-    Write-Host "Steam content  : $SteamContent"
+    Write-Host "SteamPipe next : wipe+copy done -> $SteamPipeContent"
+    Write-Host "Upload with    : steamcmd run_app_build ...\ContentBuilder\scripts\app_build_4796400.vdf"
     Write-Host "Build report   : $ReportPath"
     Write-Host "Elapsed        : $($elapsed.ToString('hh\:mm\:ss\.fff'))"
     exit 0

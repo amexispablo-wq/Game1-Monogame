@@ -28,4 +28,23 @@ public readonly record struct PlayerInputState(
                 Math.Clamp(MenuNavigate.Y, -1f, 1f))
         };
     }
+
+    /// <summary>
+    /// Same-tick merge: freshest axes/holds, OR edge presses, keep first non-null color.
+    /// Prevents burst packets from wiping Jump/Color after a true edge.
+    /// </summary>
+    public PlayerInputState MergePreferringEdges(PlayerInputState incoming)
+    {
+        PlayerInputState a = Sanitized();
+        PlayerInputState b = incoming.Sanitized();
+        return new PlayerInputState(
+            b.HorizontalMovement,
+            a.JumpPressed || b.JumpPressed,
+            a.RespawnPressed || b.RespawnPressed,
+            b.FastFallHeld,
+            b.PullRopeHeld,
+            b.RequestedColor ?? a.RequestedColor,
+            b.Move,
+            b.MenuNavigate);
+    }
 }

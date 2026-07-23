@@ -57,7 +57,7 @@ public static class ReplayFileSerializer
     File.WriteAllText(path, json);
   }
 
-  public static ReplayFile? TryLoad(string path)
+  public static ReplayFile? TryLoad(string path, bool invalidateOnHashMismatch = true)
   {
     if (!File.Exists(path))
     {
@@ -75,8 +75,17 @@ public static class ReplayFileSerializer
 
       if (!LevelContentHash.MatchesCurrentLevel(file.Metadata.LevelId, file.Metadata.LevelContentHash))
       {
-        TryDelete(path);
-        return null;
+        if (invalidateOnHashMismatch)
+        {
+          TryDelete(path);
+          return null;
+        }
+
+        // World-record downloads from other players can hash-mismatch across builds;
+        // keep the file so ghosts/WR viewer still work.
+        DiagnosticsLog.Info(
+          "Replay",
+          $"Loaded replay with level-hash mismatch (kept): '{path}' level={file.Metadata.LevelId}");
       }
 
       return file;

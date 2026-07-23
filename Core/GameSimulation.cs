@@ -69,6 +69,29 @@ public sealed class GameSimulation
     public int SnapshotCount { get; private set; }
     public GameSnapshot LastSnapshot { get; private set; }
     public bool RecordProgress { get; set; } = true;
+    /// <summary>Peer left mid-run — completion saves as unofficial / no Steam leaderboard.</summary>
+    public bool ForceUnofficial { get; private set; }
+
+    /// <summary>
+    /// Host: remove all players owned by steam peer, rebuild ropes, mark run unofficial.
+    /// </summary>
+    public int RemovePeerFromSimulation(ulong steamId)
+    {
+        int ownerId = SteamOwnerId.FromSteamId(steamId);
+        int removed = PlayerManager.RemovePlayersByOwnerId(ownerId);
+        if (removed <= 0)
+        {
+            MultiplayerDebug.LogWarn($"RemovePeerFromSimulation no players for steam={steamId} owner={ownerId}");
+            return 0;
+        }
+
+        ForceUnofficial = true;
+        PhysicsWorld.RebuildRopeChain();
+        MultiplayerDebug.LogSim(
+            $"Peer removed mid-run steam={steamId} owner={ownerId} removed={removed} " +
+            $"players={Players.Count} ropes={Ropes.Count} → ForceUnofficial");
+        return removed;
+    }
 
     public int Advance(float frameSeconds, ILocalPlayerInputSource localInputSource)
     {
@@ -117,6 +140,11 @@ public sealed class GameSimulation
     public void SetPaused(bool paused)
     {
         IsPaused = paused;
+        if (paused)
+        {
+            // Drop latched Jump/Respawn/Color so resume cannot fire a press from before pause.
+            _latchedLocalInput.Clear();
+        }
     }
 
     private void UpdateMotionTrails(float dt)
@@ -176,7 +204,8 @@ public sealed class GameSimulation
         _fixedTimeAccumulator = 0f;
         _latchedLocalInput.Clear();
         CurrentTick = SimulationTick.Zero;
-        SnapshotCount = 0;
+        // Keep SnapshotCount monotonic for the online session — zeroing it makes clients
+        // drop post-restart snaps until seq climbs past the old latch (felt multi-minute freeze).
         LastSnapshot = CreateSnapshot(SimulationTick.Zero);
     }
 
@@ -354,14 +383,19 @@ public sealed class GameSimulation
         ElapsedTime = FinalTime;
         if (RecordProgress)
         {
-            bool official = LevelRules.IsOfficialPlaySettings(
-                Level,
-                _session.RopeGameplayMode,
-                LavaRiseEnabled,
-                PlayerCollisionEnabled,
-                Players.Count);
+            bool official = !ForceUnofficial
+                && LevelRules.IsOfficialPlaySettings(
+                    Level,
+                    _session.RopeGameplayMode,
+                    LavaRiseEnabled,
+                    PlayerCollisionEnabled,
+                    Players.Count);
             bool savedRecord = BestTimeStorage.SaveIfRecord(_session.SelectedLevelId, FinalTime, official);
             NewRecord = official && savedRecord;
+            if (ForceUnofficial)
+            {
+                MultiplayerDebug.LogSim($"CompleteLevel ForceUnofficial time={FinalTime:0.00} (no official/highscore)");
+            }
         }
         else
         {

@@ -14,6 +14,7 @@ public sealed class PhysicsWorld
     public const float Gravity = 1600f;
 
     private readonly Level _level;
+    private readonly GameSession _session;
     private readonly Dictionary<int, float> _launchPadCooldowns = new();
     private readonly List<Player> _simulationOrder = new();
     private readonly List<Platform> _sortedPlatformsScratch = new();
@@ -25,27 +26,10 @@ public sealed class PhysicsWorld
         RopeGameplayMode ropeGameplayMode = RopeGameplayMode.ColoredPhysics)
     {
         _level = level;
+        _session = session;
         Players = players;
         RopeGameplayMode = ropeGameplayMode;
-
-        for (int i = 0; i < Players.Count - 1; i++)
-        {
-            int ropeNetworkId = session.AllocateNetworkId();
-            NetworkEntityOwnership ownership = new(ropeNetworkId, session.HostOwnerId, session.IsHost, true);
-            Rope rope = new(
-                Players[i],
-                Players[i + 1],
-                Players,
-                RopeGameplayMode,
-                ownership);
-            Ropes.Add(rope);
-            MultiplayerDebug.LogRope(
-                $"Create Rope NetworkId={ropeNetworkId} OwnerId={session.HostOwnerId} " +
-                $"IsLocal={session.IsHost} IsHostControlled=true " +
-                $"P{Players[i].PlayerIndex + 1}(N{Players[i].NetworkId})-P{Players[i + 1].PlayerIndex + 1}(N{Players[i + 1].NetworkId})");
-        }
-
-        MultiplayerDebug.LogRope($"Rope chain done count={Ropes.Count} for players={Players.Count}");
+        RebuildRopeChain();
         RefreshSimulationOrder();
     }
 
@@ -55,6 +39,31 @@ public sealed class PhysicsWorld
     public bool PlayerCollisionEnabled { get; set; }
     public Vector2 LastLaunchForce { get; private set; }
     public float LastSimulationStepSeconds { get; private set; }
+
+    /// <summary>Drop all ropes and rebuild adjacent chain for current Players list.</summary>
+    public void RebuildRopeChain()
+    {
+        Ropes.Clear();
+        for (int i = 0; i < Players.Count - 1; i++)
+        {
+            int ropeNetworkId = _session.AllocateNetworkId();
+            NetworkEntityOwnership ownership = new(ropeNetworkId, _session.HostOwnerId, _session.IsHost, true);
+            Rope rope = new(
+                Players[i],
+                Players[i + 1],
+                Players,
+                RopeGameplayMode,
+                ownership);
+            Ropes.Add(rope);
+            MultiplayerDebug.LogRope(
+                $"Create Rope NetworkId={ropeNetworkId} OwnerId={_session.HostOwnerId} " +
+                $"IsLocal={_session.IsHost} IsHostControlled=true " +
+                $"P{Players[i].PlayerIndex + 1}(N{Players[i].NetworkId})-P{Players[i + 1].PlayerIndex + 1}(N{Players[i + 1].NetworkId})");
+        }
+
+        MultiplayerDebug.LogRope($"Rope chain done count={Ropes.Count} for players={Players.Count}");
+        RefreshSimulationOrder();
+    }
 
     public void UpdatePhysics(float dt, IReadOnlyDictionary<int, PlayerInputState> inputStates)
     {

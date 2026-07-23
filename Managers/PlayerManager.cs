@@ -25,7 +25,8 @@ public sealed class PlayerManager
 
     public IReadOnlyList<Player> SpawnFromParty(
         IReadOnlyList<PartyMember> members,
-        InputManager input)
+        InputManager input,
+        SteamLobbyService? lobby = null)
     {
         Players.Clear();
         _session.ClearPlayers();
@@ -39,7 +40,7 @@ public sealed class PlayerManager
             InputDevice assignedInput = ToInputDevice(member);
             bool isLocal = member.IsLocallyOwned;
             int ownerId = member.OwnerId != 0 ? member.OwnerId : _session.LocalOwnerId;
-            bool isHostControlled = isLocal && _session.IsHost;
+            bool isHostControlled = _session.IsHost;
             string indicatorLabel = member.DisplayName;
 
             int networkId = member.NetworkPlayerId > 0
@@ -65,10 +66,17 @@ public sealed class PlayerManager
                 indicatorLabel);
             Players.Add(player);
             ApplySpawnColor(player);
-            if (member.IsLocallyOwned)
+
+            (PlayerSkinData? skin, string? skinId) = PlayerSkinCodec.ResolveForMember(lobby, member, members);
+            if (skin is not null)
             {
-                string? skinId = SkinLibraryStorage.GetSelectedSkinId(member.Id);
-                player.SetCosmeticSkin(SkinLibraryStorage.GetSkinForMember(member.Id), skinId);
+                player.SetCosmeticSkin(skin, skinId);
+                MultiplayerDebug.LogSpawn(
+                    $"Skin applied '{indicatorLabel}' local={isLocal} skinId='{skinId ?? ""}'");
+            }
+            else
+            {
+                MultiplayerDebug.LogSpawn($"Skin missing '{indicatorLabel}' local={isLocal}");
             }
 
             bindings[networkId] = member;
@@ -109,6 +117,35 @@ public sealed class PlayerManager
         }
 
         return SpawnFromParty(solo, input);
+    }
+
+    /// <summary>
+    /// Remove all players owned by <paramref name="ownerId"/> (one Steam peer, possibly splitscreen).
+    /// Returns how many players removed.
+    /// </summary>
+    public int RemovePlayersByOwnerId(int ownerId)
+    {
+        int removed = 0;
+        for (int i = Players.Count - 1; i >= 0; i--)
+        {
+            Player player = Players[i];
+            if (player.OwnerId != ownerId)
+            {
+                continue;
+            }
+
+            _session.UnregisterPlayer(player.NetworkId);
+            Players.RemoveAt(i);
+            removed++;
+        }
+
+        if (removed > 0)
+        {
+            MultiplayerDebug.LogSpawn(
+                $"RemovePlayersByOwnerId owner={ownerId} removed={removed} remaining={Players.Count}");
+        }
+
+        return removed;
     }
 
     public void SyncInputDevicesFromParty(IReadOnlyList<PartyMember> members, InputManager input)

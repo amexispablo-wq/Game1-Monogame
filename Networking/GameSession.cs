@@ -93,6 +93,18 @@ public sealed class GameSession
         Players.Clear();
     }
 
+    public void UnregisterPlayer(int networkId)
+    {
+        for (int i = Players.Count - 1; i >= 0; i--)
+        {
+            if (Players[i].NetworkId == networkId)
+            {
+                Players.RemoveAt(i);
+                return;
+            }
+        }
+    }
+
     public void RegisterPlayer(PlayerSessionInfo player)
     {
         _networkIds.Reserve(player.NetworkId);

@@ -1,7 +1,7 @@
 "controller_mappings"
 {
 	"version"		"3"
-	"revision"		"3"
+	"revision"		"5"
 	"title"		"#Title_Gamepad"
 	"description"		"#Description_Gamepad"
 	"controller_type"		"controller_generic"
@@ -82,11 +82,11 @@
 	"group"
 	{
 		"id"		"1"
-		"mode"		"dpad"
+		"mode"		"joystick_move"
 		"name"		"D-Pad"
 		"inputs"
 		{
-			"click"
+			"analog"
 			{
 				"activators"
 				{
@@ -108,7 +108,7 @@
 		"name"		"Left Stick"
 		"inputs"
 		{
-			"edge"
+			"analog"
 			{
 				"activators"
 				{

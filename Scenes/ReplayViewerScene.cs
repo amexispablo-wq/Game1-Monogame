@@ -9,14 +9,16 @@ public sealed class ReplayViewerScene : IScene
 {
   private readonly ColorBlocksGame _game;
   private readonly string _levelId;
+  private readonly string? _replayPathOverride;
   private readonly ReplayPlayer _player = new();
   private readonly Camera _camera = new(Vector2.Zero);
   private float _speedMultiplier = 1f;
 
-  public ReplayViewerScene(ColorBlocksGame game, string levelId)
+  public ReplayViewerScene(ColorBlocksGame game, string levelId, string? replayPathOverride = null)
   {
     _game = game;
     _levelId = levelId;
+    _replayPathOverride = replayPathOverride;
     LoadReplay();
   }
 
@@ -72,7 +74,18 @@ public sealed class ReplayViewerScene : IScene
 
   public void LoadReplay()
   {
-    if (!ReplayStorage.TryLoadBestReplay(_levelId, out ReplayFile replayFile))
+    ReplayFile replayFile;
+    if (_replayPathOverride is not null)
+    {
+      ReplayFile? loaded = ReplayFileSerializer.TryLoad(_replayPathOverride, invalidateOnHashMismatch: false);
+      if (loaded is null)
+      {
+        return;
+      }
+
+      replayFile = loaded;
+    }
+    else if (!ReplayStorage.TryLoadBestReplay(_levelId, out replayFile))
     {
       return;
     }

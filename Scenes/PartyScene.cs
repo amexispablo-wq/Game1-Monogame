@@ -21,6 +21,7 @@ public sealed class PartyScene : IScene
     private readonly Rectangle[] _memberKickBounds = new Rectangle[PartyManager.MaxMembers];
     private readonly List<IFocusable> _memberFocusables = new();
     private AlertPopup? _alertPopup;
+    private bool _leaveRequested;
     private int _titleY;
     private int _titleScale = 4;
     private int _lobbyY;
@@ -46,7 +47,10 @@ public sealed class PartyScene : IScene
         _game.Party.EnsureSteamParty();
         _game.Party.ErrorOccurred += OnPartyError;
         _game.SteamLobby.ErrorOccurred += OnPartyError;
-        _game.SteamLobby.LevelStartReceived += OnLevelStartReceived;
+        if (_game.LevelStartRouter.TryConsumePendingStartAlert(out string alertTitle, out string alertMessage))
+        {
+            _alertPopup = new AlertPopup(alertTitle, alertMessage);
+        }
     }
 
     public void Update(GameTime gameTime)
@@ -65,13 +69,20 @@ public sealed class PartyScene : IScene
             return;
         }
 
+        if (_game.LevelStartRouter.TryConsumePendingStartAlert(out string alertTitle, out string alertMessage))
+        {
+            _alertPopup = new AlertPopup(alertTitle, alertMessage);
+            return;
+        }
+
         _memberFocusables.Clear();
         _focus.Clear();
         IReadOnlyList<PartyMember> members = _game.Party.Members;
 
         int? prevSelAnchor = null;
         int? prevKickAnchor = null;
-        for (int slot = 0; slot < members.Count; slot++)
+        int visibleCount = Math.Min(members.Count, PartyManager.MaxMembers);
+        for (int slot = 0; slot < visibleCount; slot++)
         {
             PartyMember member = members[slot];
             int? selIndex = null;
@@ -99,6 +110,21 @@ public sealed class PartyScene : IScene
                     () => _game.Party.TryKickMember(members[capturedSlot].Id));
                 _memberFocusables.Add(kickFocus);
                 kickIndex = _focus.Add(kickFocus, $"Member{slot}Kick");
+
+                if (selIndex is null && prevKickAnchor is int prevKick)
+                {
+                    _focus.Navigation.LinkVertical(prevKick, kickIndex.Value);
+                }
+
+                prevKickAnchor = kickIndex;
+            }
+            else if (CanLeaveSelf(member))
+            {
+                var leaveFocus = new FocusableAction(
+                    _memberKickBounds[slot],
+                    () => _leaveRequested = true);
+                _memberFocusables.Add(leaveFocus);
+                kickIndex = _focus.Add(leaveFocus, $"Member{slot}Leave");
 
                 if (selIndex is null && prevKickAnchor is int prevKick)
                 {
@@ -135,7 +161,7 @@ public sealed class PartyScene : IScene
         _focus.FinalizeFocus("Play");
         _focus.Update(gameTime, _game.Input);
 
-        if (_game.Input.ExitPressed || _game.Input.MenuCancelPressed || _backFocus.WasActivated)
+        if (_leaveRequested || _game.Input.ExitPressed || _game.Input.MenuCancelPressed || _backFocus.WasActivated)
         {
             LeaveAndReturnToMenu();
             return;
@@ -149,7 +175,7 @@ public sealed class PartyScene : IScene
 
         if (_inviteFocus.WasActivated)
         {
-            _game.SteamLobby.InviteFriends();
+            _game.SteamInvites.OpenInviteOverlay();
             return;
         }
     }
@@ -205,12 +231,13 @@ public sealed class PartyScene : IScene
                 DrawHelper.DrawBorder(spriteBatch, pixel, selector, PanelBorder, 1);
                 SimpleTextRenderer.DrawCentered(spriteBatch, pixel, selectorText, selector, selectorScale, LabelColor);
 
-                if (CanKickMember(member))
+                if (CanKickMember(member) || CanLeaveSelf(member))
                 {
                     Rectangle kick = _memberKickBounds[slot];
+                    string actionLabel = CanKickMember(member) ? "Kick" : "Leave";
                     spriteBatch.Draw(pixel, kick, new Color(92, 48, 48));
                     DrawHelper.DrawBorder(spriteBatch, pixel, kick, new Color(220, 120, 120), 1);
-                    SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "Kick", kick, Math.Max(1, selectorScale - 1), Color.White);
+                    SimpleTextRenderer.DrawCentered(spriteBatch, pixel, actionLabel, kick, Math.Max(1, selectorScale - 1), Color.White);
                 }
             }
             else
@@ -253,18 +280,6 @@ public sealed class PartyScene : IScene
     {
         _game.Party.ErrorOccurred -= OnPartyError;
         _game.SteamLobby.ErrorOccurred -= OnPartyError;
-        _game.SteamLobby.LevelStartReceived -= OnLevelStartReceived;
-    }
-
-    private void OnLevelStartReceived(PartyStartMessage message)
-    {
-        if (!MultiplayerStartGate.ValidateClientStart(_game.SteamLobby, message, out string title, out string error))
-        {
-            _alertPopup = new AlertPopup(title, error);
-            return;
-        }
-
-        _game.ChangeScene(new GameScene(_game, message.LevelId, message.RopeMode, message.LavaRiseEnabled));
     }
 
     private void OnPartyError(SteamPartyError error, string message)
@@ -274,6 +289,8 @@ public sealed class PartyScene : IScene
 
     private void LeaveAndReturnToMenu()
     {
+        // Back to main menu only — keep Steam lobby/party intact so friends stay connected.
+        // Explicit leave/dissolve stays on LeaveParty (e.g. ExitGame), not Back.
         _game.ChangeScene(new MenuScene(_game));
     }
 
@@ -315,14 +332,15 @@ public sealed class PartyScene : IScene
             int y = panel.Y + 12 + slot * (rowHeight + rowGap);
             _memberRowBounds[slot] = new Rectangle(panel.X + 16, y, panel.Width - 32, rowHeight);
             int kickWidth = 72;
-            bool showKick = slot < _game.Party.Members.Count && CanKickMember(_game.Party.Members[slot]);
-            int selectorRight = showKick ? panel.Right - kickWidth - 24 : panel.Right - 16;
+            bool showRowAction = slot < _game.Party.Members.Count
+                && (CanKickMember(_game.Party.Members[slot]) || CanLeaveSelf(_game.Party.Members[slot]));
+            int selectorRight = showRowAction ? panel.Right - kickWidth - 24 : panel.Right - 16;
             _memberInputBounds[slot] = new Rectangle(
                 selectorRight - selectorWidth,
                 y + 6,
                 selectorWidth,
                 rowHeight - 12);
-            _memberKickBounds[slot] = showKick
+            _memberKickBounds[slot] = showRowAction
                 ? new Rectangle(panel.Right - kickWidth - 16, y + 6, kickWidth, rowHeight - 12)
                 : Rectangle.Empty;
         }
@@ -342,7 +360,15 @@ public sealed class PartyScene : IScene
         _playButton.TextColor = leaderCanPlay ? Color.White : MutedColor;
     }
 
-    private static bool CanKickMember(PartyMember member) => !member.IsLeader;
+    private bool CanKickMember(PartyMember member) =>
+        _game.Party.IsLeader && !member.IsLeader;
+
+    /// <summary>Guest primary local row: leave lobby (Kick only works for host).</summary>
+    private bool CanLeaveSelf(PartyMember member) =>
+        _game.Party.IsInSteamLobby
+        && !_game.Party.IsLeader
+        && member.IsLocallyOwned
+        && member.InputSource == PartyInputSource.Keyboard;
 
     private void CycleMemberInput(PartyMember member, int direction)
     {
@@ -351,7 +377,7 @@ public sealed class PartyScene : IScene
             return;
         }
 
-        _game.Party.TryCycleMemberInput(member.Id, direction, _game.Input.IsGamepadConnected);
+        _game.Party.TryCycleMemberInput(member.Id, direction, _game.Input.IsGamepadAvailableForAssign);
     }
 
     private static string GetSelectorText(PartyMember member)

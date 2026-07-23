@@ -71,6 +71,39 @@ public static class LevelLibrary
         return FindLevelMetadata(source, fileStem);
     }
 
+    /// <summary>
+    /// Next level in the same source list (display-name order, same as Level Select).
+    /// </summary>
+    public static bool TryGetNextLevelId(string currentLevelId, out string nextLevelId)
+    {
+        nextLevelId = string.Empty;
+        Initialize();
+
+        if (!LevelIdentity.TryParse(currentLevelId, out LevelSource source, out _))
+        {
+            return false;
+        }
+
+        IReadOnlyList<LevelMetadata> levels = ListLevelsForSource(source);
+        int index = -1;
+        for (int i = 0; i < levels.Count; i++)
+        {
+            if (string.Equals(levels[i].Id, currentLevelId, StringComparison.OrdinalIgnoreCase))
+            {
+                index = i;
+                break;
+            }
+        }
+
+        if (index < 0 || index >= levels.Count - 1)
+        {
+            return false;
+        }
+
+        nextLevelId = levels[index + 1].Id;
+        return true;
+    }
+
     public static Level LoadLevel(string levelId)
     {
         LevelMetadata? metadata = GetLevel(levelId);
@@ -253,6 +286,7 @@ public static class LevelLibrary
 
             BestTimeStorage.DeleteLevelRecord(levelId);
             ReplayStorage.DeleteBestReplay(levelId);
+            SteamGhostService.InvalidateWorldRecordGhost(levelId);
         }
         catch (Exception ex)
         {
@@ -501,6 +535,20 @@ public static class LevelLibrary
             {
                 data.Author = LevelAuthorProvider.GetLocalAuthor();
             }
+
+            // Level.ToData() does not carry workshop fields; keep a published local
+            // level linked to its workshop item across editor saves.
+            if (string.IsNullOrWhiteSpace(data.WorkshopId))
+            {
+                data.WorkshopId = metadata.WorkshopId;
+            }
+
+            if (string.IsNullOrWhiteSpace(data.OwnerSteamId))
+            {
+                data.OwnerSteamId = metadata.OwnerSteamId;
+            }
+
+            data.LastSync ??= metadata.LastSync;
         }
 
         data.CreatedDate ??= metadata.CreatedDate == default ? DateTime.UtcNow : metadata.CreatedDate;

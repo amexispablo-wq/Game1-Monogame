@@ -52,8 +52,46 @@ public sealed class PartyManager
 
     private void HandleLobbyReady()
     {
+        // After join, roster rebuild may leave this peer with only REMOTE rows.
+        // Seed a local keyboard slot so PublishLocalMemberData is non-empty.
+        EnsureLocalOwnedPlayableSlot();
         MultiplayerDebug.LogParty($"HandleLobbyReady members={_members.Count} → PublishLocalMemberData");
         _steamParty?.PublishLocalMemberData(this);
+    }
+
+    /// <summary>
+    /// Ensures at least one locally-owned keyboard/gamepad member exists for Steam locals publish.
+    /// Unlike EnsureDefaultParty, works when remote members are already present.
+    /// </summary>
+    private void EnsureLocalOwnedPlayableSlot()
+    {
+        foreach (PartyMember member in _members)
+        {
+            if (member.IsLocallyOwned && member.MemberType != PartyMemberType.SteamRemote)
+            {
+                return;
+            }
+        }
+
+        if (_members.Count >= MaxMembers)
+        {
+            MultiplayerDebug.LogWarn(
+                $"EnsureLocalOwnedPlayableSlot skipped — party full ({_members.Count}/{MaxMembers})");
+            return;
+        }
+
+        ulong owningSteamId = _steamLobby?.LocalSteamId ?? 0;
+        PartyMember keyboardMember = CreateMember(
+            PartyDisplayNames.FormatLocalMemberName(LocalSteamUsername, 0),
+            PartyMemberType.LocalKeyboard,
+            PartyInputSource.Keyboard,
+            owningSteamId: owningSteamId);
+        keyboardMember.IsLocallyOwned = true;
+        keyboardMember.IsLeader = _steamLobby?.IsLobbyOwner() == true;
+        _members.Add(keyboardMember);
+        MultiplayerDebug.LogParty(
+            $"EnsureLocalOwnedPlayableSlot added keyboard steam={owningSteamId} members={_members.Count}");
+        NotifyChanged();
     }
 
     public void EnsureDefaultParty()
@@ -84,6 +122,7 @@ public sealed class PartyManager
             return;
         }
 
+        EnsureDefaultParty();
         MultiplayerDebug.LogParty($"EnsureSteamParty → EnsurePartyLobby available members={_members.Count}");
         _steamLobby.EnsurePartyLobby();
     }
@@ -197,7 +236,8 @@ public sealed class PartyManager
                 primary.Id,
                 PartyInputSource.Gamepad,
                 input.LastUsedPartyControllerId,
-                allowWhileLocked: true);
+                allowWhileLocked: true,
+                input.IsGamepadAvailableForAssign);
         }
 
         if (input.LastUsedPartyInputSource == PartyInputSource.Keyboard)
@@ -217,7 +257,8 @@ public sealed class PartyManager
         PartyMemberId memberId,
         PartyInputSource source,
         int controllerId,
-        bool allowWhileLocked)
+        bool allowWhileLocked,
+        Func<int, bool>? isGamepadAvailable = null)
     {
         if (AssignmentsLocked && !allowWhileLocked)
         {
@@ -249,7 +290,10 @@ public sealed class PartyManager
                     return false;
                 }
 
-                if (!GamePad.GetState((Microsoft.Xna.Framework.PlayerIndex)controllerId).IsConnected)
+                bool available = isGamepadAvailable is not null
+                    ? isGamepadAvailable(controllerId)
+                    : GamePad.GetState((Microsoft.Xna.Framework.PlayerIndex)controllerId).IsConnected;
+                if (!available)
                 {
                     return false;
                 }
@@ -298,7 +342,12 @@ public sealed class PartyManager
 
         if (input.LastUsedPartyInputSource == PartyInputSource.Gamepad && input.LastUsedPartyControllerId >= 0)
         {
-            return TryAssignInput(primary.Id, PartyInputSource.Gamepad, input.LastUsedPartyControllerId);
+            return TryAssignInput(
+                primary.Id,
+                PartyInputSource.Gamepad,
+                input.LastUsedPartyControllerId,
+                allowWhileLocked: false,
+                input.IsGamepadAvailableForAssign);
         }
 
         if (input.LastUsedPartyInputSource == PartyInputSource.Keyboard)
@@ -337,8 +386,16 @@ public sealed class PartyManager
         ulong previousLeaderSteamId = Leader?.OwningSteamId ?? 0;
         int previousCount = _members.Count;
         _members.Clear();
+        int applied = 0;
         foreach (PartyRosterEntry entry in entries)
         {
+            if (applied >= MaxMembers)
+            {
+                MultiplayerDebug.LogWarn(
+                    $"RebuildFromRoster clamped — dropped {entries.Count - applied} entries beyond MaxMembers");
+                break;
+            }
+
             bool isLocal = entry.OwningSteamId == localSteamId;
             PartyMember member = CreateMember(
                 entry.DisplayName,
@@ -369,6 +426,7 @@ public sealed class PartyManager
             }
 
             _members.Add(member);
+            applied++;
         }
 
         RefreshLocalDisplayNames();
@@ -524,7 +582,12 @@ public sealed class PartyManager
         int currentIndex = FindOptionIndex(options, member.InputSource, member.ControllerId);
         int nextIndex = (currentIndex + direction + options.Count) % options.Count;
         (PartyInputSource source, int controllerId) next = options[nextIndex];
-        return TryAssignInput(memberId, next.source, next.controllerId);
+        return TryAssignInput(
+            memberId,
+            next.source,
+            next.controllerId,
+            allowWhileLocked: false,
+            isGamepadConnected);
     }
 
     public void ProcessGamepadJoinLeave(InputManager input)
@@ -534,6 +597,9 @@ public sealed class PartyManager
             return;
         }
 
+        // Online remote peers must not auto-join as local couch seats via Remote Play pads.
+        bool blockAutoJoin = _steamLobby?.IsInLobby == true && HasNonLocalMembers();
+
         for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
         {
             if (!input.IsGamepadConnected(i))
@@ -541,7 +607,9 @@ public sealed class PartyManager
                 continue;
             }
 
-            if (input.WasGamepadPressed(i, Buttons.Start) && !IsControllerAssigned(i))
+            if (!blockAutoJoin
+                && input.WasGamepadPressed(i, Buttons.Start)
+                && !IsControllerAssigned(i))
             {
                 TryJoinGamepad(i);
             }
@@ -579,7 +647,16 @@ public sealed class PartyManager
 
     private void HandleLobbyStateChanged()
     {
-        _steamParty?.RebuildPartyFromLobby(this);
+        if (_steamLobby?.IsLobbyOwner() == true)
+        {
+            MultiplayerDebug.LogParty("HandleLobbyStateChanged → ForceSyncFromLobby (owner)");
+            _steamParty?.ForceSyncFromLobby(this);
+        }
+        else
+        {
+            MultiplayerDebug.LogParty("HandleLobbyStateChanged → RebuildPartyFromLobby (client)");
+            _steamParty?.RebuildPartyFromLobby(this);
+        }
     }
 
     private void PublishLocalState()
@@ -642,6 +719,19 @@ public sealed class PartyManager
                 && other.IsLocallyOwned
                 && other.InputSource == PartyInputSource.Gamepad
                 && other.ControllerId == controllerId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool HasNonLocalMembers()
+    {
+        foreach (PartyMember member in _members)
+        {
+            if (!member.IsLocallyOwned)
             {
                 return true;
             }

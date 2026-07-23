@@ -10,7 +10,8 @@ public sealed class SteamGameNetworkService
 {
     private const int InputChannel = 0;
     private const int SnapshotChannel = 1;
-    private const int SendFlags = Constants.k_nSteamNetworkingSend_Reliable;
+    // Realtime gameplay: unreliable avoids HOL blocking from Reliable at 60 Hz.
+    private const int SendFlags = Constants.k_nSteamNetworkingSend_UnreliableNoNagle;
 
     private readonly SteamManager _steam;
     private readonly SteamCallbackManager _callbacks;

@@ -22,7 +22,8 @@ public static class GameplayWorldRenderer
     GameTime gameTime,
     bool debugDraw = false,
     GhostPlayer? ghostPlayer = null,
-    bool drawPlayerIndicators = true)
+    bool drawPlayerIndicators = true,
+    GhostPlayer? worldRecordGhost = null)
   {
     spriteBatch.Begin(samplerState: SamplerState.PointClamp);
     spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(36, 41, 52));
@@ -43,6 +44,7 @@ public static class GameplayWorldRenderer
       player.Draw(spriteBatch, pixel, debugDraw, drawPlayerIndicators);
     }
 
+    worldRecordGhost?.Draw(spriteBatch, pixel, debugDraw);
     ghostPlayer?.Draw(spriteBatch, pixel, debugDraw);
 
     if (lavaActive)

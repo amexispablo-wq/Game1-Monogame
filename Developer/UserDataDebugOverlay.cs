@@ -9,7 +9,12 @@ public static class UserDataDebugOverlay
 {
     public static bool Visible { get; set; }
 
-    public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, SteamInputManager? steamInput = null)
+    public static void Draw(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        Viewport viewport,
+        SteamInputManager? steamInput = null,
+        InputManager? input = null)
     {
         if (!DeveloperSettings.DeveloperMode || !Visible)
         {
@@ -36,9 +41,9 @@ public static class UserDataDebugOverlay
             ($"Migration Status: {UserDataMigration.Status}", Color.Gold)
         };
 
-        if (steamInput is not null)
+        if (steamInput is not null || input is not null)
         {
-            AppendSteamInputDiagnostics(entries, steamInput);
+            AppendSteamInputDiagnostics(entries, steamInput ?? input?.SteamInput, input);
         }
 
         const int margin = 12;
@@ -56,16 +61,47 @@ public static class UserDataDebugOverlay
         }
     }
 
-    private static void AppendSteamInputDiagnostics(List<(string, Color)> entries, SteamInputManager steamInput)
+    private static void AppendSteamInputDiagnostics(
+        List<(string, Color)> entries,
+        SteamInputManager? steamInput,
+        InputManager? input)
     {
         entries.Add(("STEAM INPUT", Color.Cyan));
 
-        bool initOk = steamInput.IsInitialized;
-        entries.Add(($"Init: {steamInput.InitializationStatus}", initOk ? Color.LimeGreen : Color.OrangeRed));
+        bool enabled = steamInput?.IsInitialized == true;
+        string initStatus = steamInput?.InitializationStatus ?? "Not bound";
+        entries.Add(($"Steam Input Enabled: {(enabled ? "yes" : "no")} ({initStatus})",
+            enabled ? Color.LimeGreen : Color.OrangeRed));
 
-        if (!initOk)
+        bool controllerAvailable = steamInput?.IsControllerAvailable == true
+            || input?.IsSteamControllerAvailable == true;
+        entries.Add(($"Steam Controller Available: {(controllerAvailable ? "yes" : "no")}",
+            controllerAvailable ? Color.LimeGreen : Color.Orange));
+
+        ActiveInputBackend backend = input?.ActiveInputBackend ?? ActiveInputBackend.Keyboard;
+        string backendLabel = backend switch
         {
+            ActiveInputBackend.SteamInput => "SteamInput",
+            ActiveInputBackend.Gamepad => "Gamepad",
+            _ => "Keyboard"
+        };
+        entries.Add(($"Active Input Backend: {backendLabel}", Color.White));
+
+        if (steamInput is null || !enabled)
+        {
+            entries.Add(("Fallback: GamepadBackend + Keyboard", Color.Gold));
             return;
+        }
+
+        string manifest = steamInput.ResolvedManifestPath;
+        entries.Add(
+            string.IsNullOrEmpty(manifest)
+                ? ("Manifest path: MISSING (Steam/Partner only)", Color.OrangeRed)
+                : ($"Manifest path: {manifest}", Color.White));
+
+        if (!controllerAvailable)
+        {
+            entries.Add(("Fallback: GamepadBackend (no live Steam actions)", Color.Gold));
         }
 
         int count = steamInput.ConnectedControllerCount;
@@ -88,6 +124,7 @@ public static class UserDataDebugOverlay
         entries.Add(($"Glyph Source: {steamInput.GlyphSource}", Color.White));
         entries.Add(($"Layout: {steamInput.ActiveLayoutLabel} | Refresh: {steamInput.LastLayoutRefreshUtc:HH:mm:ss}", Color.White));
 
+        bool anySoftClaim = false;
         for (int slot = 0; slot < InputManager.MaxLocalPlayers; slot++)
         {
             ulong handle = steamInput.GetSlotHandleRaw(slot);
@@ -96,13 +133,27 @@ public static class UserDataDebugOverlay
                 continue;
             }
 
+            bool live = steamInput.IsSlotLive(slot);
+            if (!live)
+            {
+                anySoftClaim = true;
+            }
+
             string type = steamInput.GetControllerLabel(slot);
             steamInput.TryGetAnalog(slot, SteamInputActionNames.Move, out float mx, out float my);
             string digital = steamInput.GetDigitalStateSummary(slot);
             entries.Add((
-                $"Slot {slot}: 0x{handle:X} {type} | Move=({mx:0.00},{my:0.00})" +
+                $"Slot {slot}: 0x{handle:X} {type} live={(live ? "yes" : "no")} | Move=({mx:0.00},{my:0.00})" +
                 (digital.Length > 0 ? $" | {digital}" : string.Empty),
-                Color.LightGreen));
+                live ? Color.LightGreen : Color.Orange));
+        }
+
+        if (anySoftClaim)
+        {
+            float softSeconds = steamInput.SoftClaimSeconds;
+            entries.Add((
+                $"SOFT CLAIM {FormatSoftClaimDuration(softSeconds)} — falling back to Gamepad (open Steam Controller Config)",
+                Color.Gold));
         }
 
         if (SteamInputLog.Count > 0)
@@ -114,4 +165,7 @@ public static class UserDataDebugOverlay
             }
         }
     }
+
+    private static string FormatSoftClaimDuration(float seconds) =>
+        seconds >= 1f ? $"{seconds:0.0}s" : "active";
 }

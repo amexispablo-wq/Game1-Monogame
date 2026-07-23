@@ -46,13 +46,6 @@ public sealed class MenuScene : IScene
     {
         LayoutButtons();
 
-        // Escape quit only. B / MenuCancel must not close main menu (use Quit button).
-        if (_game.Input.ExitPressed)
-        {
-            _game.ExitGame();
-            return;
-        }
-
         _focus.Clear();
         int playIndex = _focus.Add(_playFocus, "Play");
         int partyIndex = _focus.Add(_partyFocus, "Party");

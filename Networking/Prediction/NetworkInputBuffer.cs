@@ -43,7 +43,15 @@ public sealed class NetworkInputBuffer
 
         foreach (PlayerInputEntry entry in frame.PlayerInputs)
         {
-            inputMap[entry.NetworkId] = entry.Input.Sanitized();
+            PlayerInputState incoming = entry.Input.Sanitized();
+            if (inputMap.TryGetValue(entry.NetworkId, out PlayerInputState existing))
+            {
+                inputMap[entry.NetworkId] = existing.MergePreferringEdges(incoming);
+            }
+            else
+            {
+                inputMap[entry.NetworkId] = incoming;
+            }
         }
     }
 

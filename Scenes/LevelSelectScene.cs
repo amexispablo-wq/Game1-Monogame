@@ -28,7 +28,17 @@ public sealed class LevelSelectScene : IScene
     private static RopeGameplayMode s_selectedRopeMode = RopeGameplayMode.ColoredPhysics;
     private static bool s_lavaRiseEnabled;
     private static bool s_playerCollisionEnabled;
-    private static bool s_ghostBestRunEnabled;
+    private static GhostMode s_ghostMode = GhostMode.None;
+
+    public static void SyncPlaySettings(
+        RopeGameplayMode ropeMode,
+        bool lavaRiseEnabled,
+        bool playerCollisionEnabled)
+    {
+        s_selectedRopeMode = ropeMode;
+        s_lavaRiseEnabled = lavaRiseEnabled;
+        s_playerCollisionEnabled = playerCollisionEnabled;
+    }
 
     private readonly ColorBlocksGame _game;
     private readonly LevelSelectMode _mode;
@@ -42,7 +52,16 @@ public sealed class LevelSelectScene : IScene
     private bool _importOfficialPickerOpen;
     private double _importPickerOpenedAt = -1;
     private string? _pendingOfficialLevelId;
-    private bool _subscribedToLevelStart;
+    private int _workshopChangeStamp = -1;
+    private string? _detailsWorldRecordText;
+    private string? _detailsWorkshopVotesText;
+    private string? _detailsWorkshopSubsText;
+    private string? _detailsWorkshopPublishedText;
+    private string? _detailsWorkshopUpdatedText;
+    private string? _detailsWorkshopVisibilityText;
+    private bool _detailsHasWorldRecordReplay;
+    private bool _detailsSupportsLeaderboards;
+    private bool _wrPeekRequested;
 
     // UI
     private readonly Button _backButton = new("Back") { TextScale = 2 };
@@ -57,7 +76,7 @@ public sealed class LevelSelectScene : IScene
     private FocusableCycleSelector<RopeGameplayMode>? _ropeModeFocus;
     private FocusableCheckbox? _lavaRiseFocus;
     private FocusableCheckbox? _playerCollisionFocus;
-    private FocusableCheckbox? _ghostBestRunFocus;
+    private FocusableCycleSelector<GhostMode>? _ghostModeFocus;
     private Button? _primaryButton;
     private Button? _secondaryButton;
     private Button? _tertiaryButton;
@@ -75,9 +94,23 @@ public sealed class LevelSelectScene : IScene
     private CycleSelector<RopeGameplayMode>? _ropeModeSelector;
     private Checkbox? _lavaRiseCheckbox;
     private Checkbox? _playerCollisionCheckbox;
-    private Checkbox? _ghostBestRunCheckbox;
+    private CycleSelector<GhostMode>? _ghostModeSelector;
     private Button? _watchReplayButton;
     private FocusableButton? _watchReplayFocus;
+    private Button? _watchWorldRecordButton;
+    private FocusableButton? _watchWorldRecordFocus;
+    private Button? _leaderboardButton;
+    private FocusableButton? _leaderboardFocus;
+    private Button? _workshopPrimaryButton;
+    private FocusableButton? _workshopPrimaryFocus;
+    private Button? _workshopSecondaryButton;
+    private FocusableButton? _workshopSecondaryFocus;
+    private Button? _workshopTertiaryButton;
+    private FocusableButton? _workshopTertiaryFocus;
+    private Button? _workshopQuaternaryButton;
+    private FocusableButton? _workshopQuaternaryFocus;
+    private Button? _workshopQuinaryButton;
+    private FocusableButton? _workshopQuinaryFocus;
     private Rectangle _ropeModePanelBounds;
     private Rectangle _ropeModeLabelBounds;
     private Rectangle _ropeModeDescriptionBounds;
@@ -111,10 +144,10 @@ public sealed class LevelSelectScene : IScene
         _focus.ResetFocus();
         RefreshLevelList();
         InitializeButtons();
-        if (_mode == LevelSelectMode.PlayMode)
+        if (_mode == LevelSelectMode.PlayMode
+            && _game.LevelStartRouter.TryConsumePendingStartAlert(out string alertTitle, out string alertMessage))
         {
-            _game.SteamLobby.LevelStartReceived += OnLevelStartReceived;
-            _subscribedToLevelStart = true;
+            _alertPopup = new AlertPopup(alertTitle, alertMessage);
         }
     }
 
@@ -210,6 +243,12 @@ public sealed class LevelSelectScene : IScene
 
         _activeTab = tab;
         _importOfficialPickerOpen = false;
+        if (_mode == LevelSelectMode.PlayMode && tab == LevelSource.Workshop)
+        {
+            _game.SteamWorkshop.SyncSubscribedItems();
+            _workshopChangeStamp = _game.SteamWorkshop.ChangeStamp;
+        }
+
         RefreshLevelList();
     }
 
@@ -244,6 +283,19 @@ public sealed class LevelSelectScene : IScene
         _createOfficialFocus = _createOfficialButton is not null ? new FocusableButton(_createOfficialButton) : null;
         _convertToOfficialFocus = _convertToOfficialButton is not null ? new FocusableButton(_convertToOfficialButton) : null;
 
+        // Workshop publish/subscribe actions: Play Mode (Local + Workshop tabs) and Edit Mode (Local upload).
+        _workshopPrimaryButton = new Button("Upload Workshop");
+        _workshopPrimaryFocus = new FocusableButton(_workshopPrimaryButton);
+        _workshopSecondaryButton = new Button("Open Workshop");
+        _workshopSecondaryFocus = new FocusableButton(_workshopSecondaryButton);
+        _workshopTertiaryButton = new Button("Delete Local");
+        _workshopTertiaryFocus = new FocusableButton(_workshopTertiaryButton);
+        _workshopQuaternaryButton = new Button("Unsubscribe");
+        _workshopQuaternaryFocus = new FocusableButton(_workshopQuaternaryButton);
+        _workshopQuinaryButton = new Button("Create Copy");
+        _workshopQuinaryFocus = new FocusableButton(_workshopQuinaryButton);
+        _workshopChangeStamp = _game.SteamWorkshop.ChangeStamp;
+
         if (_mode == LevelSelectMode.PlayMode)
         {
             _ropeModeSelector = new CycleSelector<RopeGameplayMode>(
@@ -269,19 +321,30 @@ public sealed class LevelSelectScene : IScene
                 IsChecked = s_playerCollisionEnabled
             };
 
-            _ghostBestRunCheckbox = new Checkbox
+            _ghostModeSelector = new CycleSelector<GhostMode>(
+                new List<GhostMode>
+                {
+                    GhostMode.None,
+                    GhostMode.PersonalBest,
+                    GhostMode.WorldRecord,
+                    GhostMode.Both
+                },
+                mode => mode.ToDisplayName())
             {
-                Label = "Ghost Best Run",
-                IsChecked = s_ghostBestRunEnabled
+                CurrentOption = s_ghostMode
             };
 
             _watchReplayButton = new Button("Watch Replay");
             _watchReplayFocus = new FocusableButton(_watchReplayButton);
+            _watchWorldRecordButton = new Button("Watch WR Replay");
+            _watchWorldRecordFocus = new FocusableButton(_watchWorldRecordButton);
+            _leaderboardButton = new Button("Leaderboard");
+            _leaderboardFocus = new FocusableButton(_leaderboardButton);
 
             _ropeModeFocus = new FocusableCycleSelector<RopeGameplayMode>(_ropeModeSelector);
             _lavaRiseFocus = new FocusableCheckbox(_lavaRiseCheckbox);
             _playerCollisionFocus = new FocusableCheckbox(_playerCollisionCheckbox);
-            _ghostBestRunFocus = new FocusableCheckbox(_ghostBestRunCheckbox);
+            _ghostModeFocus = new FocusableCycleSelector<GhostMode>(_ghostModeSelector);
         }
     }
 
@@ -298,6 +361,13 @@ public sealed class LevelSelectScene : IScene
                 _alertPopup = null;
             }
 
+            return;
+        }
+
+        if (_mode == LevelSelectMode.PlayMode
+            && _game.LevelStartRouter.TryConsumePendingStartAlert(out string alertTitle, out string alertMessage))
+        {
+            _alertPopup = new AlertPopup(alertTitle, alertMessage);
             return;
         }
 
@@ -327,11 +397,42 @@ public sealed class LevelSelectScene : IScene
 
         HandleTabInput();
 
+        if (_mode == LevelSelectMode.PlayMode
+            && _game.SteamWorkshop.ChangeStamp != _workshopChangeStamp)
+        {
+            _workshopChangeStamp = _game.SteamWorkshop.ChangeStamp;
+            RefreshLevelList(preserveSelection: true);
+            if (_selectedIndex.HasValue)
+            {
+                UpdateSelectedLevelDetails();
+            }
+        }
+
+        if (_mode == LevelSelectMode.PlayMode
+            && _detailsWorkshopVotesText == "…"
+            && TryGetSelectedWorkshopId(out ulong pendingWorkshopId))
+        {
+            WorkshopItemDetails? details = _game.SteamWorkshop.GetDetails(pendingWorkshopId);
+            if (details is not null)
+            {
+                _detailsWorkshopVotesText = $"+{details.VotesUp} / -{details.VotesDown}";
+                _detailsWorkshopSubsText = details.Subscribers.ToString();
+            }
+        }
+
         UpdateFocus(gameTime);
 
         if (_backFocus.WasActivated || _game.Input.ExitPressed || (_game.Input.MenuCancelPressed && !_focus.IsCapturingNavigation))
         {
-            _game.ChangeScene(new MenuScene(_game));
+            if (_mode == LevelSelectMode.PlayMode && _game.SteamLobby.IsInLobby)
+            {
+                _game.ChangeScene(new PartyScene(_game));
+            }
+            else
+            {
+                _game.ChangeScene(new MenuScene(_game));
+            }
+
             return;
         }
 
@@ -350,15 +451,40 @@ public sealed class LevelSelectScene : IScene
             s_playerCollisionEnabled = _playerCollisionCheckbox.IsChecked;
         }
 
-        if (_ghostBestRunCheckbox != null)
+        if (_ghostModeSelector != null)
         {
-            s_ghostBestRunEnabled = _detailsHasBestReplay && _ghostBestRunCheckbox.IsChecked;
+            s_ghostMode = ClampGhostMode(_ghostModeSelector.CurrentOption, _selectedLevelId);
+            if (_ghostModeSelector.CurrentOption != s_ghostMode)
+            {
+                _ghostModeSelector.CurrentOption = s_ghostMode;
+            }
         }
 
         if (_watchReplayFocus?.WasActivated == true && _selectedLevelId is not null
             && _detailsHasBestReplay)
         {
             _game.ChangeScene(new ReplayViewerScene(_game, _selectedLevelId));
+            return;
+        }
+
+        if (_watchWorldRecordFocus?.WasActivated == true
+            && _selectedLevelId is not null
+            && _detailsSupportsLeaderboards)
+        {
+            HandleWatchWorldRecord();
+            return;
+        }
+
+        if (_leaderboardFocus?.WasActivated == true
+            && _selectedLevelId is not null
+            && _detailsSupportsLeaderboards)
+        {
+            _game.ChangeScene(new LeaderboardScene(_game, _selectedLevelId, _mode));
+            return;
+        }
+
+        if (HandleWorkshopActionButtons())
+        {
             return;
         }
 
@@ -458,8 +584,22 @@ public sealed class LevelSelectScene : IScene
         int? watchReplayIndex = null;
         if (_watchReplayFocus != null && _selectedLevelId is not null)
         {
-            _watchReplayFocus.IsEnabled = true;
+            _watchReplayFocus.IsEnabled = _detailsHasBestReplay;
             watchReplayIndex = _focus.Add(_watchReplayFocus, "WatchReplay");
+        }
+
+        int? watchWrIndex = null;
+        if (_watchWorldRecordFocus != null && _detailsSupportsLeaderboards)
+        {
+            _watchWorldRecordFocus.IsEnabled = true;
+            watchWrIndex = _focus.Add(_watchWorldRecordFocus, "WatchWorldRecord");
+        }
+
+        int? leaderboardIndex = null;
+        if (_leaderboardFocus != null && _detailsSupportsLeaderboards)
+        {
+            _leaderboardFocus.IsEnabled = true;
+            leaderboardIndex = _focus.Add(_leaderboardFocus, "Leaderboard");
         }
 
         int? lavaIndex = null;
@@ -475,9 +615,39 @@ public sealed class LevelSelectScene : IScene
         }
 
         int? ghostIndex = null;
-        if (_ghostBestRunFocus != null)
+        if (_ghostModeFocus != null)
         {
-            ghostIndex = _focus.Add(_ghostBestRunFocus, "GhostBestRun");
+            ghostIndex = _focus.Add(_ghostModeFocus, "GhostMode");
+        }
+
+        int? workshopPrimaryIndex = null;
+        int? workshopSecondaryIndex = null;
+        int? workshopTertiaryIndex = null;
+        int? workshopQuaternaryIndex = null;
+        int? workshopQuinaryIndex = null;
+        if (ShouldShowWorkshopPrimary() && _workshopPrimaryFocus != null)
+        {
+            workshopPrimaryIndex = _focus.Add(_workshopPrimaryFocus, "WorkshopPrimary");
+        }
+
+        if (ShouldShowWorkshopSecondary() && _workshopSecondaryFocus != null)
+        {
+            workshopSecondaryIndex = _focus.Add(_workshopSecondaryFocus, "WorkshopSecondary");
+        }
+
+        if (ShouldShowWorkshopTertiary() && _workshopTertiaryFocus != null)
+        {
+            workshopTertiaryIndex = _focus.Add(_workshopTertiaryFocus, "WorkshopTertiary");
+        }
+
+        if (ShouldShowWorkshopQuaternary() && _workshopQuaternaryFocus != null)
+        {
+            workshopQuaternaryIndex = _focus.Add(_workshopQuaternaryFocus, "WorkshopQuaternary");
+        }
+
+        if (ShouldShowWorkshopQuinary() && _workshopQuinaryFocus != null)
+        {
+            workshopQuinaryIndex = _focus.Add(_workshopQuinaryFocus, "WorkshopQuinary");
         }
 
         int backIndex = _focus.Add(_backFocus, "Back");
@@ -535,18 +705,39 @@ public sealed class LevelSelectScene : IScene
                     nav.Link(import, NavigationDirection.Up, quin);
                 }
 
-                if (createOfficialIndex is int createOfficial && importIndex is int importFromCreate)
+                int? editActionCursor = importIndex;
+                if (workshopPrimaryIndex is int editUpload && editActionCursor is int fromImport)
                 {
-                    nav.LinkHorizontal(importFromCreate, createOfficial);
+                    nav.LinkHorizontal(fromImport, editUpload);
+                    editActionCursor = editUpload;
+                }
+                else if (workshopPrimaryIndex is int editUploadOnly)
+                {
+                    editActionCursor = editUploadOnly;
+                }
+
+                if (workshopSecondaryIndex is int editOpen && editActionCursor is int fromUpload)
+                {
+                    nav.LinkHorizontal(fromUpload, editOpen);
+                    editActionCursor = editOpen;
+                }
+
+                if (createOfficialIndex is int createOfficial && editActionCursor is int fromEditAction)
+                {
+                    nav.LinkHorizontal(fromEditAction, createOfficial);
+                }
+                else if (createOfficialIndex is int createOfficialOnly && importIndex is int importFromCreate)
+                {
+                    nav.LinkHorizontal(importFromCreate, createOfficialOnly);
                 }
 
                 if (convertOfficialIndex is int convertOfficial && createOfficialIndex is int createFromConvert)
                 {
                     nav.LinkHorizontal(createFromConvert, convertOfficial);
                 }
-                else if (convertOfficialIndex is int convertOnly && importIndex is int importFromConvert)
+                else if (convertOfficialIndex is int convertOnly && editActionCursor is int fromConvertBase)
                 {
-                    nav.LinkHorizontal(importFromConvert, convertOnly);
+                    nav.LinkHorizontal(fromConvertBase, convertOnly);
                 }
             }
             else if (_mode == LevelSelectMode.PlayMode)
@@ -559,11 +750,31 @@ public sealed class LevelSelectScene : IScene
                     nav.LinkVertical(rope, playFromRope);
                 }
 
-                // Details panel cascade: Watch Replay → Lava → Collision → Ghost → Play
+                // Details: Watch PB → Watch WR → Leaderboard → Lava → Collision → Ghost → Play
                 int? detailsCursor = watchReplayIndex;
-                if (detailsCursor is int watch && lavaIndex is int lava)
+                if (detailsCursor is int watch && watchWrIndex is int watchWr)
                 {
-                    nav.LinkVertical(watch, lava);
+                    nav.LinkVertical(watch, watchWr);
+                    detailsCursor = watchWr;
+                }
+                else if (watchWrIndex is int watchWrOnly)
+                {
+                    detailsCursor = watchWrOnly;
+                }
+
+                if (detailsCursor is int fromWatch && leaderboardIndex is int leaderboard)
+                {
+                    nav.LinkVertical(fromWatch, leaderboard);
+                    detailsCursor = leaderboard;
+                }
+                else if (leaderboardIndex is int leaderboardOnly && detailsCursor is null)
+                {
+                    detailsCursor = leaderboardOnly;
+                }
+
+                if (detailsCursor is int fromLb && lavaIndex is int lava)
+                {
+                    nav.LinkVertical(fromLb, lava);
                     detailsCursor = lava;
                 }
 
@@ -590,10 +801,70 @@ public sealed class LevelSelectScene : IScene
                     nav.Link(topRight, NavigationDirection.Right, watchReplay);
                     nav.Link(watchReplay, NavigationDirection.Left, topRight);
                 }
+                else if (watchWrIndex is int wrNav && _gridFocusables.Count > 0)
+                {
+                    int topRight = gridStart + Math.Min(_gridLayout.Columns - 1, _gridFocusables.Count - 1);
+                    nav.Link(topRight, NavigationDirection.Right, wrNav);
+                    nav.Link(wrNav, NavigationDirection.Left, topRight);
+                }
+                else if (leaderboardIndex is int lbNav && _gridFocusables.Count > 0)
+                {
+                    int topRight = gridStart + Math.Min(_gridLayout.Columns - 1, _gridFocusables.Count - 1);
+                    nav.Link(topRight, NavigationDirection.Right, lbNav);
+                    nav.Link(lbNav, NavigationDirection.Left, topRight);
+                }
+
+                // Workshop action strip (bottom): Back → actions → Play
+                int? actionCursor = null;
+                void LinkWorkshopAction(int actionIndex)
+                {
+                    if (actionCursor is int fromAction)
+                    {
+                        nav.LinkHorizontal(fromAction, actionIndex);
+                    }
+                    else
+                    {
+                        nav.LinkHorizontal(backIndex, actionIndex);
+                    }
+
+                    actionCursor = actionIndex;
+                }
+
+                if (workshopPrimaryIndex is int wp)
+                {
+                    LinkWorkshopAction(wp);
+                }
+
+                if (workshopSecondaryIndex is int ws)
+                {
+                    LinkWorkshopAction(ws);
+                }
+
+                if (workshopTertiaryIndex is int wt)
+                {
+                    LinkWorkshopAction(wt);
+                }
+
+                if (workshopQuaternaryIndex is int wq)
+                {
+                    LinkWorkshopAction(wq);
+                }
+
+                if (workshopQuinaryIndex is int w5)
+                {
+                    LinkWorkshopAction(w5);
+                }
 
                 if (primaryIndex is int playBtn)
                 {
-                    nav.LinkHorizontal(backIndex, playBtn);
+                    if (actionCursor is int fromAction)
+                    {
+                        nav.LinkHorizontal(fromAction, playBtn);
+                    }
+                    else
+                    {
+                        nav.LinkHorizontal(backIndex, playBtn);
+                    }
                 }
             }
 
@@ -685,6 +956,47 @@ public sealed class LevelSelectScene : IScene
             _createOfficialButton?.Draw(spriteBatch, pixel);
             _convertToOfficialButton?.Draw(spriteBatch, pixel);
         }
+
+        if (_mode == LevelSelectMode.PlayMode)
+        {
+            if (ShouldShowWorkshopPrimary())
+            {
+                _workshopPrimaryButton?.Draw(spriteBatch, pixel);
+            }
+
+            if (ShouldShowWorkshopSecondary())
+            {
+                _workshopSecondaryButton?.Draw(spriteBatch, pixel);
+            }
+
+            if (ShouldShowWorkshopTertiary())
+            {
+                _workshopTertiaryButton?.Draw(spriteBatch, pixel);
+            }
+
+            if (ShouldShowWorkshopQuaternary())
+            {
+                _workshopQuaternaryButton?.Draw(spriteBatch, pixel);
+            }
+
+            if (ShouldShowWorkshopQuinary())
+            {
+                _workshopQuinaryButton?.Draw(spriteBatch, pixel);
+            }
+        }
+        else if (_mode == LevelSelectMode.EditMode)
+        {
+            if (ShouldShowWorkshopPrimary())
+            {
+                _workshopPrimaryButton?.Draw(spriteBatch, pixel);
+            }
+
+            if (ShouldShowWorkshopSecondary())
+            {
+                _workshopSecondaryButton?.Draw(spriteBatch, pixel);
+            }
+        }
+
         _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
 
         spriteBatch.End();
@@ -781,14 +1093,71 @@ public sealed class LevelSelectScene : IScene
 
         if (_mode == LevelSelectMode.PlayMode)
         {
+            RefreshWorkshopActionLabels();
+
+            var labels = new List<string> { "Play" };
+            if (ShouldShowWorkshopPrimary())
+            {
+                labels.Insert(0, _workshopPrimaryButton!.Text);
+            }
+
+            if (ShouldShowWorkshopSecondary())
+            {
+                labels.Insert(ShouldShowWorkshopPrimary() ? 1 : 0, _workshopSecondaryButton!.Text);
+            }
+
+            if (ShouldShowWorkshopTertiary())
+            {
+                int insertAt = labels.Count - 1;
+                labels.Insert(insertAt, _workshopTertiaryButton!.Text);
+            }
+
+            if (ShouldShowWorkshopQuaternary())
+            {
+                int insertAt = labels.Count - 1;
+                labels.Insert(insertAt, _workshopQuaternaryButton!.Text);
+            }
+
+            if (ShouldShowWorkshopQuinary())
+            {
+                int insertAt = labels.Count - 1;
+                labels.Insert(insertAt, _workshopQuinaryButton!.Text);
+            }
+
             var layout = ButtonRowLayout.Create(
-                new[] { "Play" },
+                labels.ToArray(),
                 viewport.Width, viewport.Height,
                 buttonHeight, horizontalPadding, 12, buttonGap, bottomMargin);
 
-            if (layout.ButtonBounds.Length >= 1)
+            int boundIndex = 0;
+            if (ShouldShowWorkshopPrimary() && boundIndex < layout.ButtonBounds.Length)
             {
-                _primaryButton!.Bounds = layout.ButtonBounds[0];
+                _workshopPrimaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
+            }
+
+            if (ShouldShowWorkshopSecondary() && boundIndex < layout.ButtonBounds.Length)
+            {
+                _workshopSecondaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
+            }
+
+            if (ShouldShowWorkshopTertiary() && boundIndex < layout.ButtonBounds.Length)
+            {
+                _workshopTertiaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
+            }
+
+            if (ShouldShowWorkshopQuaternary() && boundIndex < layout.ButtonBounds.Length)
+            {
+                _workshopQuaternaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
+            }
+
+            if (ShouldShowWorkshopQuinary() && boundIndex < layout.ButtonBounds.Length)
+            {
+                _workshopQuinaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
+            }
+
+            if (boundIndex < layout.ButtonBounds.Length)
+            {
+                _primaryButton!.Bounds = layout.ButtonBounds[boundIndex];
             }
 
             bool leaderCanPlay = CanStartPlay();
@@ -815,7 +1184,18 @@ public sealed class LevelSelectScene : IScene
                 _quinaryButton!.Bounds = mainRow.ButtonBounds[4];
             }
 
+            RefreshWorkshopActionLabels();
             var secondRowLabels = new List<string> { "Import Official" };
+            if (ShouldShowWorkshopPrimary())
+            {
+                secondRowLabels.Add(_workshopPrimaryButton!.Text);
+            }
+
+            if (ShouldShowWorkshopSecondary())
+            {
+                secondRowLabels.Add(_workshopSecondaryButton!.Text);
+            }
+
             if (DeveloperSettings.DeveloperMode)
             {
                 secondRowLabels.Add("Create Official");
@@ -832,21 +1212,32 @@ public sealed class LevelSelectScene : IScene
                 buttonGap,
                 secondRowBottomMargin);
 
-            if (secondRow.ButtonBounds.Length >= 1 && _importOfficialButton is not null)
+            int secondIndex = 0;
+            if (secondRow.ButtonBounds.Length > secondIndex && _importOfficialButton is not null)
             {
-                _importOfficialButton.Bounds = secondRow.ButtonBounds[0];
+                _importOfficialButton.Bounds = secondRow.ButtonBounds[secondIndex++];
+            }
+
+            if (ShouldShowWorkshopPrimary() && secondIndex < secondRow.ButtonBounds.Length)
+            {
+                _workshopPrimaryButton!.Bounds = secondRow.ButtonBounds[secondIndex++];
+            }
+
+            if (ShouldShowWorkshopSecondary() && secondIndex < secondRow.ButtonBounds.Length)
+            {
+                _workshopSecondaryButton!.Bounds = secondRow.ButtonBounds[secondIndex++];
             }
 
             if (DeveloperSettings.DeveloperMode)
             {
-                if (secondRow.ButtonBounds.Length >= 2 && _createOfficialButton is not null)
+                if (secondIndex < secondRow.ButtonBounds.Length && _createOfficialButton is not null)
                 {
-                    _createOfficialButton.Bounds = secondRow.ButtonBounds[1];
+                    _createOfficialButton.Bounds = secondRow.ButtonBounds[secondIndex++];
                 }
 
-                if (secondRow.ButtonBounds.Length >= 3 && _convertToOfficialButton is not null)
+                if (secondIndex < secondRow.ButtonBounds.Length && _convertToOfficialButton is not null)
                 {
-                    _convertToOfficialButton.Bounds = secondRow.ButtonBounds[2];
+                    _convertToOfficialButton.Bounds = secondRow.ButtonBounds[secondIndex];
                 }
             }
 
@@ -1134,7 +1525,7 @@ public sealed class LevelSelectScene : IScene
             s_selectedRopeMode = _ropeModeSelector?.CurrentOption ?? s_selectedRopeMode;
             s_lavaRiseEnabled = _lavaRiseCheckbox?.IsChecked ?? s_lavaRiseEnabled;
             s_playerCollisionEnabled = _playerCollisionCheckbox?.IsChecked ?? s_playerCollisionEnabled;
-            s_ghostBestRunEnabled = _ghostBestRunCheckbox?.IsChecked ?? s_ghostBestRunEnabled;
+            s_ghostMode = ClampGhostMode(_ghostModeSelector?.CurrentOption ?? s_ghostMode, levelId);
 
             MultiplayerDebug.LogSim($"PlayPressed level={levelId} mode={_mode}");
             if (_game.SteamLobby.IsInLobby)
@@ -1169,7 +1560,7 @@ public sealed class LevelSelectScene : IScene
                 levelId,
                 s_selectedRopeMode,
                 s_lavaRiseEnabled,
-                s_ghostBestRunEnabled,
+                s_ghostMode,
                 s_playerCollisionEnabled));
         }
         else
@@ -1267,32 +1658,6 @@ public sealed class LevelSelectScene : IScene
 
         int partyCount = _game.Party.Members.Count;
         return LevelRules.SupportsPlayerCount(_selectedLevel, partyCount);
-    }
-
-    private void OnLevelStartReceived(PartyStartMessage message)
-    {
-        if (_mode != LevelSelectMode.PlayMode)
-        {
-            return;
-        }
-
-        MultiplayerDebug.LogSim(
-            $"CLIENT START RECEIVED level={message.LevelId} partyMembers={_game.Party.Members.Count} " +
-            $"lobbyMembers={_game.SteamLobby.GetLobbyMemberCount()}");
-        foreach (PartyMember member in _game.Party.Members)
-        {
-            MultiplayerDebug.LogSim(
-                $"  start-roster '{member.DisplayName}' {(member.IsLocallyOwned ? "LOCAL" : "REMOTE")} " +
-                $"type={member.MemberType} steam={member.OwningSteamId}");
-        }
-
-        if (!MultiplayerStartGate.ValidateClientStart(_game.SteamLobby, message, out string title, out string error))
-        {
-            _alertPopup = new AlertPopup(title, error);
-            return;
-        }
-
-        _game.ChangeScene(new GameScene(_game, message.LevelId, message.RopeMode, message.LavaRiseEnabled, s_ghostBestRunEnabled));
     }
 
     private void HandleSecondaryAction()
@@ -1541,6 +1906,15 @@ public sealed class LevelSelectScene : IScene
             _detailsUnofficialBestText = "";
             _detailsHasUnofficialBest = false;
             _detailsHasBestReplay = false;
+            _detailsSupportsLeaderboards = false;
+            _detailsHasWorldRecordReplay = false;
+            _detailsWorldRecordText = null;
+            _detailsWorkshopVotesText = null;
+            _detailsWorkshopSubsText = null;
+            _detailsWorkshopPublishedText = null;
+            _detailsWorkshopUpdatedText = null;
+            _detailsWorkshopVisibilityText = null;
+            _wrPeekRequested = false;
             return;
         }
 
@@ -1560,6 +1934,129 @@ public sealed class LevelSelectScene : IScene
             ? BestTimeStorage.FormatTime(unofficialBest)
             : "";
         _detailsHasBestReplay = ReplayStorage.HasValidBestReplay(_selectedLevelId);
+        _detailsSupportsLeaderboards = SteamLeaderboardService.SupportsLeaderboards(_selectedLevelId);
+        int wrPlayers = GetLeaderboardPlayerCount();
+        _detailsHasWorldRecordReplay = SteamGhostService.SupportsWorldRecordGhost(_selectedLevelId)
+            && _game.SteamGhosts.HasCachedWorldRecordGhost(_selectedLevelId, wrPlayers);
+        _detailsWorldRecordText = null;
+        _detailsWorkshopVotesText = null;
+        _detailsWorkshopSubsText = null;
+        _detailsWorkshopPublishedText = null;
+        _detailsWorkshopUpdatedText = null;
+        _detailsWorkshopVisibilityText = null;
+        _wrPeekRequested = false;
+
+        LevelSource source = LevelIdentity.GetSource(_selectedLevelId);
+        if (source == LevelSource.Workshop
+            && metadata is not null
+            && ulong.TryParse(metadata.WorkshopId, out ulong workshopId)
+            && workshopId != 0)
+        {
+            WorkshopItemDetails? details = _game.SteamWorkshop.GetDetails(workshopId);
+            if (details is not null)
+            {
+                ApplyWorkshopDetails(details);
+            }
+            else
+            {
+                _detailsWorkshopVotesText = "…";
+                _detailsWorkshopSubsText = "…";
+                _detailsWorkshopPublishedText = "…";
+                _detailsWorkshopUpdatedText = "…";
+                _detailsWorkshopVisibilityText = "…";
+            }
+        }
+
+        if (_detailsSupportsLeaderboards)
+        {
+            RequestWorldRecordPeek(_selectedLevelId, Math.Max(1, metadata?.Version ?? 1), wrPlayers);
+            if (SteamGhostService.SupportsWorldRecordGhost(_selectedLevelId))
+            {
+                string levelId = _selectedLevelId;
+                int ensurePlayers = wrPlayers;
+                _game.SteamGhosts.EnsureWorldRecordGhost(levelId, ensurePlayers, ready =>
+                {
+                    if (_selectedLevelId == levelId)
+                    {
+                        _detailsHasWorldRecordReplay = ready;
+                    }
+                });
+            }
+        }
+    }
+
+    private void HandleWatchWorldRecord()
+    {
+        if (_selectedLevelId is null || !_detailsSupportsLeaderboards)
+        {
+            return;
+        }
+
+        string levelId = _selectedLevelId;
+        int wrPlayers = GetLeaderboardPlayerCount();
+        string path = SteamGhostService.GetWorldRecordGhostPath(levelId, wrPlayers);
+
+        if (_detailsHasWorldRecordReplay
+            && _game.SteamGhosts.HasCachedWorldRecordGhost(levelId, wrPlayers))
+        {
+            _game.ChangeScene(new ReplayViewerScene(_game, levelId, path));
+            return;
+        }
+
+        _alertPopup = new AlertPopup("WORLD RECORD", "Downloading world record replay…");
+        _game.SteamGhosts.EnsureWorldRecordGhost(levelId, wrPlayers, ready =>
+        {
+            if (_selectedLevelId != levelId)
+            {
+                return;
+            }
+
+            _detailsHasWorldRecordReplay = ready;
+            if (!ready)
+            {
+                _alertPopup = new AlertPopup("WORLD RECORD", "World record replay is not available yet.");
+                return;
+            }
+
+            _alertPopup = null;
+            _game.ChangeScene(new ReplayViewerScene(_game, levelId, path));
+        });
+    }
+
+    private int GetLeaderboardPlayerCount() =>
+        SteamLeaderboardService.ClampPlayerCount(Math.Max(1, _game.Party.Members.Count));
+
+    private void RequestWorldRecordPeek(string levelId, int levelVersion, int playerCount)
+    {
+        if (_wrPeekRequested || !_game.SteamLeaderboards.IsAvailable)
+        {
+            return;
+        }
+
+        _wrPeekRequested = true;
+        _detailsWorldRecordText = "…";
+        int clamped = SteamLeaderboardService.ClampPlayerCount(playerCount);
+        _game.SteamLeaderboards.DownloadEntries(
+            levelId,
+            levelVersion,
+            clamped,
+            LeaderboardScope.GlobalTop,
+            1,
+            entries =>
+            {
+                if (_selectedLevelId != levelId)
+                {
+                    return;
+                }
+
+                if (entries is null || entries.Count == 0)
+                {
+                    _detailsWorldRecordText = "--";
+                    return;
+                }
+
+                _detailsWorldRecordText = BestTimeStorage.FormatTime(entries[0].TimeSeconds);
+            });
     }
 
     private void ApplyLevelPlayDefaults(Level level)
@@ -1594,14 +2091,11 @@ public sealed class LevelSelectScene : IScene
             _ropeModeSelector.CurrentOption = s_selectedRopeMode;
         }
 
-        if (_ghostBestRunCheckbox != null)
+        if (_ghostModeSelector != null && _selectedLevelId is not null)
         {
-            _ghostBestRunCheckbox.IsEnabled = true;
-            if (!_detailsHasBestReplay)
-            {
-                _ghostBestRunCheckbox.IsChecked = false;
-                s_ghostBestRunEnabled = false;
-            }
+            RefreshGhostModeOptions(_selectedLevelId);
+            s_ghostMode = ClampGhostMode(s_ghostMode, _selectedLevelId);
+            _ghostModeSelector.CurrentOption = s_ghostMode;
         }
     }
 
@@ -1678,11 +2172,6 @@ public sealed class LevelSelectScene : IScene
 
     public void OnExit()
     {
-        if (_subscribedToLevelStart)
-        {
-            _game.SteamLobby.LevelStartReceived -= OnLevelStartReceived;
-            _subscribedToLevelStart = false;
-        }
     }
 
     private int GetGridLayoutHeight()
@@ -1783,13 +2272,93 @@ public sealed class LevelSelectScene : IScene
             y += rowHeight + 8;
         }
 
+        if (_detailsSupportsLeaderboards)
+        {
+            int wrPlayers = GetLeaderboardPlayerCount();
+            SimpleTextRenderer.DrawString(
+                spriteBatch,
+                pixel,
+                wrPlayers == 1 ? "World Record:" : $"World Record ({wrPlayers}P):",
+                new Microsoft.Xna.Framework.Vector2(textX, y),
+                2,
+                new Color(180, 190, 210));
+            y += rowHeight;
+            SimpleTextRenderer.DrawString(
+                spriteBatch,
+                pixel,
+                _detailsWorldRecordText ?? "--",
+                new Microsoft.Xna.Framework.Vector2(textX, y),
+                2,
+                new Color(255, 210, 90));
+            y += rowHeight + 4;
+        }
+
+        if (_detailsWorkshopVotesText is not null)
+        {
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Workshop Rating:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+            y += rowHeight;
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopVotesText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+            y += rowHeight + 4;
+        }
+
+        if (_detailsWorkshopSubsText is not null)
+        {
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Subscribers:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+            y += rowHeight;
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopSubsText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+            y += rowHeight + 4;
+        }
+
+        if (_detailsWorkshopVisibilityText is not null)
+        {
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Visibility:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+            y += rowHeight;
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopVisibilityText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+            y += rowHeight + 4;
+        }
+
+        if (_detailsWorkshopPublishedText is not null)
+        {
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Published:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+            y += rowHeight;
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopPublishedText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+            y += rowHeight + 4;
+        }
+
+        if (_detailsWorkshopUpdatedText is not null)
+        {
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Updated:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
+            y += rowHeight;
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopUpdatedText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+            y += rowHeight + 4;
+        }
+
         if (_watchReplayButton != null)
         {
-            _watchReplayButton.Bounds = new Rectangle(textX, y, textWidth, 44);
+            _watchReplayButton.Bounds = new Rectangle(textX, y, textWidth, 40);
             _watchReplayButton.FillColor = _detailsHasBestReplay ? new Color(52, 61, 80) : new Color(40, 46, 58);
             _watchReplayButton.TextColor = _detailsHasBestReplay ? Color.White : new Color(140, 150, 165);
             _watchReplayButton.Draw(spriteBatch, pixel);
-            y = _watchReplayButton.Bounds.Bottom + 12;
+            y = _watchReplayButton.Bounds.Bottom + 8;
+        }
+
+        if (_watchWorldRecordButton != null && _detailsSupportsLeaderboards)
+        {
+            bool wrReady = _detailsHasWorldRecordReplay || _detailsWorldRecordText is not null && _detailsWorldRecordText != "--";
+            _watchWorldRecordButton.Bounds = new Rectangle(textX, y, textWidth, 40);
+            _watchWorldRecordButton.FillColor = wrReady ? new Color(52, 61, 80) : new Color(40, 46, 58);
+            _watchWorldRecordButton.TextColor = wrReady ? Color.White : new Color(140, 150, 165);
+            _watchWorldRecordButton.Draw(spriteBatch, pixel);
+            y = _watchWorldRecordButton.Bounds.Bottom + 8;
+        }
+
+        if (_leaderboardButton != null && _detailsSupportsLeaderboards)
+        {
+            _leaderboardButton.Bounds = new Rectangle(textX, y, textWidth, 40);
+            _leaderboardButton.FillColor = new Color(52, 61, 80);
+            _leaderboardButton.TextColor = Color.White;
+            _leaderboardButton.Draw(spriteBatch, pixel);
+            y = _leaderboardButton.Bounds.Bottom + 10;
         }
 
         // Play options cascade under Watch Replay (flex column inside details panel).
@@ -1809,11 +2378,13 @@ public sealed class LevelSelectScene : IScene
             y += optionHeight + optionGap;
         }
 
-        if (_ghostBestRunCheckbox != null)
+        if (_ghostModeSelector != null)
         {
-            _ghostBestRunCheckbox.Bounds = new Rectangle(textX, y, textWidth, optionHeight);
-            _ghostBestRunCheckbox.Draw(spriteBatch, pixel);
-            y = _ghostBestRunCheckbox.Bounds.Bottom + optionGap;
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Ghost:", new Microsoft.Xna.Framework.Vector2(textX, y), 1, new Color(180, 190, 210));
+            y += 18;
+            _ghostModeSelector.Bounds = new Rectangle(textX, y, textWidth, 36);
+            _ghostModeSelector.Draw(spriteBatch, pixel);
+            y = _ghostModeSelector.Bounds.Bottom + optionGap;
         }
 
         if (!AreCurrentPlaySettingsOfficial())
@@ -1852,6 +2423,346 @@ public sealed class LevelSelectScene : IScene
             lavaRise,
             playerCollision,
             _game.Party.Members.Count);
+    }
+
+    private bool HandleWorkshopActionButtons()
+    {
+        if (ShouldShowWorkshopPrimary() && _workshopPrimaryFocus?.WasActivated == true)
+        {
+            HandleWorkshopPrimaryAction();
+            return true;
+        }
+
+        if (ShouldShowWorkshopSecondary() && _workshopSecondaryFocus?.WasActivated == true)
+        {
+            HandleWorkshopSecondaryAction();
+            return true;
+        }
+
+        if (ShouldShowWorkshopTertiary() && _workshopTertiaryFocus?.WasActivated == true)
+        {
+            HandleWorkshopTertiaryAction();
+            return true;
+        }
+
+        if (ShouldShowWorkshopQuaternary() && _workshopQuaternaryFocus?.WasActivated == true)
+        {
+            HandleWorkshopQuaternaryAction();
+            return true;
+        }
+
+        if (ShouldShowWorkshopQuinary() && _workshopQuinaryFocus?.WasActivated == true)
+        {
+            HandleCreateCopy();
+            return true;
+        }
+
+        return false;
+    }
+
+    private void RefreshWorkshopActionLabels()
+    {
+        if (_workshopPrimaryButton is null || _workshopSecondaryButton is null || _workshopTertiaryButton is null)
+        {
+            return;
+        }
+
+        if (_activeTab == LevelSource.Local)
+        {
+            LevelMetadata? metadata = _selectedLevelId is not null ? LevelLibrary.GetLevel(_selectedLevelId) : null;
+            bool hasWorkshopId = metadata is not null
+                && ulong.TryParse(metadata.WorkshopId, out ulong id)
+                && id != 0;
+            _workshopPrimaryButton.Text = hasWorkshopId ? "Update Workshop" : "Upload Workshop";
+            _workshopSecondaryButton.Text = "Open Workshop";
+            _workshopTertiaryButton.Text = "Delete Local";
+        }
+        else if (_activeTab == LevelSource.Workshop)
+        {
+            _workshopPrimaryButton.Text = "Browse Workshop";
+            _workshopSecondaryButton.Text = "Subscribe";
+            _workshopTertiaryButton.Text = "Open Workshop";
+            if (_workshopQuaternaryButton is not null)
+            {
+                _workshopQuaternaryButton.Text = "Unsubscribe";
+            }
+
+            if (_workshopQuinaryButton is not null)
+            {
+                _workshopQuinaryButton.Text = "Create Copy";
+            }
+        }
+    }
+
+    private bool ShouldShowWorkshopPrimary()
+    {
+        if (_activeTab == LevelSource.Workshop && _mode == LevelSelectMode.PlayMode)
+        {
+            return true;
+        }
+
+        return _selectedLevelId is not null
+            && _activeTab == LevelSource.Local
+            && (_mode == LevelSelectMode.PlayMode || _mode == LevelSelectMode.EditMode);
+    }
+
+    private bool ShouldShowWorkshopSecondary()
+    {
+        if (_selectedLevelId is null || !TryGetSelectedWorkshopId(out _))
+        {
+            return false;
+        }
+
+        if (_activeTab == LevelSource.Workshop && _mode == LevelSelectMode.PlayMode)
+        {
+            return true;
+        }
+
+        return _activeTab == LevelSource.Local
+            && (_mode == LevelSelectMode.PlayMode || _mode == LevelSelectMode.EditMode);
+    }
+
+    private bool ShouldShowWorkshopTertiary()
+    {
+        if (_mode != LevelSelectMode.PlayMode || _selectedLevelId is null)
+        {
+            return false;
+        }
+
+        if (_activeTab == LevelSource.Local)
+        {
+            return true;
+        }
+
+        return _activeTab == LevelSource.Workshop && TryGetSelectedWorkshopId(out _);
+    }
+
+    private bool ShouldShowWorkshopQuaternary() =>
+        _mode == LevelSelectMode.PlayMode
+        && _activeTab == LevelSource.Workshop
+        && _selectedLevelId is not null
+        && TryGetSelectedWorkshopId(out _);
+
+    private bool ShouldShowWorkshopQuinary() =>
+        _mode == LevelSelectMode.PlayMode
+        && _activeTab == LevelSource.Workshop
+        && _selectedLevelId is not null;
+
+    private bool TryGetSelectedWorkshopId(out ulong workshopId)
+    {
+        workshopId = 0;
+        if (_selectedLevelId is null)
+        {
+            return false;
+        }
+
+        LevelMetadata? metadata = LevelLibrary.GetLevel(_selectedLevelId);
+        return metadata is not null
+            && ulong.TryParse(metadata.WorkshopId, out workshopId)
+            && workshopId != 0;
+    }
+
+    private void ApplyWorkshopDetails(WorkshopItemDetails details)
+    {
+        _detailsWorkshopVotesText = $"+{details.VotesUp} / -{details.VotesDown}";
+        _detailsWorkshopSubsText = details.Subscribers.ToString();
+        _detailsWorkshopVisibilityText = details.VisibilityLabel;
+        _detailsWorkshopPublishedText = details.PublishedDateUtc == default
+            ? "--"
+            : details.PublishedDateUtc.ToLocalTime().ToString("yyyy-MM-dd");
+        _detailsWorkshopUpdatedText = details.UpdatedDateUtc == default
+            ? "--"
+            : details.UpdatedDateUtc.ToLocalTime().ToString("yyyy-MM-dd");
+    }
+
+    private void HandleWorkshopPrimaryAction()
+    {
+        if (_activeTab == LevelSource.Workshop)
+        {
+            _game.SteamWorkshop.OpenWorkshopHub();
+            return;
+        }
+
+        if (_activeTab != LevelSource.Local || _selectedLevelId is null)
+        {
+            return;
+        }
+
+        if (!_game.SteamWorkshop.IsAvailable)
+        {
+            _alertPopup = new AlertPopup("WORKSHOP", "Steam is not available.");
+            return;
+        }
+
+        if (_game.SteamWorkshop.IsPublishing)
+        {
+            _alertPopup = new AlertPopup("WORKSHOP", "Upload already in progress.");
+            return;
+        }
+
+        string levelId = _selectedLevelId;
+        _game.SteamWorkshop.PublishLevel(levelId, result =>
+        {
+            if (_selectedLevelId != levelId)
+            {
+                return;
+            }
+
+            if (result.Success)
+            {
+                RefreshLevelList(preserveSelection: true);
+                UpdateSelectedLevelDetails();
+                _alertPopup = new AlertPopup(
+                    "WORKSHOP",
+                    result.NeedsLegalAgreement
+                        ? "Published. Accept the Steam Workshop legal agreement if prompted."
+                        : "Level published to Workshop.");
+            }
+            else
+            {
+                _alertPopup = new AlertPopup("WORKSHOP", result.Message);
+            }
+        });
+    }
+
+    private void HandleWorkshopSecondaryAction()
+    {
+        if (_activeTab == LevelSource.Workshop)
+        {
+            if (!TryGetSelectedWorkshopId(out ulong subscribeId))
+            {
+                return;
+            }
+
+            if (!_game.SteamWorkshop.IsAvailable)
+            {
+                _alertPopup = new AlertPopup("WORKSHOP", "Steam is not available.");
+                return;
+            }
+
+            _game.SteamWorkshop.Subscribe(subscribeId, ok =>
+            {
+                if (!ok)
+                {
+                    _alertPopup = new AlertPopup("WORKSHOP", "Subscribe failed.");
+                    return;
+                }
+
+                _game.SteamWorkshop.SyncSubscribedItems();
+                _workshopChangeStamp = _game.SteamWorkshop.ChangeStamp;
+                RefreshLevelList(preserveSelection: true);
+                _alertPopup = new AlertPopup("WORKSHOP", "Subscribed. Downloading level…");
+            });
+            return;
+        }
+
+        if (!TryGetSelectedWorkshopId(out ulong workshopId))
+        {
+            return;
+        }
+
+        _game.SteamWorkshop.OpenWorkshopPage(workshopId);
+    }
+
+    private void HandleWorkshopTertiaryAction()
+    {
+        if (_selectedLevelId is null)
+        {
+            return;
+        }
+
+        if (_activeTab == LevelSource.Local)
+        {
+            if (!_selectedIndex.HasValue || _selectedIndex.Value >= _levels.Count)
+            {
+                return;
+            }
+
+            _popupKind = LevelSelectPopupKind.Delete;
+            LevelMetadata level = _levels[_selectedIndex.Value];
+            _popup = new Popup("Delete Level", $"Delete '{level.Name}' permanently?");
+            return;
+        }
+
+        if (_activeTab == LevelSource.Workshop && TryGetSelectedWorkshopId(out ulong workshopId))
+        {
+            _game.SteamWorkshop.OpenWorkshopPage(workshopId);
+        }
+    }
+
+    private void HandleWorkshopQuaternaryAction()
+    {
+        if (_activeTab != LevelSource.Workshop
+            || _selectedLevelId is null
+            || !TryGetSelectedWorkshopId(out ulong workshopId))
+        {
+            return;
+        }
+
+        string levelId = _selectedLevelId;
+        _game.SteamWorkshop.Unsubscribe(workshopId, ok =>
+        {
+            if (!ok)
+            {
+                _alertPopup = new AlertPopup("WORKSHOP", "Unsubscribe failed.");
+                return;
+            }
+
+            if (_selectedLevelId == levelId)
+            {
+                _selectedIndex = null;
+                _selectedLevel = null;
+                _selectedLevelId = null;
+            }
+
+            RefreshLevelList();
+        });
+    }
+
+    private void RefreshGhostModeOptions(string levelId)
+    {
+        if (_ghostModeSelector is null)
+        {
+            return;
+        }
+
+        bool supportsWr = SteamGhostService.SupportsWorldRecordGhost(levelId);
+        _ghostModeSelector.Options.Clear();
+        _ghostModeSelector.Options.Add(GhostMode.None);
+        _ghostModeSelector.Options.Add(GhostMode.PersonalBest);
+        if (supportsWr)
+        {
+            _ghostModeSelector.Options.Add(GhostMode.WorldRecord);
+            _ghostModeSelector.Options.Add(GhostMode.Both);
+        }
+    }
+
+    private GhostMode ClampGhostMode(GhostMode mode, string? levelId)
+    {
+        if (levelId is null)
+        {
+            return GhostMode.None;
+        }
+
+        bool supportsWr = SteamGhostService.SupportsWorldRecordGhost(levelId);
+        bool hasPb = ReplayStorage.HasValidBestReplay(levelId);
+
+        GhostMode result = mode;
+        if (!supportsWr && result.IncludesWorldRecord())
+        {
+            result = result == GhostMode.Both ? GhostMode.PersonalBest : GhostMode.None;
+        }
+
+        if (!hasPb && result.IncludesPersonalBest())
+        {
+            result = result == GhostMode.Both ? GhostMode.WorldRecord : GhostMode.None;
+            if (!supportsWr && result == GhostMode.WorldRecord)
+            {
+                result = GhostMode.None;
+            }
+        }
+
+        return result;
     }
 
     private string GetPlayerCompatibilityText(Level level)

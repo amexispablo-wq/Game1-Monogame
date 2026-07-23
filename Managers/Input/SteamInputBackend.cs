@@ -15,19 +15,25 @@ public sealed class SteamInputBackend
     private readonly bool[,] _prevBySlot = new bool[InputManager.MaxLocalPlayers, SteamInputActionNames.DigitalActions.Length];
     private readonly bool[,] _currBySlot = new bool[InputManager.MaxLocalPlayers, SteamInputActionNames.DigitalActions.Length];
     private readonly Vector2[] _moveBySlot = new Vector2[InputManager.MaxLocalPlayers];
+    private readonly bool[] _prevSlotLive = new bool[InputManager.MaxLocalPlayers];
+    private bool _slotLiveStateReady;
 
     public SteamInputBackend(SteamInputManager steam)
     {
         _steam = steam;
     }
 
-    public bool IsActive => _steam.IsInitialized && _steam.ConnectedControllerCount > 0;
+    /// <summary>
+    /// Steam Input drives pads only when at least one slot has live actions (bActive).
+    /// Soft-claimed handles do not activate — InputManager falls through to GamepadBackend.
+    /// </summary>
+    public bool IsActive => _steam.IsControllerAvailable;
 
     /// <summary>Aggregated Move vector (strongest magnitude across connected slots).</summary>
     public Vector2 MoveVector { get; private set; }
 
-    public bool HasController(int localPlayerSlot) =>
-        _steam.IsInitialized && _steam.GetHandleForSlot(localPlayerSlot).m_InputHandle != 0;
+    /// <summary>True only when this slot's Steam actions are live — not mere handle presence.</summary>
+    public bool HasController(int localPlayerSlot) => _steam.IsSlotLive(localPlayerSlot);
 
     public Vector2 GetMoveVector(int localPlayerSlot)
     {
@@ -54,6 +60,7 @@ public sealed class SteamInputBackend
 
         float bestLenSq = 0f;
         Vector2 best = Vector2.Zero;
+        bool anyOwnershipChange = false;
 
         for (int slot = 0; slot < InputManager.MaxLocalPlayers; slot++)
         {
@@ -62,6 +69,23 @@ public sealed class SteamInputBackend
                 _prevBySlot[slot, a] = _currBySlot[slot, a];
                 _currBySlot[slot, a] = _steam.GetDigital(slot, SteamInputActionNames.DigitalActions[a]);
             }
+
+            bool live = _steam.IsSlotLive(slot);
+            if (_slotLiveStateReady && live != _prevSlotLive[slot])
+            {
+                // Soft↔live (or held buttons on first live) must not synthesize rising edges.
+                for (int a = 0; a < SteamInputActionNames.DigitalActions.Length; a++)
+                {
+                    _prevBySlot[slot, a] = _currBySlot[slot, a];
+                }
+
+                anyOwnershipChange = true;
+                DiagnosticsLog.Info(
+                    "Input",
+                    $"SteamSlot[{slot}] edge suppress live transition ({_prevSlotLive[slot]} -> {live})");
+            }
+
+            _prevSlotLive[slot] = live;
 
             Vector2 move = Vector2.Zero;
             if (_steam.TryGetAnalog(slot, SteamInputActionNames.Move, out float ax, out float ay))
@@ -78,6 +102,7 @@ public sealed class SteamInputBackend
             }
         }
 
+        _slotLiveStateReady = true;
         MoveVector = best;
 
         for (int a = 0; a < SteamInputActionNames.DigitalActions.Length; a++)
@@ -91,6 +116,11 @@ public sealed class SteamInputBackend
                     _currDigital[a] = true;
                     break;
                 }
+            }
+
+            if (anyOwnershipChange)
+            {
+                _prevDigital[a] = _currDigital[a];
             }
         }
     }

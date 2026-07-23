@@ -11,7 +11,7 @@ public sealed class Button
         Text = text;
     }
 
-    public string Text { get; }
+    public string Text { get; set; }
     public Rectangle Bounds { get; set; }
     public bool IsHovered { get; private set; }
     public bool WasClicked { get; private set; }
