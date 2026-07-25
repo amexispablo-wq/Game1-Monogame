@@ -58,9 +58,9 @@ LevelSystem/    Niveles (no hay LevelManager)
 Replay/         Grabación, reproducción, highlights, ghosts locales
   ReplayRecorder, ReplayPlayer, ReplayStorage, GhostPlayer, HighlightManager, …
 
-Customization/  Skins de jugador
-Accessibility/
-Diagnostics/
+Customization/  Skins de jugador (PlayerSkin*, SkinLibrary*, codec lobby)
+Accessibility/  ColorPaletteManager, ColorMode / ColorType (paletas accesibles)
+Diagnostics/    DiagnosticsLog, SessionDiagnostics, VersionOverlay, exporters
 Graphics/       Camera, DrawHelper, SimpleTextRenderer, PlayerSkinRenderer
 Steam/          SteamManager, CallbackManager, Lobby, Party, Invite, Input,
                 GameNetwork, Leaderboard, Workshop, Replay, Ghost + Native DLL
@@ -159,4 +159,15 @@ Toda escena implementa `Update(GameTime)`, `Draw(GameTime, SpriteBatch)` y `OnEx
 - `Player` y `Rope` lo implementan.
 - `PhysicsWorld.ShouldSimulate(player)` = `IsLocal || IsHostControlled` → host simula todo; cliente (futuro) solo local + snapshots.
 
-Ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md). Playbook reutilizable: [`monogame-playbook/`](monogame-playbook/README.md).
+Ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md).
+
+## Sistemas secundarios (producto)
+
+| Área | Código | Notas |
+|------|--------|-------|
+| Customization | `Customization/`, `CustomizationScene` | Skins; codec para lobby/party |
+| Accessibility | `Accessibility/ColorPaletteManager` | Modos/paletas de color |
+| Haptics | `Managers/Haptics/` (`IHaptics`, Steam/Gamepad/Dummy) | Vibración; fail-soft sin Steam |
+| Diagnostics | `DiagnosticsLog`, `SessionDiagnostics`, `VersionOverlay` | Logs + versión en UI |
+
+Framework reutilizable (juegos nuevos): [`Framework/`](Framework/README.md).

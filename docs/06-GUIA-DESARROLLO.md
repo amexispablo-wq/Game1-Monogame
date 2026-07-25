@@ -1,6 +1,6 @@
 # 06 — Guía de Desarrollo
 
-Greenfield / otro juego MonoGame+Steam: [`monogame-playbook/`](monogame-playbook/README.md).
+Greenfield / otro juego MonoGame+Steam: [`Framework/`](Framework/README.md) (kit canónico).
 
 ## Requisitos
 
@@ -107,4 +107,4 @@ Requiere `developer_settings.json` con `"developerMode": true`.
 - `bin`/`obj` parcialmente en git — preferir `.gitignore`.
 - **Rope Sandbox** usa modo Neutral; colored collision → nivel real o benchmark.
 - Leaderboards / Workshop / Replay: **código listo**; falta QA + Partner — ver [`05-STEAM.md`](05-STEAM.md), [`08-ROADMAP.md`](08-ROADMAP.md).
-- Juego nuevo MonoGame+Steam: kit reutilizable en [`monogame-playbook/`](monogame-playbook/README.md).
+- Juego nuevo MonoGame+Steam: kit canónico en [`Framework/`](Framework/README.md).

@@ -175,4 +175,4 @@ Content/OfficialLevels/                         → oficiales shipped
 | Replay / Ghost | `Replay/`, `SteamReplayService`, `SteamGhostService`, doc 10 |
 | Niveles | `LevelSystem/LevelLibrary.cs`, `EditorScene` |
 | UI | `docs/07-UI-NAVEGACION.md` |
-| Playbook reutilizable | `docs/monogame-playbook/` |
+| Framework (juegos nuevos) | `docs/Framework/` |
