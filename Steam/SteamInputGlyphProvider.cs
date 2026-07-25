@@ -318,6 +318,7 @@ public sealed class SteamInputGlyphProvider
         GameplayInputAction.Jump => SteamInputActionNames.Jump,
         GameplayInputAction.PullRope => SteamInputActionNames.PullRope,
         GameplayInputAction.Respawn => SteamInputActionNames.Respawn,
+        GameplayInputAction.RestartLevel => SteamInputActionNames.RestartLevel,
         GameplayInputAction.Red => SteamInputActionNames.ColorRed,
         GameplayInputAction.Green => SteamInputActionNames.ColorGreen,
         GameplayInputAction.Blue => SteamInputActionNames.ColorBlue,

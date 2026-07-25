@@ -4,6 +4,20 @@ using Steamworks;
 
 namespace ColorBlocks;
 
+public readonly struct PendingPartyInvite
+{
+    public PendingPartyInvite(ulong lobbyId, ulong friendSteamId, string friendName)
+    {
+        LobbyId = lobbyId;
+        FriendSteamId = friendSteamId;
+        FriendName = friendName;
+    }
+
+    public ulong LobbyId { get; }
+    public ulong FriendSteamId { get; }
+    public string FriendName { get; }
+}
+
 /// <summary>
 /// Single owner of Steam invite + join flows:
 /// - Invite overlay (existing in-game "Invite Friends" button).
@@ -11,6 +25,7 @@ namespace ColorBlocks;
 /// - External join requests (friends panel Invite to Game / Join Game), both while
 ///   running (GameLobbyJoinRequested / GameRichPresenceJoinRequested) and via cold-start
 ///   launch arguments.
+/// - In-game Accept/Decline prompt for LobbyInvite (queued while playing a level).
 /// Gameplay never touches this; scenes call through ColorBlocksGame.
 /// </summary>
 public sealed class SteamInviteManager
@@ -18,6 +33,8 @@ public sealed class SteamInviteManager
     private readonly SteamManager _steam;
     private readonly SteamLobbyService _lobby;
     private bool _presenceSet;
+    private bool _inLevel;
+    private PendingPartyInvite? _pending;
 
     public SteamInviteManager(
         SteamManager steam,
@@ -26,6 +43,7 @@ public sealed class SteamInviteManager
     {
         _steam = steam;
         _lobby = lobby;
+        callbacks.LobbyInvite += OnLobbyInvite;
         callbacks.GameRichPresenceJoinRequested += OnGameRichPresenceJoinRequested;
         callbacks.GameLobbyJoinRequested += OnGameLobbyJoinRequested;
         _lobby.LobbyStateChanged += SyncPresenceToLobbyState;
@@ -36,6 +54,51 @@ public sealed class SteamInviteManager
     public bool JoinRequestCallbackActive { get; }
     public string CurrentConnectString { get; private set; } = string.Empty;
     public bool IsPresencePublished => _presenceSet;
+    public PendingPartyInvite? PendingInvite => _pending;
+    public bool ShouldShowInvitePrompt => _pending.HasValue && !_inLevel;
+
+    /// <summary>
+    /// GameScene = in level → suppress prompt, keep latest pending.
+    /// Leaving level with pending → prompt becomes showable again.
+    /// </summary>
+    public void SetInLevel(bool inLevel)
+    {
+        _inLevel = inLevel;
+        if (inLevel)
+        {
+            MultiplayerDebug.LogLobby("InvitePrompt suppressed — in level");
+        }
+        else if (_pending.HasValue)
+        {
+            MultiplayerDebug.LogLobby(
+                $"InvitePrompt ready lobby={_pending.Value.LobbyId} from={_pending.Value.FriendName}");
+        }
+    }
+
+    public void AcceptPending()
+    {
+        if (!_pending.HasValue)
+        {
+            return;
+        }
+
+        ulong lobbyId = _pending.Value.LobbyId;
+        MultiplayerDebug.LogLobby($"InviteAccepted (in-game) lobby={lobbyId}");
+        _pending = null;
+        AcceptLobbyInvite(lobbyId);
+    }
+
+    public void DeclinePending()
+    {
+        if (!_pending.HasValue)
+        {
+            return;
+        }
+
+        MultiplayerDebug.LogLobby(
+            $"InviteDeclined lobby={_pending.Value.LobbyId} from={_pending.Value.FriendSteamId}");
+        _pending = null;
+    }
 
     /// <summary>Existing in-game "Invite Friends" button path.</summary>
     public void OpenInviteOverlay()
@@ -185,10 +248,28 @@ public sealed class SteamInviteManager
         }
     }
 
+    private void OnLobbyInvite(LobbyInvite_t callback)
+    {
+        ulong lobbyId = callback.m_ulSteamIDLobby;
+        ulong friendId = callback.m_ulSteamIDUser;
+        string friendName = SteamFriends.GetFriendPersonaName(new CSteamID(friendId));
+        if (string.IsNullOrWhiteSpace(friendName))
+        {
+            friendName = "Friend";
+        }
+
+        _pending = new PendingPartyInvite(lobbyId, friendId, friendName);
+        MultiplayerDebug.LogLobby(
+            $"InviteReceived lobby={lobbyId} from={friendId} name='{friendName}' " +
+            $"show={ShouldShowInvitePrompt} inLevel={_inLevel}");
+    }
+
     private void OnGameLobbyJoinRequested(GameLobbyJoinRequested_t callback)
     {
         MultiplayerDebug.LogLobby(
             $"InviteAccepted lobby={callback.m_steamIDLobby.m_SteamID} friend={callback.m_steamIDFriend.m_SteamID}");
+        // Steam overlay Accept supersedes any in-game pending prompt for this join.
+        _pending = null;
         AcceptLobbyInvite(callback.m_steamIDLobby.m_SteamID);
     }
 
@@ -197,6 +278,7 @@ public sealed class SteamInviteManager
         MultiplayerDebug.LogLobby(
             $"GameRichPresenceJoinRequested friend={callback.m_steamIDFriend.m_SteamID} " +
             $"connect='{callback.m_rgchConnect}'");
+        _pending = null;
         HandleJoinRequest(callback.m_rgchConnect);
     }
 

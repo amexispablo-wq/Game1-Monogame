@@ -383,8 +383,8 @@
     }
   ],
   "playerSpawn": {
-    "x": 1856,
-    "y": -1408
+    "x": 480,
+    "y": -1824
   },
   "playerSpawnColor": "Red",
   "musicId": "default_track_01",
@@ -405,8 +405,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-07-17T19:19:47.3662989Z",
-  "modifiedDate": "2026-07-22T16:25:47.9881367Z",
-  "version": 10,
+  "modifiedDate": "2026-07-24T04:41:10.1789669Z",
+  "version": 11,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

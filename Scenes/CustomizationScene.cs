@@ -216,6 +216,7 @@ public sealed class CustomizationScene : IScene
         else if (!suppress && _applyFocus.WasActivated)
         {
             ApplyChanges();
+            _game.ChangeScene(new MenuScene(_game));
         }
         else if (_backFocus.WasActivated || _game.Input.ExitPressed || _game.Input.MenuCancelPressed)
         {
@@ -459,8 +460,7 @@ public sealed class CustomizationScene : IScene
             return;
         }
 
-        PartyMember member = _localMembers[_activeMemberIndex];
-        _selectedSkinId = SkinLibraryStorage.GetSelectedSkinId(member.Id);
+        _selectedSkinId = SkinLibraryStorage.GetSelectedSkinId(_activeMemberIndex);
         PlayerSkinEntry? entry = string.IsNullOrEmpty(_selectedSkinId) ? null : SkinLibraryStorage.FindSkin(_selectedSkinId);
         _workingSkin.CopyFrom(entry is not null ? entry.ToSkinData() : new PlayerSkinData());
         RebuildLibraryRows();
@@ -524,8 +524,7 @@ public sealed class CustomizationScene : IScene
             SkinLibraryStorage.UpdateSkinPixels(_selectedSkinId, _workingSkin);
         }
 
-        PartyMember member = _localMembers[_activeMemberIndex];
-        SkinLibraryStorage.SetSelectedSkinId(member.Id, _selectedSkinId);
+        SkinLibraryStorage.SetSelectedSkinId(_activeMemberIndex, _selectedSkinId);
 
         if (_game.SteamLobby.IsInLobby)
         {

@@ -363,12 +363,15 @@ public sealed class PartyScene : IScene
     private bool CanKickMember(PartyMember member) =>
         _game.Party.IsLeader && !member.IsLeader;
 
-    /// <summary>Guest primary local row: leave lobby (Kick only works for host).</summary>
+    /// <summary>
+    /// Steam guest local row(s): leave lobby. Label is "Leave" (Kick is host-only).
+    /// Any local input (keyboard/gamepad) — guests must be able to leave after joining.
+    /// </summary>
     private bool CanLeaveSelf(PartyMember member) =>
         _game.Party.IsInSteamLobby
         && !_game.Party.IsLeader
         && member.IsLocallyOwned
-        && member.InputSource == PartyInputSource.Keyboard;
+        && member.MemberType != PartyMemberType.SteamRemote;
 
     private void CycleMemberInput(PartyMember member, int direction)
     {

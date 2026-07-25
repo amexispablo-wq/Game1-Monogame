@@ -9,15 +9,18 @@
 | Callbacks por frame | ✅ `SteamCallbackManager` |
 | Lobby friends-only (crear/unirse/salir) | ✅ `SteamLobbyService` |
 | Invitaciones overlay + join desde amigos | ✅ `SteamInviteManager` |
+| Prompt in-game Accept/Decline (`LobbyInvite`) | ✅ `SteamInviteManager` + popup en `ColorBlocksGame` (oculto en `GameScene`) |
 | Roster de party en lobby data | ✅ `SteamPartyService` + `PartyRosterCodec` |
 | Sync inicio de nivel (líder → todos) | ✅ `BroadcastLevelStart` |
 | Rich presence (connect string) | ✅ Parcial (`connect` + `#StatusInParty`; tokens Partner pendientes) |
-| Kick vía lobby chat | ✅ |
-| **Steam Input API** | ✅ `SteamInputService` (DualShock 4 / DualSense / Xbox) |
-| **Gameplay networking (sockets)** | 🟡 Ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md) |
-| Achievements / stats | ❌ |
-| Leaderboards globales | ❌ Ver [`08-ROADMAP.md`](08-ROADMAP.md) Fase 3 |
-| Steam Workshop / UGC | ❌ Ver [`08-ROADMAP.md`](08-ROADMAP.md) Fase 4 |
+| Kick vía lobby chat / Leave guest | ✅ Host Kick; guest Leave en `PartyScene` |
+| **Steam Input API** | ✅ `SteamInputManager` (alias histórico `SteamInputService`) |
+| **Gameplay networking** | 🟡 Ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md) |
+| Leaderboards globales | ✅ `SteamLeaderboardService` + `LeaderboardScene` (QA/Partner boards) |
+| Steam Workshop / UGC niveles | ✅ `SteamWorkshopService` + `LevelLibrary` Workshop source |
+| Replay share / Ghost WR | ✅ `SteamReplayService` + `SteamGhostService` — ver [`10-REPLAY-Y-GHOSTS.md`](10-REPLAY-Y-GHOSTS.md) |
+| Achievements / cloud saves | ❌ |
+| SteamPipe / store ship | 🟡 Scripts en repo; proceso Partner pendiente — ver [`08-ROADMAP.md`](08-ROADMAP.md) |
 
 ## SteamManager — `Steam/SteamManager.cs`
 
@@ -29,43 +32,60 @@
 | `RunCallbacks()` | `SteamAPI.RunCallbacks()` cada `Update` + refresca info |
 | `Shutdown()` / `Dispose()` | `SteamAPI.Shutdown()` |
 | `IsInitialized` | si Steam arrancó OK |
-| `Username` | `SteamFriends.GetPersonaName()` |
-| `SteamId` | `SteamUser.GetSteamID()` |
-| `IsOverlayEnabled` | `SteamUtils.IsOverlayEnabled()` |
-| `Status` | texto de estado legible (para debug HUD) |
+| `Username` / `SteamId` | persona + id |
+| `IsOverlayEnabled` | overlay Steam |
+| `Status` | texto debug |
 
 ### Tolerancia a fallos
 
-`Initialize`/`RunCallbacks` atrapan excepciones recuperables (`DllNotFoundException`, `BadImageFormatException`, etc.) → el juego sigue con `IsInitialized = false`. Permite desarrollar sin cliente Steam abierto.
+Excepciones recuperables (`DllNotFoundException`, etc.) → juego sigue con `IsInitialized = false`.
 
 ## Steam Lobby — `Steam/SteamLobbyService.cs`
 
-Servicio principal de multijugador social (sin transporte de gameplay):
-
-- Crear lobby friends-only, unirse, salir (leave-before-join + cancel create en vuelo si hay join pendiente).
-- Overlay de invitación diferido (`InviteFriends` abre overlay al `LobbyReady` si aún no había lobby).
-- Lobby data: nivel seleccionado, `RopeGameplayMode`, lava rise.
-- `BroadcastLevelStart` / `LevelStartReceived` — líder inicia partida, clientes cargan nivel.
-- Eventos: `LobbyStateChanged`, `LobbyReady`, `MemberLeft`, `ErrorOccurred`.
-- `LobbyInvite_t` solo se loguea; el join ocurre al Accept (`GameLobbyJoinRequested`).
+- Lobby friends-only: create/join/leave (leave-before-join + cancel create si hay join pendiente).
+- Overlay invite diferido (`InviteFriends` → overlay al `LobbyReady`).
+- Lobby data: nivel, `RopeGameplayMode`, lava rise, host-in-gameplay flag.
+- `BroadcastLevelStart` / `LevelStartReceived`.
+- Kick vía chat prefix; eventos `LobbyStateChanged`, `LobbyReady`, `MemberLeft`, `ErrorOccurred`.
 
 ## Steam Invites — `Steam/SteamInviteManager.cs`
 
-Dueño único de invites + join externo (escenas llaman vía `ColorBlocksGame.SteamInvites`):
+Dueño único de invites + join externo:
 
-- Overlay in-game (`OpenInviteOverlay` → `InviteFriends`).
-- Rich Presence: key `connect` = `lobby:<id>`, `steam_display` = `#StatusInParty`, player group keys.
-- Friends panel **Invite to Game** → `GameLobbyJoinRequested` → `AcceptLobbyInvite`.
-- Friends panel **Join Game** → `GameRichPresenceJoinRequested` / launch `+connect_lobby`.
-- Tras join como no-owner fuera de Party/Game, `ColorBlocksGame` navega a `PartyScene`.
+- Overlay in-game (`OpenInviteOverlay`).
+- Rich Presence: `connect` = `lobby:<id>`, `steam_display` = `#StatusInParty`, player group keys.
+- **`LobbyInvite_t`** → pending invite; `ColorBlocksGame` muestra `Popup` Accept/Decline si **no** está en `GameScene` (durante nivel se encola).
+- Friends **Invite to Game** Accept → `GameLobbyJoinRequested` → `AcceptLobbyInvite` (limpia pending).
+- **Join Game** / launch `+connect_lobby` → `HandleJoinRequest`.
+- Guest join → `OnSteamLobbyReadyForExternalJoin` → `PartyScene` si no está ya en Party/Game.
 
-Archivo local de tokens: [`Steam/rich_presence_english.txt`](../Steam/rich_presence_english.txt). Hay que subir los tokens al backend de **Steam Partner** para que el friends list muestre “In Party” / Join Game limpio; el juego ya publica `connect` en runtime.
+Tokens Partner: [`Steam/rich_presence_english.txt`](../Steam/rich_presence_english.txt).
 
 ## Steam Party — `Steam/SteamPartyService.cs`
 
-- Serializa roster de `PartyManager` a lobby data (`SteamConstants.PartyRosterCodec`).
-- Reconstruye miembros locales/remotos al actualizar lobby.
-- Integrado en `PartyScene` vía `Party.BindSteamServices`.
+- Roster ↔ lobby member data (`PartyRosterCodec`).
+- `IsLeader` en roster = **primer slot local** del lobby owner (keyboard o gamepad).
+- `Party.BindSteamServices` desde `ColorBlocksGame`.
+
+## Leaderboards — `Steam/SteamLeaderboardService.cs`
+
+- Boards Official + Workshop: `"{levelId}_v{version}_p{playerCount}"` (Local no upload).
+- Score = tiempo en centisegundos (menor = mejor).
+- Details + attach UGC replay (`ReplayUgcHandle` / ghost id).
+- UI: `Scenes/LeaderboardScene.cs`; upload al completar run desde gameplay.
+
+## Workshop — `Steam/SteamWorkshopService.cs`
+
+- Publish: solo niveles **Local** → UGC.
+- Sync subs → `%LocalAppData%/Color Blocks/Workshop/{id}/level.json` (lista `LevelLibrary` Workshop).
+- Edición: Duplicate → Local (estilo Portal 2).
+
+## Replay / Ghost Steam
+
+Ver [`10-REPLAY-Y-GHOSTS.md`](10-REPLAY-Y-GHOSTS.md):
+
+- `SteamReplayService` — share/download `.replay` vía Remote Storage UGC.
+- `SteamGhostService` — cache WR desde top LB + replay UGC.
 
 ## Ciclo de vida (en `ColorBlocksGame`)
 
@@ -74,82 +94,57 @@ Archivo local de tokens: [`Steam/rich_presence_english.txt`](../Steam/rich_prese
 _steam.Initialize();
 _steamCallbacks.Register();
 Party.BindSteamServices(_steamLobby, _steamParty);
+_steamWorkshop.Initialize();
+_steamWorkshop.SyncSubscribedItems();
 _steamInvites.TryConsumeLaunchJoin(Environment.GetCommandLineArgs());
 
 // Update (cada frame)
 _steam.RunCallbacks();
+_steamInput.RunFrame();
+// … SyncPartyInvitePopup / UpdatePartyInvitePopup …
 
 // Dispose
+_steamInvites.ClearPresence();
 _steam.Shutdown();
 ```
 
 ## Steam Input — `Steam/SteamInputManager.cs`
 
-Juego usa layout **Xbox** (`GamePad` de MonoGame). Steam Input traduce DualShock 4, DualSense, Xbox, etc. a ese layout cuando el cliente Steam está activo. Si Steam Input no tiene layout live, el juego cae a `GamepadBackend`/XInput automáticamente.
+Layout gameplay = Xbox (`GamePad`). Steam Input traduce DS4/DualSense/Xbox/etc. Fallback `GamepadBackend`/XInput si no hay layout live.
 
 | Paso | Qué hace |
 |------|----------|
-| `SetInputActionManifestFilePath` | Carga `Steam/steam_input_manifest.vdf` (fallback: raíz del exe) **antes** de Init |
-| `SteamInput.Init(true)` | Tras `SteamAPI.Init()`, RunFrame explícito |
+| `SetInputActionManifestFilePath` | `Steam/steam_input_manifest.vdf` antes de Init |
+| `SteamInput.Init(true)` | Tras `SteamAPI.Init()` |
 | `RunFrame()` | Cada frame, **antes** de `InputManager.Update()` |
-| `IsSlotLive` | Solo reclama el slot si acciones reportan `bActive` |
-| `GetControllerType` / `GetControllerLabel` | F3 debug: tipo real del pad (PS4, PS5, Xbox…) |
+| `IsSlotLive` | Solo reclama slot si acciones `bActive` |
+| Glyphs | `SteamInputGlyphProvider` |
 
-Archivos copiados al build: `Steam/steam_input_manifest.vdf`, `Steam/controller_gamepad.vdf`.
+Archivos: `Steam/steam_input_manifest.vdf`, `Steam/controller_gamepad.vdf`.
 
-### Steam Partner (requerido para release)
+### Steam Partner (plug-and-play)
 
-Shipping `Steam/*.vdf` in the depot is **not enough**. Without Partner registration, many players soft-claim (handle present, Jump/Move `bActive=0`) and fall back to XInput — Xbox often works, DualShock/DualSense often do not.
+Shipping VDFs en depot **no basta**. Checklist corto:
 
-**Checklist (do this in Steamworks Partner, then Publish):**
+1. App Admin → Steam Input ON + familias de pads.
+2. Template **Gamepad** (Valve) → **Save + Publish**.
+3. Verificar cuenta limpia (sin Your Layouts): Recommended → Gamepad auto.
+4. Official bundled (glyphs) = paso opcional posterior.
 
-1. App Admin → **Steam Input** → enable.
-2. Enable controller families you support: Xbox, Generic, PS4, PS5, Switch Pro, Steam Deck.
-3. Template: **Custom Configuration (Bundled with game)**.
-4. Path (relative to game install root): `Steam/steam_input_manifest.vdf`.
-5. **Publish** Partner changes (depot upload alone does not register official layout).
-6. Verify on a clean tester account: Steam → Color Blocks → Controller → **Official** / “Mando oficial”.
-7. In-game F3: slot `live=yes`, not stuck on `SOFT CLAIM`. Options → Controls shows Steam note; use **Steam Controller Configuration** if soft-claim.
-
-### Official Recommended vs Your Layouts (critical)
-
-Steam shows two different configs:
-
-| Tab | Who gets it | Notes |
-|-----|-------------|--------|
-| **RECOMMENDED → Official Gamepad** | New players (default) | Comes from depot `Steam/controller_gamepad.vdf` (must be revision **5+** with stick `analog` → Move) |
-| **YOUR LAYOUTS** | Only accounts that edited/saved a layout | Overrides Official. Dev “Molleja” layout works for you only — friends never get it |
-
-**Why friends pad dead while yours works:** you use Your Layouts; they use empty/old Official.
-
-**Ship checklist (every Input fix):**
-
-1. Confirm repo `Steam/controller_gamepad.vdf` has `"revision" "5"` (or higher) and Left Stick / D-Pad use `"analog"` (not `"edge"` / `"click"` for Move).
-2. `publish.bat` → ContentBuilder `\content\Steam\*.vdf` → `steamcmd run_app_build` → Steamworks **Set Live**.
-3. Partner → Steam Input → Bundled path `Steam\steam_input_manifest.vdf` → **Save + Publish**.
-4. Verify on **clean account** (no Your Layouts) or delete your personal Color Blocks layout first.
-5. Friends: Update → Controller → **Recommended → Official Gamepad** (apply). Keep Steam Input Enabled.
-
-**Friend pad dead, other Steam games OK (temporary):** Properties → Controller → Steam Input = **Disabled**. Prefer fixing Official via checklist above.
-
-### Sin Steam (dev / exe directo)
-
-PS4/PS5 dependen de **SDL2** (MonoGame DesktopGL) + drivers Windows. USB suele ir mejor; Bluetooth variable. Para pruebas locales con pad Sony en Windows, lanzar vía Steam o usar DS4Windows.
+Detalle: [`STEAM_INPUT_OFFICIAL_SHIP.md`](STEAM_INPUT_OFFICIAL_SHIP.md).
 
 ## Configuración / archivos
 
-- **`steam_appid.txt`** (raíz): App ID `4796400` (verificar ID de producción antes de release). Copiado al output.
-- **`Steam/Native/Windows-x64/steam_api64.dll`**: copiada al output como `steam_api64.dll`.
-- **`Steamworks.NET` 2024.8.0** vía NuGet.
-- **`app.manifest`**: DPI awareness, referenciado en csproj.
+- **`steam_appid.txt`** (raíz): App ID `4796400` (verificar producción).
+- **`Steam/Native/Windows-x64/steam_api64.dll`** → output como `steam_api64.dll`.
+- **Steamworks.NET** 2024.8.0 NuGet.
+- **`app.manifest`**: DPI awareness.
 
-## Pendientes para release en Steam
+## Pendientes para release
 
-Ver checklist completo en [`08-ROADMAP.md`](08-ROADMAP.md). Resumen:
+Ver [`08-ROADMAP.md`](08-ROADMAP.md):
 
-1. **Coop online** — Steam Networking Sockets + serialización de snapshots/inputs.
-2. **Leaderboards globales** — `SteamUserStats` por nivel.
-3. **Workshop** — `SteamUGC` para niveles de comunidad.
-4. **Rich presence** — subir tokens localizados (`#StatusInParty`, etc.) desde `Steam/rich_presence_english.txt` al backend Steam Partner (código ya publica `connect` + `steam_display`).
-5. **Achievements / cloud saves** (opcional v1).
-6. **SteamPipe** — depots, build release x64, quitar `steam_appid.txt` de build publicada.
+1. Coop online — predicción + interpolación + QA 2-client.
+2. Partner — boards LB, Workshop flags, Rich Presence tokens, Steam Input Publish.
+3. SteamPipe — depots, quitar `steam_appid.txt` de build publicada.
+4. Achievements / cloud (opcional v1).

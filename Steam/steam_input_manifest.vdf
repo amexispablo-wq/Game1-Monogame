@@ -7,6 +7,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 		"controller_xbox360"
@@ -14,6 +16,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 		"controller_xboxone"
@@ -21,6 +25,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 		"controller_ps3"
@@ -28,6 +34,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 		"controller_ps4"
@@ -35,6 +43,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 		"controller_ps5"
@@ -42,6 +52,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 		"controller_switch_pro"
@@ -49,6 +61,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 		"controller_steamdeck"
@@ -56,6 +70,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 		"controller_neptune"
@@ -63,6 +79,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 		"controller_steamcontroller_gordon"
@@ -70,6 +88,8 @@
 			"0"
 			{
 				"path" "controller_gamepad.vdf"
+				"title" "#Title_Gamepad"
+				"description" "#Description_Gamepad"
 			}
 		}
 	}
@@ -95,6 +115,7 @@
 				"PullRope" "#Action_PullRope"
 				"Respawn" "#Action_Respawn"
 				"Pause" "#Action_Pause"
+				"RestartLevel" "#Action_RestartLevel"
 				"ColorRed" "#Action_ColorRed"
 				"ColorGreen" "#Action_ColorGreen"
 				"ColorBlue" "#Action_ColorBlue"
@@ -111,6 +132,7 @@
 			"Action_PullRope" "Pull Rope"
 			"Action_Respawn" "Respawn"
 			"Action_Pause" "Pause"
+			"Action_RestartLevel" "Restart Level"
 			"Action_ColorRed" "Color Red"
 			"Action_ColorGreen" "Color Green"
 			"Action_ColorBlue" "Color Blue"
@@ -125,6 +147,7 @@
 			"Action_PullRope" "Tirar cuerda"
 			"Action_Respawn" "Reaparecer"
 			"Action_Pause" "Pausa"
+			"Action_RestartLevel" "Reiniciar nivel"
 			"Action_ColorRed" "Color rojo"
 			"Action_ColorGreen" "Color verde"
 			"Action_ColorBlue" "Color azul"

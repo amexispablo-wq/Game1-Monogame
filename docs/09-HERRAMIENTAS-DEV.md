@@ -117,7 +117,7 @@ Validadores auxiliares: `RopeCollisionValidator`, `BenchmarkPhysicsValidator`, `
 | **F10** | Force-save replay (sin dev: abre viewer shortcut según contexto) |
 | **F11** | Toggle background replay |
 
-Ver `Replay/ReplayRecorder.cs`, `ReplayDiagnostics`.
+Ver `Replay/ReplayRecorder.cs`, `ReplayDiagnostics`. Pipeline completo (grabación, Steam UGC, ghosts WR, `ReplayViewerScene`): [`10-REPLAY-Y-GHOSTS.md`](10-REPLAY-Y-GHOSTS.md).
 
 ---
 

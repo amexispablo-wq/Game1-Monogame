@@ -13,6 +13,7 @@ public static class SteamInputActionNames
     public const string PullRope = "PullRope";
     public const string Respawn = "Respawn";
     public const string Pause = "Pause";
+    public const string RestartLevel = "RestartLevel";
     public const string ColorRed = "ColorRed";
     public const string ColorGreen = "ColorGreen";
     public const string ColorBlue = "ColorBlue";
@@ -20,7 +21,7 @@ public static class SteamInputActionNames
 
     public static readonly string[] DigitalActions =
     {
-        Jump, PullRope, Respawn, Pause,
+        Jump, PullRope, Respawn, Pause, RestartLevel,
         ColorRed, ColorGreen, ColorBlue
     };
 

@@ -13,6 +13,15 @@ public sealed class InputManager : ILocalPlayerInputSource
     private const float GamepadMoveDeadZone = GamepadDefaults.MoveDeadZone;
     /// <summary>Blocks confirm edges after scene change so A cannot double-fire into next menu.</summary>
     private const float MenuConfirmSceneSuppressSeconds = 0.15f;
+    /// <summary>
+    /// After Live→Soft Claim, ignore XInput Jump/Color/Respawn edges for this many frames.
+    /// Extra kick on transition; unstable Soft Claim also suppresses via SoftClaimUnstableSeconds.
+    /// </summary>
+    private const int SoftClaimXInputEdgeSuppressFrames = 12;
+    /// <summary>While Soft Claim younger than this, strip XInput digitals (thrash window).</summary>
+    private const float SoftClaimUnstableSeconds = 1.5f;
+    /// <summary>Ignore Keyboard Respawn rising edges closer than this (phantom R clusters).</summary>
+    private const float KeyboardRespawnDebounceSeconds = 0.4f;
 
     private readonly Dictionary<int, PlayerInputState> _gameplayInputByNetworkId = new();
     private readonly Dictionary<int, PartyMember> _gameplayBindings = new();
@@ -29,8 +38,11 @@ public sealed class InputManager : ILocalPlayerInputSource
     private MouseState _previousMouse;
     private readonly GamePadState[] _currentGamepads = new GamePadState[MaxLocalPlayers];
     private readonly GamePadState[] _previousGamepads = new GamePadState[MaxLocalPlayers];
+    private readonly bool[] _prevSteamOwnedSlot = new bool[MaxLocalPlayers];
+    private readonly int[] _softClaimXInputEdgeSuppressRemaining = new int[MaxLocalPlayers];
     private bool _suppressMenuConfirmUntilRelease;
     private float _menuConfirmSuppressSeconds;
+    private DateTime _lastKeyboardRespawnAcceptedUtc = DateTime.MinValue;
 
     public InputManager()
     {
@@ -93,6 +105,7 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool NavigationStepPressed { get; private set; }
     public bool PhotoModeTogglePressed { get; private set; }
     public bool GameplayPausePressed { get; private set; }
+    public bool GameplayRestartLevelPressed { get; private set; }
     public bool MenuMoveUpPressed { get; private set; }
     public bool MenuMoveDownPressed { get; private set; }
     public bool MenuConfirmPressed { get; private set; }
@@ -198,7 +211,16 @@ public sealed class InputManager : ILocalPlayerInputSource
             _currentGamepads[i] = GamePad.GetState((PlayerIndex)i);
         }
 
+        if (_steamInput is not null)
+        {
+            for (int i = 0; i < MaxLocalPlayers; i++)
+            {
+                _steamInput.UpdateDeadLiveDemotion(i, HasRealXInputPadActivity(i));
+            }
+        }
+
         _steamBackend?.BeginFrame();
+        UpdateSoftClaimXInputEdgeSuppress();
         RouteAnalogVectors();
 
         UpdateMenuNavigation();
@@ -595,6 +617,116 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool IsNewKeyPress(Keys key) =>
         _currentKeyboard.IsKeyDown(key) && !_previousKeyboard.IsKeyDown(key);
 
+    /// <summary>Binding tokens for PhantomInputSummary export.</summary>
+    public string DescribeBindingsForDiagnostics()
+    {
+        return
+            $"Jump={_keyboardBindings.Jump} Respawn={_keyboardBindings.Respawn} " +
+            $"Red={_keyboardBindings.Red} Green={_keyboardBindings.Green} Blue={_keyboardBindings.Blue} | " +
+            $"Pad Jump={FormatPadBind(_gamepadBindings.Jump, GameplayInputAction.Jump)} " +
+            $"Respawn={FormatPadBind(_gamepadBindings.Respawn, GameplayInputAction.Respawn)}";
+    }
+
+    /// <summary>
+    /// Resolve which physical bind produced a gameplay edge + prev/curr down for that bind.
+    /// </summary>
+    public void DescribeGameplayBindState(
+        PartyMember member,
+        GameplayInputAction action,
+        out string bindToken,
+        out bool prevDown,
+        out bool currDown)
+    {
+        if (member.InputSource == PartyInputSource.Keyboard)
+        {
+            Keys key = KeyForAction(action);
+            bindToken = key.ToString();
+            prevDown = _previousKeyboard.IsKeyDown(key);
+            currDown = _currentKeyboard.IsKeyDown(key);
+            return;
+        }
+
+        if (member.InputSource == PartyInputSource.Gamepad)
+        {
+            int slot = member.ControllerId;
+            if (_steamBackend is not null && _steamBackend.HasController(slot))
+            {
+                string steamAction = SteamActionFor(action);
+                bindToken = "Steam:" + steamAction;
+                currDown = _steamBackend.IsHeld(slot, steamAction);
+                prevDown = _steamBackend.WasPressed(slot, steamAction) ? false : currDown;
+                return;
+            }
+
+            if (slot >= 0 && slot < MaxLocalPlayers)
+            {
+                GamepadActionBinding binding = PadBindForAction(action);
+                bindToken = FormatPadBind(binding, action);
+                Vector2 prevStick = GamepadDefaults.ProcessLeftStick(_previousGamepads[slot].ThumbSticks.Left);
+                Vector2 currStick = GamepadDefaults.ProcessLeftStick(_currentGamepads[slot].ThumbSticks.Left);
+                prevDown = binding.IsActive(_previousGamepads[slot], action, prevStick);
+                currDown = binding.IsActive(_currentGamepads[slot], action, currStick);
+                return;
+            }
+        }
+
+        bindToken = "?";
+        prevDown = false;
+        currDown = false;
+    }
+
+    private Keys KeyForAction(GameplayInputAction action) => action switch
+    {
+        GameplayInputAction.Jump => _keyboardBindings.Jump,
+        GameplayInputAction.Respawn => _keyboardBindings.Respawn,
+        GameplayInputAction.RestartLevel => _keyboardBindings.RestartLevel,
+        GameplayInputAction.Red => _keyboardBindings.Red,
+        GameplayInputAction.Blue => _keyboardBindings.Blue,
+        GameplayInputAction.Green => _keyboardBindings.Green,
+        GameplayInputAction.FastFall => _keyboardBindings.FastFall,
+        GameplayInputAction.MoveLeft => _keyboardBindings.MoveLeft,
+        GameplayInputAction.MoveRight => _keyboardBindings.MoveRight,
+        GameplayInputAction.PullRope => _keyboardBindings.PullRope,
+        _ => Keys.None
+    };
+
+    private GamepadActionBinding PadBindForAction(GameplayInputAction action) => action switch
+    {
+        GameplayInputAction.Jump => _gamepadBindings.Jump,
+        GameplayInputAction.Respawn => _gamepadBindings.Respawn,
+        GameplayInputAction.RestartLevel => _gamepadBindings.RestartLevel,
+        GameplayInputAction.Red => _gamepadBindings.Red,
+        GameplayInputAction.Blue => _gamepadBindings.Blue,
+        GameplayInputAction.Green => _gamepadBindings.Green,
+        GameplayInputAction.FastFall => _gamepadBindings.FastFall,
+        GameplayInputAction.MoveLeft => _gamepadBindings.MoveLeft,
+        GameplayInputAction.MoveRight => _gamepadBindings.MoveRight,
+        _ => GamepadActionBinding.DefaultFor(action)
+    };
+
+    private static string FormatPadBind(GamepadActionBinding binding, GameplayInputAction action)
+    {
+        if (binding.Kind == GamepadBindingKind.Button)
+        {
+            return GamepadDefaults.FormatButton(binding.Button);
+        }
+
+        return GamepadDefaults.GetDisplayName(action);
+    }
+
+    private static string SteamActionFor(GameplayInputAction action) => action switch
+    {
+        GameplayInputAction.Jump => SteamInputActionNames.Jump,
+        GameplayInputAction.Respawn => SteamInputActionNames.Respawn,
+        GameplayInputAction.RestartLevel => SteamInputActionNames.RestartLevel,
+        GameplayInputAction.Red => SteamInputActionNames.ColorRed,
+        GameplayInputAction.Blue => SteamInputActionNames.ColorBlue,
+        GameplayInputAction.Green => SteamInputActionNames.ColorGreen,
+        GameplayInputAction.FastFall => SteamInputActionNames.Jump,
+        GameplayInputAction.PullRope => SteamInputActionNames.PullRope,
+        _ => SteamInputActionNames.Jump
+    };
+
     private void UpdateGameplayInputs()
     {
         _gameplayInputByNetworkId.Clear();
@@ -605,7 +737,32 @@ public sealed class InputManager : ILocalPlayerInputSource
 
         foreach (KeyValuePair<int, PartyMember> binding in _gameplayBindings)
         {
-            _gameplayInputByNetworkId[binding.Key] = ReadMemberInput(binding.Value);
+            PlayerInputState state = ReadMemberInput(binding.Value);
+            InputDiagnostics.RecordGameplayEdges(binding.Key, binding.Value, state, this);
+            _gameplayInputByNetworkId[binding.Key] = state;
+        }
+    }
+
+    private void UpdateSoftClaimXInputEdgeSuppress()
+    {
+        for (int i = 0; i < MaxLocalPlayers; i++)
+        {
+            bool steamOwned = _steamBackend is not null && _steamBackend.HasController(i);
+            bool soft = _steamInput?.HasSoftClaim(i) == true;
+
+            if (_prevSteamOwnedSlot[i] && !steamOwned && soft)
+            {
+                _softClaimXInputEdgeSuppressRemaining[i] = SoftClaimXInputEdgeSuppressFrames;
+                InputDiagnostics.NoteXInputSoftClaimSuppress(i, SoftClaimXInputEdgeSuppressFrames);
+                DiagnosticsLog.Info("Input", $"SteamSlot[{i}] XInput edge suppress Soft Claim unstable");
+            }
+
+            if (!soft && !steamOwned)
+            {
+                _softClaimXInputEdgeSuppressRemaining[i] = 0;
+            }
+
+            _prevSteamOwnedSlot[i] = steamOwned;
         }
     }
 
@@ -613,42 +770,139 @@ public sealed class InputManager : ILocalPlayerInputSource
     {
         return member.InputSource switch
         {
-            PartyInputSource.Keyboard => ReadKeyboardInputState(),
+            PartyInputSource.Keyboard => ApplyKeyboardRespawnDebounce(ReadKeyboardInputState()),
             PartyInputSource.Gamepad => ReadGamepadOrSteamInputState(member.ControllerId),
             PartyInputSource.SteamRemote => PlayerInputState.Empty,
             _ => PlayerInputState.Empty
         };
     }
 
+    private PlayerInputState ApplyKeyboardRespawnDebounce(PlayerInputState state)
+    {
+        if (!state.RespawnPressed)
+        {
+            return state;
+        }
+
+        DateTime now = DateTime.UtcNow;
+        if (_lastKeyboardRespawnAcceptedUtc != DateTime.MinValue
+            && (now - _lastKeyboardRespawnAcceptedUtc).TotalSeconds < KeyboardRespawnDebounceSeconds)
+        {
+            DiagnosticsLog.Info("Input", "EDGE Respawn suppressed debounce");
+            InputDiagnostics.NoteRespawnDebounceSuppressed();
+            return state with { RespawnPressed = false };
+        }
+
+        _lastKeyboardRespawnAcceptedUtc = now;
+        return state;
+    }
+
     private PlayerInputState ReadGamepadOrSteamInputState(int deviceIndex)
     {
         // Steam has priority only when the slot is live (actions bActive).
-        // Soft-claimed handles fall through to MonoGame GamePad/XInput.
+        // Soft-claimed / dead-live-demoted handles fall through to MonoGame GamePad/XInput.
         if (_steamBackend is not null && _steamBackend.HasController(deviceIndex))
         {
             return _steamBackend.ReadGameplay(deviceIndex);
         }
 
         PlayerInputState pad = ReadGamepadInputState(deviceIndex);
-        if (_steamInput is not null
-            && deviceIndex >= 0
-            && deviceIndex < MaxLocalPlayers
-            && _steamInput.HasSoftClaim(deviceIndex)
-            && GamepadDefaults.IsHollowCornerStick(_currentGamepads[deviceIndex].ThumbSticks.Left))
+        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers)
         {
-            // Keep digital presses; zero hollow stick so Soft Claim thrash cannot inject ghost move/fast-fall.
+            return pad;
+        }
+
+        bool soft = _steamInput?.HasSoftClaim(deviceIndex) == true;
+        float softSeconds = _steamInput?.SoftClaimSeconds ?? 0f;
+        bool unstableSoft = soft && softSeconds < SoftClaimUnstableSeconds;
+        bool hollow = soft
+            && GamepadDefaults.IsHollowCornerStick(_currentGamepads[deviceIndex].ThumbSticks.Left);
+        bool suppressEdges = _softClaimXInputEdgeSuppressRemaining[deviceIndex] > 0 || unstableSoft;
+        if (_softClaimXInputEdgeSuppressRemaining[deviceIndex] > 0)
+        {
+            _softClaimXInputEdgeSuppressRemaining[deviceIndex]--;
+        }
+
+        if (hollow || suppressEdges)
+        {
+            if (pad.JumpPressed || pad.RespawnPressed || pad.RequestedColor is not null)
+            {
+                string reason = hollow
+                    ? "hollow"
+                    : unstableSoft
+                        ? $"unstable softSec={softSeconds:0.00}"
+                        : "liveSoftKick";
+                InputDiagnostics.NoteSuppressedPadEdges(deviceIndex, pad, reason, softSeconds);
+            }
+
+            // Hollow Soft Claim: XInput stick/digitals untrusted.
+            // Unstable Soft Claim (<1.5s) or Live→Soft kick: strip rising edges.
             return new PlayerInputState(
-                0f,
-                pad.JumpPressed,
-                pad.RespawnPressed,
-                FastFallHeld: false,
+                hollow ? 0f : pad.HorizontalMovement,
+                JumpPressed: false,
+                RespawnPressed: false,
+                FastFallHeld: hollow ? false : pad.FastFallHeld,
                 pad.PullRopeHeld,
-                pad.RequestedColor,
-                Move: Vector2.Zero,
+                RequestedColor: null,
+                Move: hollow ? Vector2.Zero : pad.Move,
                 pad.MenuNavigate);
         }
 
         return pad;
+    }
+
+    /// <summary>
+    /// Non-hollow XInput/SDL activity — used to demote zombie Steam live ownership.
+    /// </summary>
+    private bool HasRealXInputPadActivity(int deviceIndex)
+    {
+        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers)
+        {
+            return false;
+        }
+
+        GamePadState current = _currentGamepads[deviceIndex];
+        if (!current.IsConnected)
+        {
+            return false;
+        }
+
+        Vector2 rawLeft = current.ThumbSticks.Left;
+        if (GamepadDefaults.IsHollowCornerStick(rawLeft))
+        {
+            return false;
+        }
+
+        Vector2 left = GamepadDefaults.ProcessLeftStick(rawLeft);
+        if (left.LengthSquared() > 0.01f)
+        {
+            return true;
+        }
+
+        Vector2 right = GamepadDefaults.ProcessRightStick(current.ThumbSticks.Right);
+        if (right.LengthSquared() > 0.01f)
+        {
+            return true;
+        }
+
+        if (current.Triggers.Left > 0.1f || current.Triggers.Right > 0.1f)
+        {
+            return true;
+        }
+
+        // Held face/shoulder/stick/start/back or D-Pad — not only rising edges.
+        foreach (Buttons button in GamepadDefaults.CaptureButtons)
+        {
+            if (current.IsButtonDown(button))
+            {
+                return true;
+            }
+        }
+
+        return current.DPad.Up == ButtonState.Pressed
+            || current.DPad.Down == ButtonState.Pressed
+            || current.DPad.Left == ButtonState.Pressed
+            || current.DPad.Right == ButtonState.Pressed;
     }
 
     private void ResolveActiveInputBackend()
@@ -812,6 +1066,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         bool stickLeft = false;
         bool stickRight = false;
         bool gamepadPause = false;
+        bool gamepadRestartLevel = false;
         EditorLeftTrigger = 0f;
         EditorRightTrigger = 0f;
 
@@ -850,6 +1105,11 @@ public sealed class InputManager : ILocalPlayerInputSource
             }
 
             gamepadPause |= IsGamepadPressed(current, previous, GamepadDefaults.PauseButton);
+            // Always poll pad RestartLevel (Steam Input off / soft-claim / live). Steam OR below.
+            if (WasBindingPressed(current, previous, _gamepadBindings.RestartLevel, GameplayInputAction.RestartLevel))
+            {
+                gamepadRestartLevel = true;
+            }
 
             if (current.DPad.Up == ButtonState.Pressed && previous.DPad.Up == ButtonState.Released)
             {
@@ -944,6 +1204,9 @@ public sealed class InputManager : ILocalPlayerInputSource
         MenuConfirmPressed |= GamepadMenuConfirmPressed;
         MenuCancelPressed |= GamepadMenuCancelPressed;
         GameplayPausePressed = KeyboardMenuCancelPressed || gamepadPause;
+        GameplayRestartLevelPressed =
+            gamepadRestartLevel
+            || IsNewKeyPress(_keyboardBindings.RestartLevel);
         MenuStickUpHeld = stickUp;
         MenuStickDownHeld = stickDown;
         MenuStickLeftHeld = stickLeft;
@@ -992,6 +1255,13 @@ public sealed class InputManager : ILocalPlayerInputSource
             GameplayPausePressed = true;
             GamepadActivityThisFrame = true;
             GamepadMenuActivityThisFrame = true;
+        }
+
+        // R3 / RestartLevel: available in gameplay and pause (not menu nav).
+        if (_steamBackend.WasPressedAny(SteamInputActionNames.RestartLevel))
+        {
+            GameplayRestartLevelPressed = true;
+            GamepadActivityThisFrame = true;
         }
 
         if (AnalogContext != AnalogInputContext.Menu)
@@ -1120,6 +1390,7 @@ public sealed class InputManager : ILocalPlayerInputSource
                 if (_steamBackend.WasPressed(i, SteamInputActionNames.Jump)
                     || _steamBackend.WasPressed(i, SteamInputActionNames.PullRope)
                     || _steamBackend.WasPressed(i, SteamInputActionNames.Respawn)
+                    || _steamBackend.WasPressed(i, SteamInputActionNames.RestartLevel)
                     || _steamBackend.IsHeld(i, SteamInputActionNames.PullRope)
                     || HasSteamAnalogActivity(i))
                 {
@@ -1291,6 +1562,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         Keys Respawn,
         Keys FastFall,
         Keys PullRope,
+        Keys RestartLevel,
         Keys Red,
         Keys Blue,
         Keys Green)
@@ -1304,6 +1576,7 @@ public sealed class InputManager : ILocalPlayerInputSource
                 GetSettingKey(settings, "Respawn", Keys.R),
                 GetSettingKey(settings, "FastFall", Keys.S),
                 GetSettingKey(settings, "PullRope", Keys.Space),
+                GetSettingKey(settings, "RestartLevel", Keys.F5),
                 GetSettingKey(settings, "Red", Keys.J),
                 GetSettingKey(settings, "Blue", Keys.K),
                 GetSettingKey(settings, "Green", Keys.L));
@@ -1326,6 +1599,7 @@ public sealed class InputManager : ILocalPlayerInputSource
         GamepadActionBinding MoveRight,
         GamepadActionBinding Jump,
         GamepadActionBinding Respawn,
+        GamepadActionBinding RestartLevel,
         GamepadActionBinding FastFall,
         GamepadActionBinding Red,
         GamepadActionBinding Blue,
@@ -1338,6 +1612,7 @@ public sealed class InputManager : ILocalPlayerInputSource
                 Resolve(settings, GameplayInputAction.MoveRight),
                 Resolve(settings, GameplayInputAction.Jump),
                 Resolve(settings, GameplayInputAction.Respawn),
+                Resolve(settings, GameplayInputAction.RestartLevel),
                 Resolve(settings, GameplayInputAction.FastFall),
                 Resolve(settings, GameplayInputAction.Red),
                 Resolve(settings, GameplayInputAction.Blue),

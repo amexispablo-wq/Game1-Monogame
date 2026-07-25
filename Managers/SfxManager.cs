@@ -78,27 +78,24 @@ public sealed class SfxManager : IDisposable
         }
     }
 
-    public static bool IsEnabled(string key) =>
-        SettingsManager.CurrentSettings.SoundEffects.TryGetValue(key, out bool enabled) && enabled;
+    public static float GetVolume(string key) =>
+        SettingsManager.CurrentSettings.SoundEffects.TryGetValue(key, out float volume)
+            ? Math.Clamp(volume, 0f, 1f)
+            : 0f;
 
     public void Play(string key)
     {
-        if (!IsEnabled(key))
+        float volume = GetVolume(key);
+        if (volume <= 0f)
         {
             return;
         }
 
-        PlayForce(key);
+        PlayAt(key, volume);
     }
 
-    /// <summary>Play cue ignoring options toggles (level complete / death).</summary>
-    public void PlayForce(string key)
-    {
-        if (_effects.TryGetValue(key, out SoundEffect? effect) && effect is not null)
-        {
-            effect.Play();
-        }
-    }
+    /// <summary>Play cue ignoring options volumes (level complete / death).</summary>
+    public void PlayForce(string key) => PlayAt(key, 1f);
 
     public void PlayColor(GameColor color)
     {
@@ -118,7 +115,8 @@ public sealed class SfxManager : IDisposable
 
     public void PlayMenuHover()
     {
-        if (!IsEnabled(MenuNavigation) || _menuHoverCooldown > 0f)
+        float volume = GetVolume(MenuNavigation);
+        if (volume <= 0f || _menuHoverCooldown > 0f)
         {
             return;
         }
@@ -132,28 +130,30 @@ public sealed class SfxManager : IDisposable
 
         _hoverCycleIndex = (_hoverCycleIndex + 1) % 3;
         _menuHoverCooldown = MenuHoverDebounceSeconds;
-        effect?.Play();
+        effect?.Play(volume, 0f, 0f);
     }
 
     public void PlayMenuPress()
     {
-        if (!IsEnabled(MenuNavigation))
+        float volume = GetVolume(MenuNavigation);
+        if (volume <= 0f)
         {
             return;
         }
 
-        _buttonPress?.Play();
+        _buttonPress?.Play(volume, 0f, 0f);
     }
 
     public void BeginPhysicsExpulsion()
     {
-        if (!IsEnabled(PhysicsExpulsion))
+        float volume = GetVolume(PhysicsExpulsion);
+        if (volume <= 0f)
         {
             return;
         }
 
         _physicsExpulsionActiveCount++;
-        EnsureLoop(ref _physicsExpulsionLoop, _physicsExpulsion, volume: 1f);
+        EnsureLoop(ref _physicsExpulsionLoop, _physicsExpulsion, volume);
     }
 
     public void EndPhysicsExpulsion()
@@ -172,26 +172,29 @@ public sealed class SfxManager : IDisposable
 
     public void SetPullRopeLoop(bool active)
     {
-        if (!active || !IsEnabled(PullRope))
+        float volume = GetVolume(PullRope);
+        if (!active || volume <= 0f)
         {
             StopInstance(ref _pullRopeLoop);
             return;
         }
 
-        EnsureLoop(ref _pullRopeLoop, _pullRope, volume: 1f);
+        EnsureLoop(ref _pullRopeLoop, _pullRope, volume);
     }
 
     public void UpdateLavaProximity(float distanceToSurface)
     {
-        if (!IsEnabled(Lava) || _lava is null)
+        float cueVolume = GetVolume(Lava);
+        if (cueVolume <= 0f || _lava is null)
         {
             StopInstance(ref _lavaLoop);
             return;
         }
 
-        float volume = distanceToSurface <= 0f
+        float proximity = distanceToSurface <= 0f
             ? 1f
             : Math.Clamp(1f - (distanceToSurface / LavaMaxHearDistance), 0f, 1f);
+        float volume = proximity * cueVolume;
 
         if (volume <= 0.01f)
         {
@@ -245,6 +248,14 @@ public sealed class SfxManager : IDisposable
         }
     }
 
+    private void PlayAt(string key, float volume)
+    {
+        if (_effects.TryGetValue(key, out SoundEffect? effect) && effect is not null)
+        {
+            effect.Play(Math.Clamp(volume, 0f, 1f), 0f, 0f);
+        }
+    }
+
     private static void EnsureLoop(ref SoundEffectInstance? instance, SoundEffect? source, float volume)
     {
         if (source is null)
@@ -261,9 +272,9 @@ public sealed class SfxManager : IDisposable
             return;
         }
 
+        instance.Volume = volume;
         if (instance.State != SoundState.Playing)
         {
-            instance.Volume = volume;
             instance.Play();
         }
     }

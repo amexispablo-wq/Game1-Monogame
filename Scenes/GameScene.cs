@@ -154,7 +154,7 @@ public sealed class GameScene : IScene
         if (_ghostMode.IncludesPersonalBest())
         {
             _ghostPlayer = new GhostPlayer();
-            _ghostPlayer.TryLoadBestRun(_levelId);
+            _ghostPlayer.TryLoadBestRun(_levelId, _playerManager.Players.Count);
         }
 
         if (_ghostMode.IncludesWorldRecord() && SteamGhostService.SupportsWorldRecordGhost(_levelId))
@@ -165,6 +165,10 @@ public sealed class GameScene : IScene
                 _worldRecordGhost.TryLoadReplayFile(cachedWorldRecord);
             }
         }
+
+        InputDiagnostics.SetGhostOverlayActive(
+            personalBest: _ghostPlayer is { IsActive: true },
+            worldRecord: _worldRecordGhost is { IsActive: true });
 
         // Official/Workshop levels always refresh the cached World Record ghost in the
         // background for this run's player count; if a newer ghost lands while playing,
@@ -182,6 +186,9 @@ public sealed class GameScene : IScene
                 if (_game.SteamGhosts.TryLoadWorldRecordGhost(_levelId, wrPlayerCount, out ReplayFile downloaded))
                 {
                     _worldRecordGhost.TryLoadReplayFile(downloaded);
+                    InputDiagnostics.SetGhostOverlayActive(
+                        personalBest: _ghostPlayer is { IsActive: true },
+                        worldRecord: _worldRecordGhost is { IsActive: true });
                 }
             });
         }
@@ -249,7 +256,7 @@ public sealed class GameScene : IScene
                 _levelId,
                 _simulation.FinalTime,
                 _playerManager.Players.Count);
-            ReplayStorage.SaveBestReplay(replayFile);
+            ReplayStorage.SaveBestReplay(replayFile, _playerManager.Players.Count);
             UploadRecordToSteamLeaderboard();
         }
     }
@@ -289,7 +296,7 @@ public sealed class GameScene : IScene
         }
 
         string levelId = _levelId;
-        string replayPath = ReplayStorage.GetBestReplayPath(levelId);
+        string replayPath = ReplayStorage.GetBestReplayPath(levelId, playerCount);
         ColorBlocksGame game = _game;
         int scoreCentiseconds = (int)MathF.Round(BestTimeStorage.RoundToCentiseconds(finalTime) * 100f);
 
@@ -508,7 +515,7 @@ public sealed class GameScene : IScene
                     _levelId,
                     _simulation.ElapsedTime,
                     _playerManager.Players.Count);
-                ReplayStorage.SaveBestReplay(replayFile);
+                ReplayStorage.SaveBestReplay(replayFile, _playerManager.Players.Count);
             }
         }
 
@@ -570,6 +577,11 @@ public sealed class GameScene : IScene
         {
             _game.Input.GameplayInputBlocked = true;
             GameAudio.SetPullRopeLoop(false);
+            if (TryHotRestartLevel())
+            {
+                return;
+            }
+
             PauseMenuChoice? choice = _pauseMenu.Update(gameTime, _game.Input, viewport);
             if (choice.HasValue)
             {
@@ -641,6 +653,11 @@ public sealed class GameScene : IScene
             return;
         }
 
+        if (TryHotRestartLevel())
+        {
+            return;
+        }
+
         if (_game.Input.DebugTogglePressed)
         {
             _debugDraw = !_debugDraw;
@@ -707,6 +724,43 @@ public sealed class GameScene : IScene
         // Snapshots broadcast from OnSimulationFixedTick (once per sim tick) — not every render frame.
 
         UpdateCamera(gameTime);
+    }
+
+    /// <summary>
+    /// R3 / RestartLevel: instant restart, no pause-menu confirm. Host/solo only.
+    /// </summary>
+    private bool TryHotRestartLevel()
+    {
+        if (!_game.Input.GameplayRestartLevelPressed)
+        {
+            return false;
+        }
+
+        if (_session.Role == GameSessionRole.Client)
+        {
+            return false;
+        }
+
+        if (_photoMode || _completionUiActive || _disconnectPending)
+        {
+            return false;
+        }
+
+        _confirmPopup = null;
+        _pendingConfirm = ConfirmActionKind.None;
+        _simulation.SetPaused(false);
+        _pauseMenu.Close();
+        _game.Input.GameplayInputBlocked = false;
+        if (_simulation.IsPlayerDead)
+        {
+            _simulation.RespawnFromStart();
+        }
+        else
+        {
+            ResetGameplaySession();
+        }
+
+        return true;
     }
 
     private void HandlePauseMenuChoice(PauseMenuChoice choice)
@@ -1074,6 +1128,7 @@ public sealed class GameScene : IScene
     private void ResetGameplaySession()
     {
         _simulation.RestartLevel();
+        _game.GameNetwork.ClearClientLatchedInput();
         _camera.Position = GetPlayersCenter();
         _camera.SetZoom(GetTargetCameraZoom(_game.Viewport));
         _ghostPlayer?.Reset();

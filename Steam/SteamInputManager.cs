@@ -19,8 +19,16 @@ public sealed class SteamInputManager
     /// <summary>Consecutive raw-live frames required before sticky live turns on.</summary>
     private const int LiveGainConsecutiveFrames = 2;
 
-    /// <summary>Consecutive raw-not-live frames required before sticky live turns off (~80ms @ 60fps).</summary>
-    private const int LiveDropConsecutiveFrames = 5;
+    /// <summary>Consecutive raw-not-live frames required before sticky live turns off (~500ms @ 60fps).</summary>
+    private const int LiveDropConsecutiveFrames = 30;
+
+    /// <summary>
+    /// Sticky-live but Steam Move/digitals idle while XInput shows real pad activity.
+    /// Demote after this many frames (~0.75s @ 60fps) so GamepadBackend can drive.
+    /// </summary>
+    private const int DeadLiveDemoteFrames = 45;
+
+    private const float DeadLiveMoveEpsilon = 0.02f;
 
     private readonly SteamManager _steam;
     private readonly InputHandle_t[] _connectedHandles = new InputHandle_t[Constants.STEAM_INPUT_MAX_COUNT];
@@ -32,6 +40,8 @@ public sealed class SteamInputManager
     private readonly bool[] _slotStickyLive = new bool[InputManager.MaxLocalPlayers];
     private readonly int[] _slotLivePassCount = new int[InputManager.MaxLocalPlayers];
     private readonly int[] _slotLiveFailCount = new int[InputManager.MaxLocalPlayers];
+    private readonly bool[] _slotDeadLiveDemoted = new bool[InputManager.MaxLocalPlayers];
+    private readonly int[] _slotDeadLiveIdleFrames = new int[InputManager.MaxLocalPlayers];
 
     private bool _isInitialized;
     private int _connectedCount;
@@ -190,6 +200,7 @@ public sealed class SteamInputManager
     /// Sticky live: handle present, Jump/Move bActive + origins, with hysteresis so
     /// brief bActive/origin flickers do not thrash Steam↔XInput ownership.
     /// Soft claim (handle, not sticky-live) must not own the slot.
+    /// Dead-live demotion also clears ownership when Steam reports idle while XInput is active.
     /// </summary>
     public bool IsSlotLive(int localPlayerSlot)
     {
@@ -203,8 +214,22 @@ public sealed class SteamInputManager
             return false;
         }
 
-        return _slotStickyLive[localPlayerSlot];
+        return _slotStickyLive[localPlayerSlot] && !_slotDeadLiveDemoted[localPlayerSlot];
     }
+
+    /// <summary>True when slot was demoted from zombie Steam live (idle actions + real XInput).</summary>
+    public bool IsDeadLiveDemoted(int localPlayerSlot)
+    {
+        if (localPlayerSlot < 0 || localPlayerSlot >= InputManager.MaxLocalPlayers)
+        {
+            return false;
+        }
+
+        return _slotDeadLiveDemoted[localPlayerSlot];
+    }
+
+    /// <summary>Raw per-frame live (no hysteresis). Diagnostics only — gameplay uses sticky <see cref="IsSlotLive"/>.</summary>
+    public bool IsSlotLiveRaw(int localPlayerSlot) => EvaluateSlotLiveRaw(localPlayerSlot);
 
     /// <summary>Handle mapped but actions not sticky-live — InputManager must use GamepadBackend.</summary>
     public bool HasSoftClaim(int localPlayerSlot)
@@ -267,6 +292,7 @@ public sealed class SteamInputManager
                 _slotStickyLive[i] = false;
                 _slotLivePassCount[i] = 0;
                 _slotLiveFailCount[i] = 0;
+                ClearDeadLiveDemotion(i);
                 continue;
             }
 
@@ -278,7 +304,10 @@ public sealed class SteamInputManager
                     _slotLivePassCount[i]++;
                 }
 
-                if (!_slotStickyLive[i] && _slotLivePassCount[i] >= LiveGainConsecutiveFrames)
+                // Do not re-stick while demoted — wait for real Steam activity to clear demotion.
+                if (!_slotStickyLive[i]
+                    && !_slotDeadLiveDemoted[i]
+                    && _slotLivePassCount[i] >= LiveGainConsecutiveFrames)
                 {
                     _slotStickyLive[i] = true;
                 }
@@ -295,8 +324,104 @@ public sealed class SteamInputManager
                 {
                     _slotStickyLive[i] = false;
                 }
+
+                if (_slotDeadLiveDemoted[i] && _slotLiveFailCount[i] >= LiveDropConsecutiveFrames)
+                {
+                    ClearDeadLiveDemotion(i);
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Call each frame after GamePad poll. If Steam sticky-live is idle but XInput shows
+    /// real activity, demote ownership so GamepadBackend drives (plug-and-play).
+    /// </summary>
+    public void UpdateDeadLiveDemotion(int localPlayerSlot, bool xinputHasRealActivity)
+    {
+        if (!_isInitialized || !_actionHandlesComplete)
+        {
+            return;
+        }
+
+        if (localPlayerSlot < 0 || localPlayerSlot >= InputManager.MaxLocalPlayers)
+        {
+            return;
+        }
+
+        if (GetSlotHandleRaw(localPlayerSlot) == 0)
+        {
+            ClearDeadLiveDemotion(localPlayerSlot);
+            return;
+        }
+
+        if (HasSteamGameplayActivity(localPlayerSlot))
+        {
+            _slotDeadLiveIdleFrames[localPlayerSlot] = 0;
+            if (_slotDeadLiveDemoted[localPlayerSlot])
+            {
+                _slotDeadLiveDemoted[localPlayerSlot] = false;
+                SteamInputLog.Log(
+                    $"Slot[{localPlayerSlot}] dead-live demotion cleared — Steam actions active again");
+            }
+
+            return;
+        }
+
+        if (_slotDeadLiveDemoted[localPlayerSlot])
+        {
+            return;
+        }
+
+        if (!_slotStickyLive[localPlayerSlot])
+        {
+            _slotDeadLiveIdleFrames[localPlayerSlot] = 0;
+            return;
+        }
+
+        if (!xinputHasRealActivity)
+        {
+            _slotDeadLiveIdleFrames[localPlayerSlot] = 0;
+            return;
+        }
+
+        _slotDeadLiveIdleFrames[localPlayerSlot]++;
+        if (_slotDeadLiveIdleFrames[localPlayerSlot] < DeadLiveDemoteFrames)
+        {
+            return;
+        }
+
+        _slotDeadLiveDemoted[localPlayerSlot] = true;
+        _slotStickyLive[localPlayerSlot] = false;
+        _slotLivePassCount[localPlayerSlot] = 0;
+        SteamInputLog.Log(
+            $"Slot[{localPlayerSlot}] DEAD LIVE demoted — Steam idle, XInput active; " +
+            "falling back to GamepadBackend");
+    }
+
+    private bool HasSteamGameplayActivity(int localPlayerSlot)
+    {
+        if (TryGetAnalog(localPlayerSlot, SteamInputActionNames.Move, out float mx, out float my)
+            && (MathF.Abs(mx) > DeadLiveMoveEpsilon || MathF.Abs(my) > DeadLiveMoveEpsilon))
+        {
+            return true;
+        }
+
+        for (int i = 0; i < _digitalNames.Length; i++)
+        {
+            if (GetDigital(localPlayerSlot, _digitalNames[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void ClearDeadLiveDemotion(int localPlayerSlot)
+    {
+        _slotDeadLiveDemoted[localPlayerSlot] = false;
+        _slotDeadLiveIdleFrames[localPlayerSlot] = 0;
     }
 
     private void UpdateSoftClaimTracking()
@@ -347,6 +472,8 @@ public sealed class SteamInputManager
             Array.Clear(_slotStickyLive, 0, _slotStickyLive.Length);
             Array.Clear(_slotLivePassCount, 0, _slotLivePassCount.Length);
             Array.Clear(_slotLiveFailCount, 0, _slotLiveFailCount.Length);
+            Array.Clear(_slotDeadLiveDemoted, 0, _slotDeadLiveDemoted.Length);
+            Array.Clear(_slotDeadLiveIdleFrames, 0, _slotDeadLiveIdleFrames.Length);
         }
     }
 
@@ -645,12 +772,14 @@ public sealed class SteamInputManager
 
             anySlot = true;
             bool live = IsSlotLive(slot);
+            bool liveRaw = IsSlotLiveRaw(slot);
             bool soft = HasSoftClaim(slot);
+            bool demoted = IsDeadLiveDemoted(slot);
             TryGetAnalog(slot, SteamInputActionNames.Move, out float mx, out float my);
             string digital = GetDigitalStateSummary(slot);
             lines.Add(
                 $"Slot[{slot}]: handle=0x{handle:X} type={GetControllerLabel(slot)} " +
-                $"live={live} softClaim={soft} Move=({mx:0.00},{my:0.00})" +
+                $"live={live} liveRaw={liveRaw} softClaim={soft} deadDemote={demoted} Move=({mx:0.00},{my:0.00})" +
                 (digital.Length > 0 ? $" pressed=[{digital}]" : string.Empty));
         }
 
@@ -900,6 +1029,7 @@ public sealed class SteamInputManager
     {
         _activeLayoutLabel = $"cfg:{data.m_unAppID}";
         SteamInputLog.Log($"ConfigurationLoaded: app={data.m_unAppID} handle=0x{data.m_ulDeviceHandle.m_InputHandle:X}");
+        InputDiagnostics.NoteConfigurationLoaded(data.m_ulDeviceHandle.m_InputHandle);
         CacheActionHandles();
         RefreshConnectedControllers(reason: "config loaded");
         ForceRefreshGlyphs();
@@ -922,6 +1052,21 @@ public sealed class SteamInputManager
     private void RefreshConnectedControllers(string? reason)
     {
         int previousCount = _connectedCount;
+        ulong[] previousHandles = new ulong[InputManager.MaxLocalPlayers];
+        bool[] previousSticky = new bool[InputManager.MaxLocalPlayers];
+        int[] previousPass = new int[InputManager.MaxLocalPlayers];
+        int[] previousFail = new int[InputManager.MaxLocalPlayers];
+        bool[] previousDemoted = new bool[InputManager.MaxLocalPlayers];
+        int[] previousDeadIdle = new int[InputManager.MaxLocalPlayers];
+        for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
+        {
+            previousHandles[i] = _slotHandles[i].m_InputHandle;
+            previousSticky[i] = _slotStickyLive[i];
+            previousPass[i] = _slotLivePassCount[i];
+            previousFail[i] = _slotLiveFailCount[i];
+            previousDemoted[i] = _slotDeadLiveDemoted[i];
+            previousDeadIdle[i] = _slotDeadLiveIdleFrames[i];
+        }
 
         try
         {
@@ -1004,6 +1149,35 @@ public sealed class SteamInputManager
                     _slotHandles[slot] = handle;
                     break;
                 }
+            }
+        }
+
+        // Same handle remapped → keep sticky live (ConfigurationLoaded must not thrash Soft Claim).
+        // Handle gone or identity changed → clear sticky for that slot.
+        for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
+        {
+            ulong newHandle = _slotHandles[i].m_InputHandle;
+            if (newHandle == 0)
+            {
+                _slotStickyLive[i] = false;
+                _slotLivePassCount[i] = 0;
+                _slotLiveFailCount[i] = 0;
+                ClearDeadLiveDemotion(i);
+            }
+            else if (newHandle == previousHandles[i])
+            {
+                _slotStickyLive[i] = previousSticky[i];
+                _slotLivePassCount[i] = previousPass[i];
+                _slotLiveFailCount[i] = previousFail[i];
+                _slotDeadLiveDemoted[i] = previousDemoted[i];
+                _slotDeadLiveIdleFrames[i] = previousDeadIdle[i];
+            }
+            else
+            {
+                _slotStickyLive[i] = false;
+                _slotLivePassCount[i] = 0;
+                _slotLiveFailCount[i] = 0;
+                ClearDeadLiveDemotion(i);
             }
         }
 

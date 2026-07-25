@@ -16,10 +16,10 @@ public sealed class GhostPlayer
   /// <summary>Border tint used to tell ghosts apart (white = personal best, gold = world record).</summary>
   public Color BorderColor { get; set; } = Color.White;
 
-  public bool TryLoadBestRun(string levelId)
+  public bool TryLoadBestRun(string levelId, int playerCount)
   {
     Unload();
-    if (!ReplayStorage.TryLoadBestReplay(levelId, out ReplayFile replayFile))
+    if (!ReplayStorage.TryLoadBestReplay(levelId, playerCount, out ReplayFile replayFile))
     {
       return false;
     }

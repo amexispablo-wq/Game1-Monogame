@@ -10,11 +10,24 @@ namespace ColorBlocks;
 public static class BestTimeStorage
 {
     public const string BestTimesFileName = "best_times.json";
+    private const int MaxPlayerCounts = 4;
 
-    private sealed class LevelBestTimesRecord
+    private sealed class PlayerCountBestTimes
     {
         public float? Official { get; set; }
         public float? Unofficial { get; set; }
+    }
+
+    private sealed class LevelBestTimesRecord
+    {
+        /// <summary>Legacy flat official best (treated as 1P on read).</summary>
+        public float? Official { get; set; }
+
+        /// <summary>Legacy flat unofficial best (treated as 1P on read).</summary>
+        public float? Unofficial { get; set; }
+
+        /// <summary>Per player-count bests. Keys are "1".."4".</summary>
+        public Dictionary<string, PlayerCountBestTimes>? ByPlayerCount { get; set; }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -23,8 +36,12 @@ public static class BestTimeStorage
         PropertyNameCaseInsensitive = true
     };
 
-    public static bool SaveIfRecord(string levelId, float elapsedSeconds, bool official = true)
+    public static int ClampPlayerCount(int playerCount) =>
+        Math.Clamp(playerCount, 1, MaxPlayerCounts);
+
+    public static bool SaveIfRecord(string levelId, float elapsedSeconds, bool official, int playerCount)
     {
+        int clamped = ClampPlayerCount(playerCount);
         LevelSource source = LevelIdentity.GetSource(levelId);
         Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll(source);
         float roundedTime = RoundToCentiseconds(elapsedSeconds);
@@ -35,34 +52,49 @@ public static class BestTimeStorage
             bestTimes[levelId] = record;
         }
 
+        PlayerCountBestTimes slot = GetOrCreatePlayerSlot(record, clamped);
         if (official)
         {
-            if (record.Official is float savedBest && roundedTime >= savedBest)
+            if (TryResolveOfficial(record, clamped) is float savedBest && roundedTime >= savedBest)
             {
                 return false;
             }
 
-            record.Official = roundedTime;
+            slot.Official = roundedTime;
+            // Keep legacy 1P field in sync for older readers.
+            if (clamped == 1)
+            {
+                record.Official = roundedTime;
+            }
         }
         else
         {
-            if (record.Unofficial is float savedUnofficial && roundedTime >= savedUnofficial)
+            if (TryResolveUnofficial(record, clamped) is float savedUnofficial && roundedTime >= savedUnofficial)
             {
                 return false;
             }
 
-            record.Unofficial = roundedTime;
+            slot.Unofficial = roundedTime;
+            if (clamped == 1)
+            {
+                record.Unofficial = roundedTime;
+            }
         }
 
         SaveAll(source, bestTimes);
         return true;
     }
 
-    public static bool TryGetBestTime(string levelId, out float bestTime)
+    public static bool TryGetBestTime(string levelId, int playerCount, out float bestTime)
     {
         bestTime = 0f;
         LevelSource source = LevelIdentity.GetSource(levelId);
-        if (!LoadAll(source).TryGetValue(levelId, out LevelBestTimesRecord? record) || record.Official is not float official)
+        if (!LoadAll(source).TryGetValue(levelId, out LevelBestTimesRecord? record))
+        {
+            return false;
+        }
+
+        if (TryResolveOfficial(record, ClampPlayerCount(playerCount)) is not float official)
         {
             return false;
         }
@@ -71,11 +103,16 @@ public static class BestTimeStorage
         return true;
     }
 
-    public static bool TryGetUnofficialBestTime(string levelId, out float unofficialBestTime)
+    public static bool TryGetUnofficialBestTime(string levelId, int playerCount, out float unofficialBestTime)
     {
         unofficialBestTime = 0f;
         LevelSource source = LevelIdentity.GetSource(levelId);
-        if (!LoadAll(source).TryGetValue(levelId, out LevelBestTimesRecord? record) || record.Unofficial is not float unofficial)
+        if (!LoadAll(source).TryGetValue(levelId, out LevelBestTimesRecord? record))
+        {
+            return false;
+        }
+
+        if (TryResolveUnofficial(record, ClampPlayerCount(playerCount)) is not float unofficial)
         {
             return false;
         }
@@ -88,19 +125,21 @@ public static class BestTimeStorage
     {
         LevelSource source = LevelIdentity.GetSource(levelId);
         Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll(source);
-        if (bestTimes.TryGetValue(levelId, out LevelBestTimesRecord? record) && record.Official is float official)
+        if (bestTimes.TryGetValue(levelId, out LevelBestTimesRecord? record))
         {
-            if (record.Unofficial is float unofficial)
+            bool changed = DemoteOfficialSlot(record);
+            if (record.ByPlayerCount is not null)
             {
-                record.Unofficial = MathF.Min(official, unofficial);
-            }
-            else
-            {
-                record.Unofficial = official;
+                foreach (string key in record.ByPlayerCount.Keys.ToList())
+                {
+                    changed |= DemoteOfficialInPlayerSlot(record.ByPlayerCount[key]);
+                }
             }
 
-            record.Official = null;
-            SaveAll(source, bestTimes);
+            if (changed)
+            {
+                SaveAll(source, bestTimes);
+            }
         }
 
         // Always invalidate replays/WR ghosts — content changed even when no official PB exists.
@@ -182,6 +221,96 @@ public static class BestTimeStorage
     {
         TimeSpan ts = TimeSpan.FromSeconds(seconds);
         return $"{ts.Minutes:00}:{ts.Seconds:00}:{(int)(ts.Milliseconds / 10):00}";
+    }
+
+    private static PlayerCountBestTimes GetOrCreatePlayerSlot(LevelBestTimesRecord record, int playerCount)
+    {
+        record.ByPlayerCount ??= new Dictionary<string, PlayerCountBestTimes>(StringComparer.Ordinal);
+        string key = playerCount.ToString();
+        if (!record.ByPlayerCount.TryGetValue(key, out PlayerCountBestTimes? slot))
+        {
+            slot = new PlayerCountBestTimes();
+            record.ByPlayerCount[key] = slot;
+        }
+
+        return slot;
+    }
+
+    private static float? TryResolveOfficial(LevelBestTimesRecord record, int playerCount)
+    {
+        string key = playerCount.ToString();
+        if (record.ByPlayerCount is not null
+            && record.ByPlayerCount.TryGetValue(key, out PlayerCountBestTimes? slot)
+            && slot.Official is float perCount)
+        {
+            return perCount;
+        }
+
+        // Legacy flat Official only applies to 1P.
+        if (playerCount == 1 && record.Official is float legacy)
+        {
+            return legacy;
+        }
+
+        return null;
+    }
+
+    private static float? TryResolveUnofficial(LevelBestTimesRecord record, int playerCount)
+    {
+        string key = playerCount.ToString();
+        if (record.ByPlayerCount is not null
+            && record.ByPlayerCount.TryGetValue(key, out PlayerCountBestTimes? slot)
+            && slot.Unofficial is float perCount)
+        {
+            return perCount;
+        }
+
+        if (playerCount == 1 && record.Unofficial is float legacy)
+        {
+            return legacy;
+        }
+
+        return null;
+    }
+
+    private static bool DemoteOfficialSlot(LevelBestTimesRecord record)
+    {
+        if (record.Official is not float official)
+        {
+            return false;
+        }
+
+        if (record.Unofficial is float unofficial)
+        {
+            record.Unofficial = MathF.Min(official, unofficial);
+        }
+        else
+        {
+            record.Unofficial = official;
+        }
+
+        record.Official = null;
+        return true;
+    }
+
+    private static bool DemoteOfficialInPlayerSlot(PlayerCountBestTimes slot)
+    {
+        if (slot.Official is not float official)
+        {
+            return false;
+        }
+
+        if (slot.Unofficial is float unofficial)
+        {
+            slot.Unofficial = MathF.Min(official, unofficial);
+        }
+        else
+        {
+            slot.Unofficial = official;
+        }
+
+        slot.Official = null;
+        return true;
     }
 
     private static Dictionary<string, LevelBestTimesRecord> LoadAll(LevelSource source)

@@ -1,47 +1,40 @@
-# Steam Input — Official layout ship (do now)
+# Steam Input — plug-and-play (no layout pick)
 
-`publish.bat` already staged **revision 5** into ContentBuilder.
+Goal: **open game → pad works**. Players must not open Controller settings.
 
-Verified:
-- `ContentBuilder\content\Steam\controller_gamepad.vdf` → `"revision" "5"`, 2× `"analog"` Move bindings
-- SHA256: `086B004C0657D42FF13EF043B69664DBAC1689C6C0086F4361181038DF4D2FE0`
+## Partner (required — you click)
 
-## You must click (agent cannot)
+Without this, friends see empty layouts + dead pad.
 
-### A) Upload + Set Live
+1. Steamworks → App `4796400` → **Steam Input**
+2. Enable Steam Input + families: Xbox, Generic, PS4, PS5, Switch Pro, Steam Deck
+3. **Steam Input Template** = **Gamepad** (Valve) — **not** Custom Bundled, **not** Keyboard+Mouse
+4. **Save** → **Publish** (Steamworks Publish)
+5. Verify on account **without Your Layouts**: Recommended shows **Gamepad** (auto). List must not be empty.
+6. Friend: restart Steam → open Color Blocks → pad works with zero Controller clicks
 
-```
-cd C:\Users\amexi\Desktop\sdk\tools\ContentBuilder\builder
-steamcmd.exe
-login <user> <pass>
-run_app_build C:\Users\amexi\Desktop\sdk\tools\ContentBuilder\scripts\app_build_4796400.vdf
-```
+Reinstall does **not** publish Recommended. Only Partner Publish does.
 
-Then Steamworks → Builds → **Set Live** on default/beta.
+### Why Valve Gamepad
 
-### B) Partner Save + Publish
+Emulates native XInput. Color Blocks already reads MonoGame `GamePad` + R3 restart. Steam auto-applies Recommended → zero clicks.
 
-1. Steamworks → App 4796400 → Steam Input
-2. Custom Configuration (Bundled) → path `Steam\steam_input_manifest.vdf`
-3. Opt in Xbox, PlayStation, Generic (and others you support)
-4. **Save** → top **Publish** Partner changes
+## Code (already in build)
 
-### C) Clean-account verify (critical)
+Dead-live demotion: if Steam marks slot live but Move/digitals stay idle while XInput shows real activity (~0.75s), ownership drops to `GamepadBackend`. F3 shows `deadDemote=True`.
 
-Your **YOUR LAYOUTS / Molleja** layout hides broken Official. Test without it:
+Soft-claim (handle, not live) already falls through to XInput.
 
-1. Alt Steam account **or** delete Color Blocks entry under Your Layouts
-2. Properties → Controller → apply **RECOMMENDED → Official Gamepad**
-3. Open Official → A=Jump, stick=Move must show
-4. In-game F3: tilt stick → `Move≠0`
+## Official bundled (later, optional)
 
-### D) Tell friends
+Custom glyphs / Steam actions / Official Gamepad name:
 
-1. Update game
-2. Controller → Recommended → Official Gamepad (apply)
-3. Steam Input = Enabled
-4. If stuck on old personal layout → delete it / re-apply Official
+1. Depot Set Live: `Steam/steam_input_manifest.vdf` + `controller_gamepad.vdf` rev 8+
+2. Partner Template → Custom Configuration Bundled → path `Steam\steam_input_manifest.vdf`
+3. Save + Publish
 
-## Success
+Do **not** switch to Custom Bundled until Official VDF is verified — empty Official = friends pad dead again.
 
-Fresh install with no Your Layouts → Official Recommended has real bindings → pad works.
+## Temporary friend workaround
+
+Properties → Controller → Steam Input = **Disabled** (Xbox). Prefer Partner Gamepad Publish.

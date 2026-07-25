@@ -46,7 +46,7 @@ public sealed class OptionsScene : IScene
 
     // Audio settings
     private Slider _volumeSlider = new("Music Volume", 0.75f, 0f, 1f);
-    private readonly List<(string Key, Checkbox Checkbox, FocusableCheckbox Focus)> _soundEffectToggles = new();
+    private readonly List<(string Key, string Label, Slider Slider, FocusableSlider Focus)> _soundEffectVolumes = new();
 
     // Buttons
     private Button _applyButton = new("Apply");
@@ -187,7 +187,7 @@ public sealed class OptionsScene : IScene
 
         _focus.ResetFocus();
         InitializeControlBindings();
-        InitializeSoundEffectToggles(pending);
+        InitializeSoundEffectVolumes(pending);
     }
 
     /// <summary>
@@ -207,9 +207,9 @@ public sealed class OptionsScene : IScene
         _game.Steam.IsOverlayEnabled
         && (IsSteamInputManagingControllers || HasSteamInputSoftClaim);
 
-    private void InitializeSoundEffectToggles(GameSettings pending)
+    private void InitializeSoundEffectVolumes(GameSettings pending)
     {
-        _soundEffectToggles.Clear();
+        _soundEffectVolumes.Clear();
         (string key, string label)[] effects =
         {
             ("Jump", "JUMP"),
@@ -226,15 +226,19 @@ public sealed class OptionsScene : IScene
 
         foreach ((string key, string label) in effects)
         {
-            bool enabled = pending.SoundEffects.TryGetValue(key, out bool value) && value;
-            var checkbox = new Checkbox { Label = label, IsChecked = enabled };
-            _soundEffectToggles.Add((key, checkbox, new FocusableCheckbox(checkbox)));
+            float volume = pending.SoundEffects.TryGetValue(key, out float value) ? value : 1f;
+            var slider = new Slider(label, volume, 0f, 1f) { Label = string.Empty };
+            _soundEffectVolumes.Add((key, label, slider, new FocusableSlider(slider)));
         }
     }
 
     private void InitializeControlBindings()
     {
-        var actions = new[] { "MoveLeft", "MoveRight", "Jump", "Respawn", "PullRope", "FastFall", "Red", "Green", "Blue" };
+        var actions = new[]
+        {
+            "MoveLeft", "MoveRight", "Jump", "Respawn", "RestartLevel",
+            "PullRope", "FastFall", "Red", "Green", "Blue"
+        };
         _controlBindings.Clear();
 
         foreach (string action in actions)
@@ -469,9 +473,9 @@ public sealed class OptionsScene : IScene
             sectionEntryIndex = volumeIndex;
             sectionExitIndex = volumeIndex;
             int previous = volumeIndex;
-            for (int i = 0; i < _soundEffectToggles.Count; i++)
+            for (int i = 0; i < _soundEffectVolumes.Count; i++)
             {
-                int effectIndex = _focus.Add(_soundEffectToggles[i].Focus, $"SoundEffect{i}");
+                int effectIndex = _focus.Add(_soundEffectVolumes[i].Focus, $"SoundEffect{i}");
                 _focus.Navigation.LinkVertical(previous, effectIndex);
                 previous = effectIndex;
                 sectionExitIndex = effectIndex;
@@ -751,11 +755,17 @@ public sealed class OptionsScene : IScene
 
         int titleY = layout.VolumeBounds.Bottom + 24;
         SimpleTextRenderer.DrawString(spriteBatch, pixel, "SOUND EFFECTS", new Vector2(layout.AudioSectionBounds.X + layout.SectionPadding, titleY), SectionTitleScale, Accent);
-        int y = titleY + 36;
-        foreach ((string _, Checkbox checkbox, _) in _soundEffectToggles)
+        int effectY = titleY + 36;
+        int rowHeight = layout.VolumeBounds.Height;
+        int rowStride = rowHeight + 8;
+
+        foreach ((string _, string label, Slider slider, _) in _soundEffectVolumes)
         {
-            checkbox.Draw(spriteBatch, pixel);
-            y += 34;
+            Rectangle labelBounds = new(layout.AudioLabelBounds.X, effectY, layout.AudioLabelBounds.Width, rowHeight);
+            Rectangle sliderBounds = new(layout.AudioControlBounds.X, effectY, layout.AudioControlBounds.Width, rowHeight);
+            DrawSettingLabel(spriteBatch, pixel, label, labelBounds, sliderBounds);
+            slider.Draw(spriteBatch, pixel);
+            effectY += rowStride;
         }
     }
 
@@ -1055,10 +1065,12 @@ public sealed class OptionsScene : IScene
         _colorModeSelector.Bounds = layout.ColorModeBounds;
 
         int effectY = layout.VolumeBounds.Bottom + 60;
-        foreach ((string _, Checkbox checkbox, _) in _soundEffectToggles)
+        int rowHeight = layout.VolumeBounds.Height;
+        int rowStride = rowHeight + 8;
+        foreach ((string _, string _, Slider slider, _) in _soundEffectVolumes)
         {
-            checkbox.Bounds = new Rectangle(layout.AudioSectionBounds.X + layout.SectionPadding + 8, effectY, layout.AudioSectionBounds.Width - (layout.SectionPadding * 2), 28);
-            effectY += 34;
+            slider.Bounds = new Rectangle(layout.AudioControlBounds.X, effectY, layout.AudioControlBounds.Width, rowHeight);
+            effectY += rowStride;
         }
 
         ControlWidth = layout.ControlSectionBounds.Width;
@@ -1114,8 +1126,9 @@ public sealed class OptionsScene : IScene
         int displayContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing
             + (rowHeight + 10) * (displayRows - 1) + rowHeight;
         int soundEffectsTitleHeight = 36;
+        int sfxRowStride = rowHeight + 8;
         int audioContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing + rowHeight
-            + 24 + soundEffectsTitleHeight + (_soundEffectToggles.Count * 34) + sectionPadding;
+            + 24 + soundEffectsTitleHeight + (_soundEffectVolumes.Count * sfxRowStride) + sectionPadding;
 
         int comfortableDataHeight = (bindingCount * preferredRowHeight) + ((bindingCount - 1) * keyRowGap);
         int estimatedControlSectionHeight = controlChromeHeight + comfortableDataHeight;
@@ -1348,9 +1361,9 @@ public sealed class OptionsScene : IScene
 
         ColorPaletteManager.ApplySettings(SettingsManager.PendingSettings.ColorMode);
 
-        foreach ((string key, Checkbox checkbox, _) in _soundEffectToggles)
+        foreach ((string key, string _, Slider slider, _) in _soundEffectVolumes)
         {
-            SettingsManager.PendingSettings.SoundEffects[key] = checkbox.IsChecked;
+            SettingsManager.PendingSettings.SoundEffects[key] = slider.Value;
         }
     }
 
@@ -1408,6 +1421,7 @@ public sealed class OptionsScene : IScene
         "MoveRight" => "MOVE RIGHT",
         "Jump" => "JUMP",
         "Respawn" => "RESPAWN",
+        "RestartLevel" => "RESTART LEVEL",
         "PullRope" => "PULL ROPE",
         "FastFall" => "FAST FALL",
         "Red" => "RED",
@@ -1533,6 +1547,11 @@ public sealed class OptionsScene : IScene
         _resolutionDropdown.SelectedResolution = new Resolution(pending.ResolutionWidth, pending.ResolutionHeight);
         _volumeSlider.Value = pending.MusicVolume;
         _fpsLimitSelector.CurrentOption = pending.FpsLimit;
+
+        foreach ((string key, string _, Slider slider, _) in _soundEffectVolumes)
+        {
+            slider.Value = pending.SoundEffects.TryGetValue(key, out float volume) ? volume : 1f;
+        }
 
         string displayMode = pending.DisplayMode.ToLowerInvariant();
         _displayModeSelector.CurrentOption = displayMode switch

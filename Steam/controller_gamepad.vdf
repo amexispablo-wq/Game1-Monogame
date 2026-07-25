@@ -1,9 +1,11 @@
 "controller_mappings"
 {
 	"version"		"3"
-	"revision"		"5"
-	"title"		"#Title_Gamepad"
-	"description"		"#Description_Gamepad"
+	"revision"		"8"
+	"major_revision"		"0"
+	"minor_revision"		"8"
+	"title"		"Official Gamepad"
+	"description"		"Default Color Blocks controller layout."
 	"controller_type"		"controller_generic"
 	"localization"
 	{
@@ -104,7 +106,7 @@
 	"group"
 	{
 		"id"		"2"
-		"mode"		"joystick_move"
+		"mode"		"analog_joystick"
 		"name"		"Left Stick"
 		"inputs"
 		{
@@ -126,10 +128,23 @@
 	"group"
 	{
 		"id"		"3"
-		"mode"		"joystick_move"
+		"mode"		"analog_joystick"
 		"name"		"Right Stick"
 		"inputs"
 		{
+			"click"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"game_action Gameplay RestartLevel, Restart Level"
+						}
+					}
+				}
+			}
 		}
 	}
 	"group"
@@ -139,7 +154,7 @@
 		"name"		"Triggers"
 		"inputs"
 		{
-			"edge"
+			"click"
 			{
 				"activators"
 				{
@@ -203,7 +218,7 @@
 		"0"		"button_diamond active"
 		"1"		"dpad active"
 		"2"		"left_joystick active"
-		"3"		"right_joystick inactive"
+		"3"		"right_joystick active"
 		"4"		"right_trigger active"
 		"5"		"start active"
 		"6"		"select active"

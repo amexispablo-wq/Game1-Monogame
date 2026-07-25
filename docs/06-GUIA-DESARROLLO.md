@@ -1,5 +1,7 @@
 # 06 — Guía de Desarrollo
 
+Greenfield / otro juego MonoGame+Steam: [`monogame-playbook/`](monogame-playbook/README.md).
+
 ## Requisitos
 
 - **.NET 9 SDK** (target `net9.0`, plataforma `x64`).
@@ -20,8 +22,8 @@ dotnet run --project "Color Blocks.csproj"
 dotnet build "Color Blocks.csproj" -c Release
 ```
 
-- El output va a `bin/Debug/net9.0/` (o `Release`). Ahí se copian `Content/`, `Levels/`, `steam_appid.txt` y `steam_api64.dll`.
-- Los niveles en runtime se leen/escriben desde `AppContext.BaseDirectory/Content/Levels` (el output), **no** desde el source tree. Para editar niveles "de fábrica", trabajá en el build output o copialos de vuelta.
+- El output va a `bin/Debug/net9.0/` (o `Release`). Ahí se copian `Content/` (incl. `OfficialLevels/`), `steam_appid.txt` y `steam_api64.dll`.
+- Niveles oficiales: `Content/OfficialLevels/` (source + copy al output). Local/Workshop: `%LocalAppData%/Color Blocks/…` — ver [`04-NIVELES-Y-EDITOR.md`](04-NIVELES-Y-EDITOR.md).
 
 ## Settings — `Managers/SettingsManager.cs` + `Utils/GameSettings.cs`
 
@@ -100,9 +102,9 @@ Requiere `developer_settings.json` con `"developerMode": true`.
 
 - **Coop online v1 sin predicción/interpolación** — transporte OK; falta QA 2-client (doc 03, roadmap 08).
 - **Gamepad binding persistence** — posible bug en `SettingsManager`.
-- `LevelManager.RenameLevel` es placeholder.
 - Flags `LavaRise` / `PlayerN` persisten; gameplay puede estar incompleto.
-- Niveles en build output → fácil perder al limpiar `bin/`.
-- `bin`/`obj` parcialmente en git.
-- **Rope Sandbox** usa modo Neutral; no prueba colisión colored sin nivel real.
-- Leaderboards globales y Workshop: no iniciados — ver [`08-ROADMAP.md`](08-ROADMAP.md).
+- Official levels: editar en source `Content/OfficialLevels/` (dev); no depender solo de `bin/`.
+- `bin`/`obj` parcialmente en git — preferir `.gitignore`.
+- **Rope Sandbox** usa modo Neutral; colored collision → nivel real o benchmark.
+- Leaderboards / Workshop / Replay: **código listo**; falta QA + Partner — ver [`05-STEAM.md`](05-STEAM.md), [`08-ROADMAP.md`](08-ROADMAP.md).
+- Juego nuevo MonoGame+Steam: kit reutilizable en [`monogame-playbook/`](monogame-playbook/README.md).

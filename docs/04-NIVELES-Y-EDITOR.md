@@ -4,15 +4,27 @@
 
 - **Runtime:** `LevelSystem/Level.cs` — geometría viva (platforms, goals, checkpoints, launch pads), `PlayerStart`, `WorldSize` (auto-calculado con padding de 200px), `Name`, `MusicId` y flags.
 - **Serializable:** `LevelSystem/LevelData.cs` — DTO con atributos `JsonPropertyName`. Conversión `Level.FromData(data)` / `level.ToData()`.
-- `Level.CreateDefault()` genera un nivel de ejemplo (usado como fallback si falla la carga).
+- `Level.CreateDefault()` genera un nivel de ejemplo (fallback si falla la carga).
 
 ### Flags del nivel (en `LevelData`)
 
-`AllPlayers` (default true), `Player1..4`, `ColoredRope`, `RegularRope`, `LavaRise`. Nota: `LavaRise` y los flags por jugador están **definidos y persistidos** pero su gameplay puede no estar completamente cableado — verificar antes de depender de ellos.
+`AllPlayers` (default true), `Player1..4`, `ColoredRope`, `RegularRope`, `LavaRise`. Nota: algunos flags persisten; verificar gameplay cableado antes de depender de ellos.
+
+## Fuentes — `LevelSource`
+
+| Source | Disco | Editable |
+|--------|-------|----------|
+| **Official** | `Content/OfficialLevels/` (runtime + source del repo vía `TryGetProjectOfficialLevelsRoot`) | Solo con `developerMode` |
+| **Local** | `%LocalAppData%/Color Blocks/UserLevels/` | Sí |
+| **Workshop** | `%LocalAppData%/Color Blocks/Workshop/{id}/level.json` | Read-only; editar = “Create Local Copy” |
+
+Paths centralizados en `LevelSystem/LevelContentPaths.cs` + `UserDataPaths`.
+
+> No hay `LevelManager`. API vigente: **`LevelLibrary`** (estático).
 
 ## Formato JSON
 
-Archivos en `Content/Levels/level_N.json`. Serializado con `System.Text.Json` (`WriteIndented`, case-insensitive, enums como string).
+Mismo `LevelData` para Official / Local / Workshop. Serializado con `System.Text.Json` (`WriteIndented`, case-insensitive, enums como string).
 
 ```json
 {
@@ -41,66 +53,56 @@ Archivos en `Content/Levels/level_N.json`. Serializado con `System.Text.Json` (`
 - `rotation` de launch pad en grados (normalizada).
 - Plataformas/pads con width o height <= 0 se ignoran al cargar.
 
-## Gestión de niveles — `LevelSystem/LevelManager.cs` (estático)
+## Gestión — `LevelSystem/LevelLibrary.cs`
 
 | Método | Qué hace |
 |--------|----------|
-| `GetAllLevels()` | escanea `Content/Levels/level_*.json`, ordena por número, devuelve `LevelMetadata` |
-| `GetLevel(id)` | metadata de un nivel |
-| `LoadLevel(id)` | carga `Level` (fallback a `CreateDefault` si falla) |
-| `SaveLevel(level, id)` | serializa a `level_id.json` |
-| `CreateNewLevel(name)` | crea `level_N.json` vacío con el siguiente N libre |
-| `DeleteLevel(id)` | borra archivo + su récord en `BestTimeStorage` |
-| `RenameLevel(...)` | **placeholder**, sin implementar |
+| `Initialize()` | UserDataPaths, folders, migration |
+| `GetOfficialLevels` / `GetLocalLevels` / `GetWorkshopLevels` | Listas por fuente |
+| `GetAllLevels()` | Official + Workshop + Local |
+| `GetEditableLevels()` | Local + Workshop (+ Official si dev) |
+| `GetLevel` / `LoadLevel` / `SaveLevel` | Por `levelId` tipado (`LevelIdentity`) |
+| `CreateNewLevel` / `DeleteLevel` / `DuplicateLevel` | CRUD local (y official en dev) |
+| `TryGetNextLevelId` | Siguiente en misma fuente (orden Level Select) |
 
-- Directorio: `AppContext.BaseDirectory/Content/Levels` (es decir, junto al ejecutable en el build output, no en el source tree).
-- `LevelMetadata`: `Id` (ej. `level_1`), `Name` (display, ej. `Level 1` o el `name` del JSON), `FilePath`.
+- `LevelMetadata`: id tipado, nombre, path, source, versión, autor, etc.
+- Workshop sync: `SteamWorkshopService` escribe bajo `Workshop/{id}/`; `LevelLibrary` solo lista.
 
-> Nota: hay también `Managers/LevelStorage.cs` (carga/crea un `level.json` legado de un solo nivel) y `Content/level.json`. El sistema vigente es el multi-nivel de `LevelManager`.
+> Legado: `Managers/LevelStorage.cs` / `Content/Levels/` / `Content/level.json` — no usar para features nuevas.
 
 ## Mejores tiempos — `Managers/BestTimeStorage.cs`
 
-- Guarda mejor tiempo por `levelId` (en `best_times.json`).
-- `SaveIfRecord(id, time)` devuelve true si es récord nuevo.
-- `TryGetBestTime`, `ResetLevelRecord`, `DeleteLevelRecord`, `RoundToCentiseconds`.
-- Tiempos en segundos (float), redondeados a centisegundos. Formato display `MM:SS:CS`.
+- Mejor tiempo por `levelId` (paths bajo UserData / por source).
+- `SaveIfRecord`, `TryGetBestTime`, reset/delete, redondeo a centisegundos.
+- Display `MM:SS:CS`. Leaderboards Steam usan el mismo criterio de score (ver `05-STEAM.md`).
 
-## Música — `LevelSystem/LevelMusicLibrary.cs`
+## Música / previews
 
-- `MusicId` por nivel (default `LevelMusicLibrary.DefaultMusicId`). Biblioteca de pistas seleccionables en el editor / info de nivel.
+- `LevelMusicLibrary` — `MusicId` por nivel.
+- `LevelPreviewManager` — preview PNG (`System.Drawing.Common`) para Level Select / info.
 
-## Previews — `LevelSystem/LevelPreviewManager.cs`
+## Workshop (jugador)
 
-- Genera una textura de preview del nivel (usa `System.Drawing.Common`) para mostrar en `LevelSelectScene` y `LevelInfoScene`.
+1. Editor / Level Select → publicar nivel **Local** (`SteamWorkshopService`; Official rechazado).
+2. Suscripciones Steam → sync a `%LocalAppData%/…/Workshop/{id}/level.json`.
+3. Level Select lista Workshop read-only; editar → Duplicate a Local.
 
-## Editor de niveles — `Scenes/EditorScene.cs`
+## Editor — `Scenes/EditorScene.cs`
 
-Editor completo (~1800 líneas). Funcionalidad:
+- Grid snap 32, create/move/resize, multi-select, Goal/Checkpoint/LaunchPad toolbar.
+- Color de plataforma, copy/paste, pan/zoom, dirty flag.
+- Guarda con `LevelLibrary.SaveLevel`.
 
-- **Grid snapping** (`GridSize = 32`, toggle).
-- **Crear/seleccionar/mover/redimensionar** plataformas (con handles de resize, margen 8px, tamaño mínimo 1 celda).
-- **Selección múltiple** y arrastre grupal (plataformas, checkpoints, launch pads).
-- **Goal, Checkpoints, Launch Pads:** arrastrables desde una toolbar al mundo.
-- **Color** de plataforma seleccionable (`GameColor`).
-- **Copiar/Pegar** (`EditorClipboardItem`, `_clipboard`, `_pasteCount`).
-- **Paneo** de cámara y zoom (`Camera`).
-- **Estado sucio** (`_isDirty`) para avisar cambios sin guardar.
-- Guarda con `LevelManager.SaveLevel(_level, _levelId)`.
-
-`EditorObjectKind`: enum de tipos de objeto que el editor maneja (None/Goal/Checkpoint/LaunchPad/...).
-
-### Flujo de edición
+### Flujo
 
 ```
 LevelSelectScene(EditMode)
-  ├─ Create New → Popup nombre → LevelManager.CreateNewLevel → EditorScene
+  ├─ Create New → Popup → LevelLibrary.CreateNewLevel → EditorScene
   ├─ Edit       → EditorScene(levelId)
-  └─ Delete     → Popup confirmación → LevelManager.DeleteLevel
+  ├─ Duplicate  → Local copy (Workshop/Official)
+  └─ Delete     → Popup → LevelLibrary.DeleteLevel
 ```
 
-## Sistema de UI (soporte del editor y menús) — `UI/`
+## UI de soporte
 
-Widgets reutilizables, todos dibujados con el pixel 1x1 + `SimpleTextRenderer`:
-
-- `Button`, `Slider`, `Checkbox`, `Dropdown`, `CycleSelector<T>`, `ResolutionDropdown`, `DisplayModeSelector`, `TextInputComponent`, `Popup` (modal con fade).
-- Layouts: `ButtonRowLayout`, `ButtonColumnLayout`, `GridLayout` (responsive). El layout se recalcula cada frame según el viewport.
+Widgets en `UI/`: `Button`, `Slider`, `Checkbox`, `Dropdown`, `Popup`, layouts responsive. Ver [`07-UI-NAVEGACION.md`](07-UI-NAVEGACION.md).

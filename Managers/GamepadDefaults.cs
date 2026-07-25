@@ -121,6 +121,7 @@ public static class GamepadDefaults
     public static Buttons GreenButton => Buttons.Y;
     public static Buttons BlueButton => Buttons.B;
     public static Buttons RespawnButton => Buttons.Back;
+    public static Buttons RestartLevelButton => Buttons.RightStick;
     public static Buttons PauseButton => Buttons.Start;
     public static Buttons MenuConfirmButton => Buttons.A;
     public static Buttons MenuCancelButton => Buttons.B;
@@ -132,6 +133,7 @@ public static class GamepadDefaults
         GameplayInputAction.MoveRight,
         GameplayInputAction.Jump,
         GameplayInputAction.Respawn,
+        GameplayInputAction.RestartLevel,
         GameplayInputAction.FastFall,
         GameplayInputAction.Red,
         GameplayInputAction.Blue,
@@ -155,6 +157,7 @@ public static class GamepadDefaults
     {
         GameplayInputAction.Jump => JumpButton,
         GameplayInputAction.Respawn => RespawnButton,
+        GameplayInputAction.RestartLevel => RestartLevelButton,
         GameplayInputAction.Red => RedButton,
         GameplayInputAction.Blue => BlueButton,
         GameplayInputAction.Green => GreenButton,
@@ -206,6 +209,7 @@ public static class GamepadDefaults
             GameplayInputAction.MoveRight => "Left Stick →",
             GameplayInputAction.Jump => "A / Cross",
             GameplayInputAction.Respawn => "Back / Select",
+            GameplayInputAction.RestartLevel => "R Stick Press",
             GameplayInputAction.FastFall => "Left Stick ↓",
             GameplayInputAction.PullRope => "RT / R2",
             GameplayInputAction.Red => "X / Square",

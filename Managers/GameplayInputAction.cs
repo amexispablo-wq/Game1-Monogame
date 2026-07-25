@@ -8,6 +8,7 @@ public enum GameplayInputAction
     Respawn,
     FastFall,
     PullRope,
+    RestartLevel,
     Red,
     Blue,
     Green

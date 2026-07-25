@@ -12,91 +12,110 @@
 ## Estructura de carpetas
 
 ```
-Core/         Entry point, clase Game, bucle de simulación
+Core/           Entry point, clase Game, bucle de simulación, PresentationManager
   Program.cs
-  ColorBlocksGame.cs   -> Game de MonoGame, dueño de input/steam/escena actual
+  ColorBlocksGame.cs   -> Game de MonoGame; dueño de input/steam/escena/servicios
   GameSimulation.cs    -> bucle de tick fijo, autoridad de gameplay
 
-Scenes/       Pantallas (patrón IScene)
-  IScene.cs, MenuScene, PartyScene, LevelSelectScene, GameScene, EditorScene,
-  OptionsScene, LevelInfoScene, RopeSandboxScene (dev), CustomizationScene,
-  ReplayViewerScene, EditorObjectKind, EditorClipboardItem
+Scenes/         Pantallas (patrón IScene)
+  MenuScene, PartyScene, LevelSelectScene, LevelInfoScene, GameScene,
+  EditorScene, OptionsScene, CustomizationScene, LeaderboardScene,
+  ReplayViewerScene, RopeSandboxScene (dev), IScene
 
-Gameplay/     Tuning en vivo
+Gameplay/       Tuning en vivo
   GameplayTuning, DeveloperTuningPanel
 
-Developer/    Herramientas dev (benchmarks, fuzz)
+Developer/      Herramientas dev (benchmarks, fuzz)
   GameplayBenchmark/  BenchmarkRunner, RopeMechanicsSimulation, scenarios, CLI headless
 
-Party/        Coop local + roster Steam
-  PartyManager, PartyMember, PartyMemberId, PartyInputSource
+Party/          Coop local + roster Steam
+  PartyManager, PartyMember, PartyMemberId, PartyInputSource, PartyHudOverlay helpers
 
-UI/           Widgets + navegación
+UI/             Widgets + navegación
   Button, Slider, Checkbox, Dropdown, Popup, PauseMenuOverlay, PartyHudOverlay
   Navigation/ UIFocusManager, NavigationGraph, Focusables, EditModeController,
               NavigationDebug, VirtualCursor, ResolutionCatalog
 
-Entities/     Objetos de juego
+Entities/       Objetos de juego
   Player, Rope, RopeNode, RopeConstraint, RopeTensionPhase, RopeGameplayMode,
   Platform, Goal, CheckpointFlag, LaunchPad, PlayerState, PlayerIdentity
 
-Managers/     Servicios y estado
-  PhysicsWorld, PlayerManager, InputManager, InputDevice, InputProfile,
-  SettingsManager, LevelStorage, BestTimeStorage
+Managers/       Servicios y estado
+  PhysicsWorld, PlayerManager, InputManager (+ Input/ backends), SettingsManager,
+  BestTimeStorage, MusicManager, SfxManager, Haptics/
 
-Networking/   Coop online (andamiaje)
-  GameSession, NetworkOwners, NetworkIdAllocator, NetworkEntityOwnership,
-  INetworkEntity
-  Prediction/  TickRate, SimulationTick, InputFrame, PlayerInputState,
-               NetworkInputBuffer, ILocalPlayerInputSource
-  Replication/ GameSnapshot, PlayerSnapshot, RopeSnapshot, LevelSnapshot,
-               TimerSnapshot, NetworkVector2
+Networking/     Coop online
+  GameSession, GameNetworkCoordinator, NetworkOwners, INetworkEntity
+  Prediction/  TickRate, InputFrame, NetworkInputBuffer, …
+  Replication/ GameSnapshot, PlayerSnapshot, RopeSnapshot, …
   Packets/     NetworkPacket, InputFramePacket, GameSnapshotPacket
 
-LevelSystem/  Niveles
-  Level, LevelData, LevelMetadata, LevelManager, LevelMusicLibrary,
-  LevelPreviewManager, DeveloperSettings
+LevelSystem/    Niveles (no hay LevelManager)
+  LevelLibrary, Level, LevelData, LevelMetadata, LevelIdentity, LevelSource,
+  LevelContentPaths, LevelRules, LevelMigration, LevelPreviewManager,
+  LevelMusicLibrary, DeveloperSettings
 
-Graphics/     Camera, DrawHelper, SimpleTextRenderer
-Utils/        GameColor, CollisionHelper, GameSettings, GridLayout
-Steam/        SteamManager, SteamLobbyService, SteamPartyService,
-              SteamCallbackManager, SteamConstants + Native/Windows-x64/steam_api64.dll
-Content/      Content.mgcb, level.json (legado), Levels/ (en build output)
+Replay/         Grabación, reproducción, highlights, ghosts locales
+  ReplayRecorder, ReplayPlayer, ReplayStorage, GhostPlayer, HighlightManager, …
+
+Customization/  Skins de jugador
+Accessibility/
+Diagnostics/
+Graphics/       Camera, DrawHelper, SimpleTextRenderer, PlayerSkinRenderer
+Steam/          SteamManager, CallbackManager, Lobby, Party, Invite, Input,
+                GameNetwork, Leaderboard, Workshop, Replay, Ghost + Native DLL
+Content/        Content.mgcb, OfficialLevels/
 ```
+
+## Servicios dueños en `ColorBlocksGame`
+
+Instanciados en el ctor / `Initialize`; las escenas **no** crean Steam services sueltos:
+
+| Servicio | Rol |
+|----------|-----|
+| `SteamManager` | Init / RunCallbacks / Shutdown |
+| `SteamCallbackManager` | Callbacks Steamworks tipados |
+| `SteamLobbyService` | Lobby friends-only, level-start broadcast |
+| `SteamPartyService` | Roster ↔ lobby member data |
+| `SteamInviteManager` | Overlay + Rich Presence join + prompt in-game |
+| `SteamInputManager` | Steam Input + glyphs |
+| `SteamGameNetworkService` | `ISteamNetworkingMessages` |
+| `GameNetworkCoordinator` | Pump input/snapshots en sesión online |
+| `SteamLeaderboardService` | Upload/download boards |
+| `SteamWorkshopService` | Publish / sync subs |
+| `SteamReplayService` / `SteamGhostService` | UGC replay + cache WR ghost |
+| `LevelStartRouter` | Aplica START pendiente al cambiar escena |
+| `PartyManager` | Party local + bind Steam |
 
 ## Bucle principal
 
 `ColorBlocksGame` (MonoGame `Game`):
 
-1. **Constructor:** crea `GraphicsDeviceManager` (default 1280x720, vsync on), inicializa `SettingsManager` y aplica resolución guardada.
-2. **`Initialize()`:** `Steam.Initialize()`, crea `InputManager`.
-3. **`LoadContent()`:** crea `SpriteBatch`, el pixel 1x1, y arranca con `MenuScene`.
-4. **`Update(gameTime)`:** `Steam.RunCallbacks()` → `Input.Update()` → `escenaActual.Update()`.
-5. **`Draw(gameTime)`:** limpia a color `(23,27,34)` → `escenaActual.Draw()`.
+1. **Constructor:** `GraphicsDeviceManager`, `SettingsManager`, crea servicios Steam/net.
+2. **`Initialize()`:** `Steam.Initialize()`, callbacks, bind party, workshop sync, launch-join.
+3. **`LoadContent()`:** `SpriteBatch`, pixel 1x1, `MenuScene`.
+4. **`Update(gameTime)`:** `Steam.RunCallbacks()` → Steam Input RunFrame → `Input.Update()` → prompt invite (si hay) **o** `escenaActual.Update()`.
+5. **`Draw(gameTime)`:** presentation → escena → Party HUD → overlays → invite popup.
 
-La escena actual se cambia con `ChangeScene(IScene)`, que llama `OnExit()` a la saliente.
+La escena actual se cambia con `ChangeScene(IScene)` (`OnExit` en la saliente; `SetInLevel` para suprimir invites en `GameScene`).
 
 ### Tick fijo vs. render
 
 El render corre a la tasa de MonoGame (vsync), pero el **gameplay corre a tick fijo** dentro de `GameSimulation.Advance(frameSeconds, inputSource)`:
 
-```16:76:Core/GameSimulation.cs
-public int Advance(float frameSeconds, ILocalPlayerInputSource localInputSource)
-```
-
 - `FixedDeltaSeconds = 1/60` (configurable vía `GameSessionSettings.SimulationTicksPerSecond`).
-- Acumulador de tiempo (`_fixedTimeAccumulator`), máximo `MaxFrameTime = 0.25s`, máximo `MaxTicksPerFrame = 5` por frame (anti spiral-of-death).
-- Cada tick: captura input local → `NetworkInputBuffer` → física → checkpoints → timer → chequeo de meta → genera `GameSnapshot`.
+- Acumulador de tiempo, máximo `MaxFrameTime = 0.25s`, máximo `MaxTicksPerFrame = 5` (anti spiral-of-death).
+- Cada tick: input local → `NetworkInputBuffer` → física → checkpoints → timer → meta → `GameSnapshot`.
 
-**Regla de oro:** toda la lógica determinista de gameplay va en `StepFixedTick`. El render y la cámara (`GameScene.UpdateCamera`) pueden correr por frame.
+**Regla de oro:** lógica determinista de gameplay en `StepFixedTick`. Render/cámara pueden correr por frame.
 
 ## Capas de responsabilidad
 
 ```
-ColorBlocksGame (host: input, steam, escena)
+ColorBlocksGame (host: input, steam, escena, prompt invite)
         │
         ▼
-     IScene (Menu / LevelSelect / Game / Editor / Options)
+     IScene (Menu / Party / LevelSelect / Game / Editor / Options / …)
         │  (GameScene es la que juega)
         ▼
   GameSimulation  ── autoridad: tick, timer, meta, snapshots
@@ -104,7 +123,7 @@ ColorBlocksGame (host: input, steam, escena)
         ├─ PlayerManager   (spawns, checkpoints, respawn)
         ├─ PhysicsWorld    (gravedad, colisiones, sogas, launch pads)
         ├─ NetworkInputBuffer (inputs por tick y por jugador)
-        └─ Level           (geometría: platforms, goals, checkpoints, pads)
+        └─ Level           (geometría)
         │
         ▼
    GameSession  ── rol (LocalTest/Host/Client), ownership, peers, settings
@@ -114,39 +133,30 @@ ColorBlocksGame (host: input, steam, escena)
 
 ```
 MenuScene
-├─ "Play"          → LevelSelectScene(PlayMode)
-│                      └─ seleccionar nivel → GameScene(levelId, ropeMode)
-├─ "Party"         → PartyScene (coop local + lobby Steam)
-│                      └─ Play → LevelSelectScene(PlayMode) → GameScene
-├─ "Level Editor"  → LevelSelectScene(EditMode)
-│                      ├─ Edit   → EditorScene(levelId)
-│                      ├─ Create → Popup texto → LevelManager.CreateNewLevel
-│                      └─ Delete → Popup confirmación → LevelManager.DeleteLevel
-├─ "Rope Sandbox"  → RopeSandboxScene (solo DeveloperMode)
-└─ "Options"       → OptionsScene (display, audio, rebinding teclado/gamepad)
+├─ Play            → LevelSelectScene → GameScene
+├─ Party           → PartyScene → LevelSelect → GameScene (online/local)
+├─ Level Editor    → LevelSelectScene(EditMode) → EditorScene
+├─ Customize       → CustomizationScene
+├─ Leaderboards    → LeaderboardScene (vía Level Select / post-run)
+├─ Replay viewer   → ReplayViewerScene (best local o WR path)
+├─ Rope Sandbox    → RopeSandboxScene (solo DeveloperMode)
+└─ Options         → OptionsScene
 ```
 
-- `GameScene` crea sesión con `GameSession.CreateLocalTest(...)` (multijugador local en un proceso).
-- `PartyScene` gestiona hasta 4 miembros (teclado + gamepads) y lobby Steam (invite, roster, kick).
-- `LevelSelectScene` mantiene el `RopeGameplayMode` elegido en un campo `static` entre transiciones.
-- Navegación UI en todas las escenas: ver [`07-UI-NAVEGACION.md`](07-UI-NAVEGACION.md).
+- `GameScene` usa `GameSession.CreateLocalTest` o `CreateOnline` según lobby.
+- `PartyScene`: input por miembro, Kick (host) / Leave (guest Steam), Invite overlay.
+- Invite Accept/Decline global: `ColorBlocksGame` + `SteamInviteManager` (oculto en `GameScene`).
+- Navegación UI: [`07-UI-NAVEGACION.md`](07-UI-NAVEGACION.md).
 
 ## Patrón IScene
 
-```1:12:Scenes/IScene.cs
-```
-Toda escena implementa `Update(GameTime)`, `Draw(GameTime, SpriteBatch)` y `OnExit()`. Las escenas hacen su propio layout responsive en cada frame (no hay layout cacheado global).
+Toda escena implementa `Update(GameTime)`, `Draw(GameTime, SpriteBatch)` y `OnExit()`. Layout responsive por frame (sin cache global).
 
 ## Modelo de entidades en red
 
-`INetworkEntity` define identidad y autoridad:
-
-```1:11:Networking/INetworkEntity.cs
-```
+`INetworkEntity` + `NetworkEntityOwnership(NetworkId, OwnerId, IsLocal, IsHostControlled)`.
 
 - `Player` y `Rope` lo implementan.
-- `NetworkEntityOwnership(NetworkId, OwnerId, IsLocal, IsHostControlled)` configura cada entidad.
-- `NetworkOwners.HostOwnerId = 0`, `UnassignedOwnerId = -1`.
-- `PhysicsWorld.ShouldSimulate(player)` = `IsLocal || IsHostControlled` → en host se simula todo; en cliente sólo lo local (el resto se aplicará por snapshot).
+- `PhysicsWorld.ShouldSimulate(player)` = `IsLocal || IsHostControlled` → host simula todo; cliente (futuro) solo local + snapshots.
 
-Ver detalles de red en [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md).
+Ver [`03-NETWORKING-COOP.md`](03-NETWORKING-COOP.md). Playbook reutilizable: [`monogame-playbook/`](monogame-playbook/README.md).

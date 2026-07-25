@@ -9,6 +9,8 @@ public sealed class SteamPartyService
     private readonly SteamLobbyService _lobby;
     private string? _lastAppliedRoster;
 
+    private string? _lastLoggedAuthRoster;
+
     public SteamPartyService(SteamLobbyService lobby)
     {
         _lobby = lobby;
@@ -52,7 +54,7 @@ public sealed class SteamPartyService
         {
             if (member.IsLocallyOwned && member.MemberType != PartyMemberType.SteamRemote)
             {
-                return SkinLibraryStorage.GetSkinForMember(member.Id);
+                return SkinLibraryStorage.GetSkinForLocalSlot(0);
             }
         }
 
@@ -94,11 +96,7 @@ public sealed class SteamPartyService
                 MultiplayerDebug.LogParty(
                     $"ForceSyncFromLobby published entries={entries.Count} bytes={serialized.Length} " +
                     $"membershipChanged={lobbyMembershipChanged}");
-                foreach (PartyRosterEntry entry in entries)
-                {
-                    MultiplayerDebug.LogParty(
-                        $"  auth idx={entry.MemberIndex} '{entry.DisplayName}' ownerSteam={entry.OwningSteamId} type={entry.MemberType}");
-                }
+                LogAuthRosterIfChanged(serialized, entries);
             }
             else
             {
@@ -162,6 +160,7 @@ public sealed class SteamPartyService
     public void ResetSyncState()
     {
         _lastAppliedRoster = null;
+        _lastLoggedAuthRoster = null;
     }
 
     private void ApplyRosterEntries(PartyManager party, List<PartyRosterEntry> entries, string serialized)
@@ -258,6 +257,17 @@ public sealed class SteamPartyService
         _lastAppliedRoster = serialized;
         _lobby.SetLobbyData(SteamConstants.LobbyDataLeaderSteam, _lobby.GetLobbyOwnerSteamId().ToString());
         MultiplayerDebug.LogParty($"PublishAuthoritativeRoster entries={entries.Count} bytes={serialized.Length}");
+        LogAuthRosterIfChanged(serialized, entries);
+    }
+
+    private void LogAuthRosterIfChanged(string serialized, List<PartyRosterEntry> entries)
+    {
+        if (string.Equals(serialized, _lastLoggedAuthRoster, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastLoggedAuthRoster = serialized;
         foreach (PartyRosterEntry entry in entries)
         {
             MultiplayerDebug.LogParty(
@@ -284,6 +294,9 @@ public sealed class SteamPartyService
             int localSlotOrdinal = 0;
             foreach ((PartyMemberType type, int controllerId) slot in localSlots)
             {
+                // Primary local seat of lobby owner is leader regardless of keyboard/gamepad.
+                // Keyboard-only flag made host Kick-self after switching input.
+                bool isPrimaryLocal = localSlotOrdinal == 0;
                 string displayName = PartyDisplayNames.FormatLocalMemberName(
                     lobbyMember.DisplayName,
                     localSlotOrdinal++);
@@ -295,7 +308,7 @@ public sealed class SteamPartyService
                     DisplayName = displayName,
                     MemberType = slot.type,
                     ControllerId = slot.controllerId,
-                    IsLeader = lobbyMember.IsOwner && slot.type == PartyMemberType.LocalKeyboard
+                    IsLeader = lobbyMember.IsOwner && isPrimaryLocal
                 });
             }
         }

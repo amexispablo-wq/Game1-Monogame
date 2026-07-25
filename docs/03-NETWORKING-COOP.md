@@ -8,15 +8,16 @@
 
 - Hasta **4 miembros**: teclado + gamepads en la misma máquina.
 - Join/leave gamepad: Start para unirse, Back para salir.
-- `PartyScene`: asignar input por miembro, kick, Play → Level Select.
+- `PartyScene`: asignar input por miembro, Kick (host, no self), Leave (guest Steam en slot local), Play → Level Select.
 - `GameScene`: spawnea jugadores desde el party vía `PlayerManager.SpawnFromParty`.
 
 ### Steam lobby (party online, sin gameplay net) — `Steam/`
 
 | Servicio | Qué hace |
 |----------|----------|
-| `SteamLobbyService` | Crear lobby friends-only, join/leave, overlay invite, rich presence connect string, lobby data (nivel, rope mode, lava), roster sync, kick vía chat, `BroadcastLevelStart` |
+| `SteamLobbyService` | Crear lobby friends-only, join/leave, overlay invite, lobby data (nivel, rope mode, lava), roster sync, kick vía chat, `BroadcastLevelStart` |
 | `SteamPartyService` | Serializar/deserializar roster (`PartyRosterCodec`), publicar slots locales, reconstruir party desde lobby |
+| `SteamInviteManager` | Overlay + Rich Presence join + **prompt in-game** Accept/Decline (`LobbyInvite`); encola si `GameScene` activo |
 
 Flujo:
 

@@ -371,6 +371,8 @@ public sealed class Player : INetworkEntity
         AddImpulse(new Vector2(0f, -JumpImpulse * Mass));
         IsGrounded = false;
         GameAudio.Play(SfxManager.Jump);
+        DiagnosticsLog.Info("Sim", $"APPLY Jump netId={NetworkId}");
+        InputDiagnostics.NoteSimApplyJump();
     }
 
     internal void ApplyGravity(float gravity, PlayerInputState input)

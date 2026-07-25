@@ -32,6 +32,8 @@ public static class DiagnosticsExporter
             AddText(zip, "ReplayMetadata.txt", BuildReplayMetadata());
             AddText(zip, "SteamInputDiagnostics.txt", BuildSteamInputDiagnostics(input));
             AddText(zip, "GamepadDiagnostics.txt", BuildGamepadDiagnostics(input));
+            AddText(zip, "InputEdgeRing.txt", InputDiagnostics.BuildEdgeRingText());
+            AddText(zip, "PhantomInputSummary.txt", InputDiagnostics.BuildPhantomInputSummary(input));
             AddText(zip, "NetworkDiagnostics.txt", BuildNetworkDiagnostics());
             AddText(zip, "LastSessionSummary.txt", BuildLastSessionSummary());
             AddText(zip, "FRIEND_PAD_NOTES.txt", BuildFriendPadNotes());
@@ -123,13 +125,18 @@ public static class DiagnosticsExporter
     private static string BuildFriendPadNotes() =>
         string.Join(Environment.NewLine, new[]
         {
-            "Friend pad troubleshooting",
-            "==========================",
-            "1. If Steam sees a handle but live=no and XInput connected=false → Steam soft-claim / hollow pad.",
+            "Friend pad / phantom input troubleshooting",
+            "==========================================",
+            "1. Open PhantomInputSummary.txt first — verdict hint + EDGE / EDGE_SUPPRESSED / APPLY counts.",
+            "2. Ghost overlays are visual only — they do NOT inject Jump/Respawn/Color.",
+            "3. Search session log for: EDGE_SUPPRESSED | EDGE ... Respawn | APPLY Respawn | SUSPICIOUS",
+            "4. EDGE_SUPPRESSED Jump/Respawn = Soft Claim thrash almost injected phantom (fix blocked it).",
+            "5. EDGE src=Keyboard bind=R → MonoGame R rising edge (not Soft Claim). Check debounce lines.",
+            "6. EDGE src=GamepadSoft softSec=<1.5 unstable=True → Soft Claim fallthrough digitals.",
+            "7. APPLY Respawn without EDGE → latch/UI (pause menu / death), not input EDGE.",
+            "8. If Steam handle live=no and XInput connected=false → soft-claim / hollow pad.",
             "   Workaround: Steam → Color Blocks → Properties → Controller → Steam Input = Disabled.",
-            "2. If live=no but XInput connected=true and sticks move → ownership/party-join bug (send this zip).",
-            "3. If live=yes and Move moves but PartyLastUsed stays Keyboard → party join bug (send this zip).",
-            "4. Prefer official layout; after game update verify install has Steam\\*.vdf."
+            "9. Prefer official layout; after game update verify install has Steam\\*.vdf."
         });
 
     private static string BuildNetworkDiagnostics()

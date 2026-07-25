@@ -89,4 +89,12 @@ public sealed class NetworkInputBuffer
             DroppedFrameCount++;
         }
     }
+
+    /// <summary>
+    /// Drop all stored frames (level restart rewinds tick to 0 — stale edges must not merge).
+    /// </summary>
+    public void Clear()
+    {
+        _frames.Clear();
+    }
 }

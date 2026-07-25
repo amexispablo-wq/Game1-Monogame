@@ -1,4 +1,5 @@
 #nullable enable
+using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using ColorBlocks.Replay;
@@ -10,15 +11,22 @@ public sealed class ReplayViewerScene : IScene
   private readonly ColorBlocksGame _game;
   private readonly string _levelId;
   private readonly string? _replayPathOverride;
+  private readonly int _playerCount;
   private readonly ReplayPlayer _player = new();
   private readonly Camera _camera = new(Vector2.Zero);
   private float _speedMultiplier = 1f;
 
-  public ReplayViewerScene(ColorBlocksGame game, string levelId, string? replayPathOverride = null)
+  public ReplayViewerScene(
+    ColorBlocksGame game,
+    string levelId,
+    string? replayPathOverride = null,
+    int? playerCount = null)
   {
     _game = game;
     _levelId = levelId;
     _replayPathOverride = replayPathOverride;
+    _playerCount = SteamLeaderboardService.ClampPlayerCount(
+      playerCount ?? Math.Max(1, game.Party.Members.Count));
     LoadReplay();
   }
 
@@ -85,7 +93,7 @@ public sealed class ReplayViewerScene : IScene
 
       replayFile = loaded;
     }
-    else if (!ReplayStorage.TryLoadBestReplay(_levelId, out replayFile))
+    else if (!ReplayStorage.TryLoadBestReplay(_levelId, _playerCount, out replayFile))
     {
       return;
     }

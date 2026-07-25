@@ -463,7 +463,7 @@ public sealed class LevelSelectScene : IScene
         if (_watchReplayFocus?.WasActivated == true && _selectedLevelId is not null
             && _detailsHasBestReplay)
         {
-            _game.ChangeScene(new ReplayViewerScene(_game, _selectedLevelId));
+            _game.ChangeScene(new ReplayViewerScene(_game, _selectedLevelId, playerCount: GetLeaderboardPlayerCount()));
             return;
         }
 
@@ -1059,12 +1059,14 @@ public sealed class LevelSelectScene : IScene
 
     private string GetBestTimeText(string levelId)
     {
-        if (BestTimeStorage.TryGetBestTime(levelId, out float bestTime))
+        int playerCount = GetLeaderboardPlayerCount();
+        string label = playerCount == 1 ? "Best" : $"Best ({playerCount}P)";
+        if (BestTimeStorage.TryGetBestTime(levelId, playerCount, out float bestTime))
         {
-            return $"Best: {BestTimeStorage.FormatTime(bestTime)}";
+            return $"{label}: {BestTimeStorage.FormatTime(bestTime)}";
         }
 
-        return "Best: --";
+        return $"{label}: --";
     }
 
     private void LayoutButtons()
@@ -1467,11 +1469,36 @@ public sealed class LevelSelectScene : IScene
         int availableWidth = _game.Viewport.Width;
         if (_selectedLevel != null)
         {
-            int panelWidth = Math.Min(420, Math.Max(320, _game.Viewport.Width / 4));
+            int panelWidth = GetDetailsPanelWidth(_game.Viewport.Width);
             availableWidth = Math.Max(1, _game.Viewport.Width - panelWidth - 40);
         }
 
         _gridLayout = GridLayout.Create(_levels.Count, availableWidth, GetGridLayoutHeight(), CellWidth, CellHeight, HorizontalGap, VerticalGap, minStartY: 118);
+    }
+
+    /// <summary>
+    /// Right-side details panel width flexes with viewport. Never force 320px when screen is tight.
+    /// </summary>
+    private static int GetDetailsPanelWidth(int viewportWidth)
+    {
+        int marginX = Math.Clamp(viewportWidth / 64, 12, 20);
+        int reservedForGrid = Math.Min(220, Math.Max(120, viewportWidth / 3));
+        int maxWidth = Math.Max(160, viewportWidth - (marginX * 2) - reservedForGrid);
+        int preferred = viewportWidth < 1100
+            ? Math.Max(viewportWidth / 4, (viewportWidth * 2) / 5)
+            : viewportWidth / 4;
+        return Math.Clamp(preferred, Math.Min(200, maxWidth), Math.Min(420, maxWidth));
+    }
+
+    private static Rectangle GetDetailsPanelBounds(Viewport viewport)
+    {
+        int marginX = Math.Clamp(viewport.Width / 64, 12, 20);
+        int panelY = Math.Clamp(viewport.Height / 10, 56, 90);
+        int bottomReserve = Math.Clamp(viewport.Height / 6, 80, 170);
+        int panelWidth = GetDetailsPanelWidth(viewport.Width);
+        int panelHeight = Math.Max(160, viewport.Height - panelY - bottomReserve);
+        int panelX = viewport.Width - panelWidth - marginX;
+        return new Rectangle(panelX, panelY, panelWidth, panelHeight);
     }
 
     private bool IsMouseOverButtons()
@@ -1926,14 +1953,15 @@ public sealed class LevelSelectScene : IScene
         _detailsRopeText = string.IsNullOrEmpty(ropeText) ? "None" : ropeText;
         string featureText = GetFeatureText(_selectedLevel);
         _detailsFeaturesText = string.IsNullOrEmpty(featureText) ? "None" : featureText;
-        _detailsBestTimeText = BestTimeStorage.TryGetBestTime(_selectedLevelId, out float bestTime)
+        int playerCount = GetLeaderboardPlayerCount();
+        _detailsBestTimeText = BestTimeStorage.TryGetBestTime(_selectedLevelId, playerCount, out float bestTime)
             ? BestTimeStorage.FormatTime(bestTime)
             : "--";
-        _detailsHasUnofficialBest = BestTimeStorage.TryGetUnofficialBestTime(_selectedLevelId, out float unofficialBest);
+        _detailsHasUnofficialBest = BestTimeStorage.TryGetUnofficialBestTime(_selectedLevelId, playerCount, out float unofficialBest);
         _detailsUnofficialBestText = _detailsHasUnofficialBest
             ? BestTimeStorage.FormatTime(unofficialBest)
             : "";
-        _detailsHasBestReplay = ReplayStorage.HasValidBestReplay(_selectedLevelId);
+        _detailsHasBestReplay = ReplayStorage.HasValidBestReplay(_selectedLevelId, playerCount);
         _detailsSupportsLeaderboards = SteamLeaderboardService.SupportsLeaderboards(_selectedLevelId);
         int wrPlayers = GetLeaderboardPlayerCount();
         _detailsHasWorldRecordReplay = SteamGhostService.SupportsWorldRecordGhost(_selectedLevelId)
@@ -2199,28 +2227,50 @@ public sealed class LevelSelectScene : IScene
 
     private void DrawLevelDetailsPanel(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, bool showPlayStats)
     {
-        int panelWidth = Math.Min(420, Math.Max(320, viewport.Width / 4));
-        int panelX = viewport.Width - panelWidth - 20;
-        int panelY = 90;
-        int panelHeight = Math.Max(320, viewport.Height - 170);
-        _detailsPanelBounds = new Rectangle(panelX, panelY, panelWidth, panelHeight);
+        _detailsPanelBounds = GetDetailsPanelBounds(viewport);
+        int panelX = _detailsPanelBounds.X;
+        int panelY = _detailsPanelBounds.Y;
+        int panelWidth = _detailsPanelBounds.Width;
+        int panelHeight = _detailsPanelBounds.Height;
+
+        DetailsPanelFlex flex = ComputeDetailsPanelFlex(panelWidth, panelHeight, showPlayStats);
 
         spriteBatch.Draw(pixel, _detailsPanelBounds, new Color(25, 30, 40, 240));
         DrawHelper.DrawBorder(spriteBatch, pixel, _detailsPanelBounds, new Color(95, 110, 135), 2);
 
-        var headerBounds = new Rectangle(panelX + 16, panelY + 16, panelWidth - 32, 36);
-        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "LEVEL DETAILS", headerBounds, 2, Color.White);
+        int contentX = panelX + flex.PadX;
+        int contentW = panelWidth - (flex.PadX * 2);
+        int y = panelY + flex.PadTop;
 
-        var nameBounds = new Rectangle(panelX + 16, panelY + 56, panelWidth - 32, 24);
-        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, _detailsLevelName, nameBounds, 2, new Color(210, 220, 235));
+        var headerBounds = new Rectangle(contentX, y, contentW, flex.HeaderH);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "LEVEL DETAILS", headerBounds, flex.TitleScale, Color.White);
+        y += flex.HeaderH;
+
+        var nameBounds = new Rectangle(contentX, y, contentW, flex.NameH);
+        SimpleTextRenderer.DrawCentered(
+            spriteBatch,
+            pixel,
+            TruncateToPanelWidth(_detailsLevelName, contentW, flex.TitleScale),
+            nameBounds,
+            flex.TitleScale,
+            new Color(210, 220, 235));
+        y += flex.NameH;
 
         if (!string.IsNullOrWhiteSpace(_detailsAuthorText))
         {
-            var authorBounds = new Rectangle(panelX + 16, panelY + 82, panelWidth - 32, 20);
-            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, $"by {_detailsAuthorText}", authorBounds, 1, new Color(170, 180, 200));
+            var authorBounds = new Rectangle(contentX, y, contentW, flex.AuthorH);
+            SimpleTextRenderer.DrawCentered(
+                spriteBatch,
+                pixel,
+                TruncateToPanelWidth($"by {_detailsAuthorText}", contentW, flex.SmallScale),
+                authorBounds,
+                flex.SmallScale,
+                new Color(170, 180, 200));
+            y += flex.AuthorH;
         }
 
-        var previewBounds = new Rectangle(panelX + 15, panelY + 108, panelWidth - 30, Math.Min(180, panelHeight / 4));
+        y += flex.HeaderToPreviewGap;
+        var previewBounds = new Rectangle(panelX + flex.PreviewInset, y, panelWidth - (flex.PreviewInset * 2), flex.PreviewH);
         spriteBatch.Draw(pixel, previewBounds, new Color(20, 26, 36));
         DrawHelper.DrawBorder(spriteBatch, pixel, previewBounds, new Color(85, 100, 120), 2);
 
@@ -2230,181 +2280,410 @@ public sealed class LevelSelectScene : IScene
         }
         else
         {
-            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "No Preview Available", previewBounds, 1, new Color(180, 190, 210));
+            SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "No Preview Available", previewBounds, flex.SmallScale, new Color(180, 190, 210));
         }
 
-        int textX = panelX + 20;
-        int textWidth = panelWidth - 40;
-        int y = previewBounds.Bottom + 16;
-        int rowHeight = 28;
+        int textX = contentX;
+        int textWidth = contentW;
+        y = previewBounds.Bottom + flex.AfterPreviewGap;
+        int rowH = flex.RowH;
+        int rowGap = flex.RowGap;
+        int labelScale = flex.BodyScale;
 
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Players:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-        y += rowHeight;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsPlayersText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
-        y += rowHeight + 4;
+        void DrawStatPair(string label, string value, Color valueColor)
+        {
+            SimpleTextRenderer.DrawString(
+                spriteBatch,
+                pixel,
+                TruncateToPanelWidth(label, textWidth, labelScale),
+                new Microsoft.Xna.Framework.Vector2(textX, y),
+                labelScale,
+                new Color(180, 190, 210));
+            y += rowH;
+            SimpleTextRenderer.DrawString(
+                spriteBatch,
+                pixel,
+                TruncateToPanelWidth(value, textWidth, labelScale),
+                new Microsoft.Xna.Framework.Vector2(textX, y),
+                labelScale,
+                valueColor);
+            y += rowH + rowGap;
+        }
 
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Rope:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-        y += rowHeight;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsRopeText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
-        y += rowHeight + 4;
-
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Features:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-        y += rowHeight;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsFeaturesText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
+        DrawStatPair("Players:", _detailsPlayersText, Color.White);
+        DrawStatPair("Rope:", _detailsRopeText, Color.White);
+        DrawStatPair("Features:", _detailsFeaturesText, Color.White);
 
         if (!showPlayStats)
         {
             return;
         }
 
-        y += rowHeight + 4;
-
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "Best Time:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-        y += rowHeight;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsBestTimeText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
-        y += rowHeight + 4;
+        int bestPlayers = GetLeaderboardPlayerCount();
+        DrawStatPair(
+            bestPlayers == 1 ? "Best Time:" : $"Best Time ({bestPlayers}P):",
+            _detailsBestTimeText,
+            Color.White);
 
         if (_detailsHasUnofficialBest)
         {
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Unofficial Best:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-            y += rowHeight;
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsUnofficialBestText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(200, 180, 140));
-            y += rowHeight + 8;
+            DrawStatPair(
+                bestPlayers == 1 ? "Unofficial Best:" : $"Unofficial Best ({bestPlayers}P):",
+                _detailsUnofficialBestText,
+                new Color(200, 180, 140));
+            y += flex.UnofficialExtraGap;
         }
 
         if (_detailsSupportsLeaderboards)
         {
             int wrPlayers = GetLeaderboardPlayerCount();
-            SimpleTextRenderer.DrawString(
-                spriteBatch,
-                pixel,
+            DrawStatPair(
                 wrPlayers == 1 ? "World Record:" : $"World Record ({wrPlayers}P):",
-                new Microsoft.Xna.Framework.Vector2(textX, y),
-                2,
-                new Color(180, 190, 210));
-            y += rowHeight;
-            SimpleTextRenderer.DrawString(
-                spriteBatch,
-                pixel,
                 _detailsWorldRecordText ?? "--",
-                new Microsoft.Xna.Framework.Vector2(textX, y),
-                2,
                 new Color(255, 210, 90));
-            y += rowHeight + 4;
         }
 
         if (_detailsWorkshopVotesText is not null)
         {
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Workshop Rating:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-            y += rowHeight;
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopVotesText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
-            y += rowHeight + 4;
+            DrawStatPair("Workshop Rating:", _detailsWorkshopVotesText, Color.White);
         }
 
         if (_detailsWorkshopSubsText is not null)
         {
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Subscribers:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-            y += rowHeight;
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopSubsText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
-            y += rowHeight + 4;
+            DrawStatPair("Subscribers:", _detailsWorkshopSubsText, Color.White);
         }
 
         if (_detailsWorkshopVisibilityText is not null)
         {
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Visibility:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-            y += rowHeight;
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopVisibilityText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
-            y += rowHeight + 4;
+            DrawStatPair("Visibility:", _detailsWorkshopVisibilityText, Color.White);
         }
 
         if (_detailsWorkshopPublishedText is not null)
         {
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Published:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-            y += rowHeight;
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopPublishedText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
-            y += rowHeight + 4;
+            DrawStatPair("Published:", _detailsWorkshopPublishedText, Color.White);
         }
 
         if (_detailsWorkshopUpdatedText is not null)
         {
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Updated:", new Microsoft.Xna.Framework.Vector2(textX, y), 2, new Color(180, 190, 210));
-            y += rowHeight;
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, _detailsWorkshopUpdatedText, new Microsoft.Xna.Framework.Vector2(textX, y), 2, Color.White);
-            y += rowHeight + 4;
+            DrawStatPair("Updated:", _detailsWorkshopUpdatedText, Color.White);
         }
 
         if (_watchReplayButton != null)
         {
-            _watchReplayButton.Bounds = new Rectangle(textX, y, textWidth, 40);
+            _watchReplayButton.Bounds = new Rectangle(textX, y, textWidth, flex.ButtonH);
             _watchReplayButton.FillColor = _detailsHasBestReplay ? new Color(52, 61, 80) : new Color(40, 46, 58);
             _watchReplayButton.TextColor = _detailsHasBestReplay ? Color.White : new Color(140, 150, 165);
             _watchReplayButton.Draw(spriteBatch, pixel);
-            y = _watchReplayButton.Bounds.Bottom + 8;
+            y = _watchReplayButton.Bounds.Bottom + flex.ButtonGap;
         }
 
         if (_watchWorldRecordButton != null && _detailsSupportsLeaderboards)
         {
             bool wrReady = _detailsHasWorldRecordReplay || _detailsWorldRecordText is not null && _detailsWorldRecordText != "--";
-            _watchWorldRecordButton.Bounds = new Rectangle(textX, y, textWidth, 40);
+            _watchWorldRecordButton.Bounds = new Rectangle(textX, y, textWidth, flex.ButtonH);
             _watchWorldRecordButton.FillColor = wrReady ? new Color(52, 61, 80) : new Color(40, 46, 58);
             _watchWorldRecordButton.TextColor = wrReady ? Color.White : new Color(140, 150, 165);
             _watchWorldRecordButton.Draw(spriteBatch, pixel);
-            y = _watchWorldRecordButton.Bounds.Bottom + 8;
+            y = _watchWorldRecordButton.Bounds.Bottom + flex.ButtonGap;
         }
 
         if (_leaderboardButton != null && _detailsSupportsLeaderboards)
         {
-            _leaderboardButton.Bounds = new Rectangle(textX, y, textWidth, 40);
+            _leaderboardButton.Bounds = new Rectangle(textX, y, textWidth, flex.ButtonH);
             _leaderboardButton.FillColor = new Color(52, 61, 80);
             _leaderboardButton.TextColor = Color.White;
             _leaderboardButton.Draw(spriteBatch, pixel);
-            y = _leaderboardButton.Bounds.Bottom + 10;
+            y = _leaderboardButton.Bounds.Bottom + flex.OptionsTopGap;
         }
 
-        // Play options cascade under Watch Replay (flex column inside details panel).
-        const int optionHeight = 26;
-        const int optionGap = 8;
+        // Play options cascade under actions (flex column inside details panel).
         if (_lavaRiseCheckbox != null)
         {
-            _lavaRiseCheckbox.Bounds = new Rectangle(textX, y, textWidth, optionHeight);
+            _lavaRiseCheckbox.Bounds = new Rectangle(textX, y, textWidth, flex.OptionH);
             _lavaRiseCheckbox.Draw(spriteBatch, pixel);
-            y += optionHeight + optionGap;
+            y += flex.OptionH + flex.OptionGap;
         }
 
         if (_playerCollisionCheckbox != null)
         {
-            _playerCollisionCheckbox.Bounds = new Rectangle(textX, y, textWidth, optionHeight);
+            _playerCollisionCheckbox.Bounds = new Rectangle(textX, y, textWidth, flex.OptionH);
             _playerCollisionCheckbox.Draw(spriteBatch, pixel);
-            y += optionHeight + optionGap;
+            y += flex.OptionH + flex.OptionGap;
         }
 
         if (_ghostModeSelector != null)
         {
-            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Ghost:", new Microsoft.Xna.Framework.Vector2(textX, y), 1, new Color(180, 190, 210));
-            y += 18;
-            _ghostModeSelector.Bounds = new Rectangle(textX, y, textWidth, 36);
+            SimpleTextRenderer.DrawString(spriteBatch, pixel, "Ghost:", new Microsoft.Xna.Framework.Vector2(textX, y), flex.SmallScale, new Color(180, 190, 210));
+            y += flex.GhostLabelH;
+            _ghostModeSelector.Bounds = new Rectangle(textX, y, textWidth, flex.GhostSelectorH);
             _ghostModeSelector.Draw(spriteBatch, pixel);
-            y = _ghostModeSelector.Bounds.Bottom + optionGap;
+            y = _ghostModeSelector.Bounds.Bottom + flex.OptionGap;
         }
 
         if (!AreCurrentPlaySettingsOfficial())
         {
-            var warnBounds = new Rectangle(textX, y, textWidth, 40);
             SimpleTextRenderer.DrawString(
                 spriteBatch,
                 pixel,
-                "UNOFFICIAL RUN",
+                TruncateToPanelWidth("UNOFFICIAL RUN", textWidth, flex.BodyScale),
                 new Microsoft.Xna.Framework.Vector2(textX, y),
-                2,
+                flex.BodyScale,
                 new Color(230, 70, 70));
             SimpleTextRenderer.DrawString(
                 spriteBatch,
                 pixel,
-                "Options won't count for best run",
-                new Microsoft.Xna.Framework.Vector2(textX, y + 20),
-                1,
+                TruncateToPanelWidth("Options won't count for best run", textWidth, flex.SmallScale),
+                new Microsoft.Xna.Framework.Vector2(textX, y + flex.WarnLineGap),
+                flex.SmallScale,
                 new Color(230, 90, 90));
         }
+    }
+
+    private struct DetailsPanelFlex
+    {
+        public int PadX;
+        public int PadTop;
+        public int HeaderH;
+        public int NameH;
+        public int AuthorH;
+        public int HeaderToPreviewGap;
+        public int PreviewInset;
+        public int PreviewH;
+        public int AfterPreviewGap;
+        public int RowH;
+        public int RowGap;
+        public int UnofficialExtraGap;
+        public int ButtonH;
+        public int ButtonGap;
+        public int OptionsTopGap;
+        public int OptionH;
+        public int OptionGap;
+        public int GhostLabelH;
+        public int GhostSelectorH;
+        public int WarnLineGap;
+        public int TitleScale;
+        public int BodyScale;
+        public int SmallScale;
+    }
+
+    private DetailsPanelFlex ComputeDetailsPanelFlex(int panelWidth, int panelHeight, bool showPlayStats)
+    {
+        bool hasAuthor = !string.IsNullOrWhiteSpace(_detailsAuthorText);
+        bool compact = panelHeight < 560 || panelWidth < 300;
+
+        int padX = compact ? 12 : 20;
+        int padTop = compact ? 10 : 16;
+        int headerH = compact ? 28 : 36;
+        int nameH = compact ? 20 : 24;
+        int authorH = hasAuthor ? (compact ? 16 : 20) : 0;
+        int headerToPreviewGap = compact ? 6 : 12;
+        int previewInset = compact ? 10 : 15;
+        int preferredPreview = Math.Min(compact ? 120 : 180, Math.Max(60, panelHeight / 4));
+        int afterPreviewGap = compact ? 8 : 16;
+        int rowH = compact ? 20 : 28;
+        int rowGap = compact ? 2 : 4;
+        int unofficialExtra = 4;
+        int buttonH = compact ? 32 : 40;
+        int buttonGap = compact ? 6 : 8;
+        int optionsTopGap = compact ? 6 : 10;
+        int optionH = compact ? 22 : 26;
+        int optionGap = compact ? 4 : 8;
+        int ghostLabelH = compact ? 14 : 18;
+        int ghostSelectorH = compact ? 28 : 36;
+        int warnH = 40;
+        int warnLineGap = 18;
+        int titleScale = compact && panelWidth < 260 ? 1 : 2;
+        int bodyScale = compact && panelWidth < 260 ? 1 : 2;
+        int smallScale = 1;
+
+        int StatBlock(int pairs) => pairs * ((rowH * 2) + rowGap);
+
+        int preferred =
+            padTop
+            + headerH
+            + nameH
+            + authorH
+            + headerToPreviewGap
+            + preferredPreview
+            + afterPreviewGap
+            + StatBlock(3); // players, rope, features
+
+        if (showPlayStats)
+        {
+            preferred += StatBlock(1); // best time
+            if (_detailsHasUnofficialBest)
+            {
+                preferred += StatBlock(1) + unofficialExtra;
+            }
+
+            if (_detailsSupportsLeaderboards)
+            {
+                preferred += StatBlock(1);
+            }
+
+            if (_detailsWorkshopVotesText is not null)
+            {
+                preferred += StatBlock(1);
+            }
+
+            if (_detailsWorkshopSubsText is not null)
+            {
+                preferred += StatBlock(1);
+            }
+
+            if (_detailsWorkshopVisibilityText is not null)
+            {
+                preferred += StatBlock(1);
+            }
+
+            if (_detailsWorkshopPublishedText is not null)
+            {
+                preferred += StatBlock(1);
+            }
+
+            if (_detailsWorkshopUpdatedText is not null)
+            {
+                preferred += StatBlock(1);
+            }
+
+            if (_watchReplayButton != null)
+            {
+                preferred += buttonH + buttonGap;
+            }
+
+            if (_watchWorldRecordButton != null && _detailsSupportsLeaderboards)
+            {
+                preferred += buttonH + buttonGap;
+            }
+
+            if (_leaderboardButton != null && _detailsSupportsLeaderboards)
+            {
+                preferred += buttonH + optionsTopGap;
+            }
+
+            if (_lavaRiseCheckbox != null)
+            {
+                preferred += optionH + optionGap;
+            }
+
+            if (_playerCollisionCheckbox != null)
+            {
+                preferred += optionH + optionGap;
+            }
+
+            if (_ghostModeSelector != null)
+            {
+                preferred += ghostLabelH + ghostSelectorH + optionGap;
+            }
+
+            if (!AreCurrentPlaySettingsOfficial())
+            {
+                preferred += warnH;
+            }
+        }
+
+        int available = Math.Max(1, panelHeight - 8);
+        int deficit = preferred - available;
+        int previewH = preferredPreview;
+
+        if (deficit > 0)
+        {
+            int previewShrink = Math.Min(deficit, Math.Max(0, previewH - 48));
+            previewH -= previewShrink;
+            deficit -= previewShrink;
+        }
+
+        if (deficit > 0)
+        {
+            int gapShrink = Math.Min(deficit, afterPreviewGap - 4);
+            afterPreviewGap -= Math.Max(0, gapShrink);
+            deficit -= Math.Max(0, gapShrink);
+        }
+
+        if (deficit > 0 && rowH > 16)
+        {
+            int rowShrink = Math.Min(rowH - 16, (deficit + 7) / 8);
+            rowH -= rowShrink;
+            deficit -= rowShrink * 8;
+        }
+
+        if (deficit > 0 && buttonH > 26)
+        {
+            int buttonShrink = Math.Min(buttonH - 26, (deficit + 2) / 3);
+            buttonH -= buttonShrink;
+            deficit -= buttonShrink * 3;
+        }
+
+        if (deficit > 0 && optionH > 18)
+        {
+            int optionShrink = Math.Min(optionH - 18, (deficit + 1) / 2);
+            optionH -= optionShrink;
+            deficit -= optionShrink * 2;
+        }
+
+        if (deficit > 0 && ghostSelectorH > 24)
+        {
+            int ghostShrink = Math.Min(deficit, ghostSelectorH - 24);
+            ghostSelectorH -= ghostShrink;
+        }
+
+        return new DetailsPanelFlex
+        {
+            PadX = padX,
+            PadTop = padTop,
+            HeaderH = headerH,
+            NameH = nameH,
+            AuthorH = authorH,
+            HeaderToPreviewGap = headerToPreviewGap,
+            PreviewInset = previewInset,
+            PreviewH = previewH,
+            AfterPreviewGap = afterPreviewGap,
+            RowH = rowH,
+            RowGap = rowGap,
+            UnofficialExtraGap = unofficialExtra,
+            ButtonH = buttonH,
+            ButtonGap = buttonGap,
+            OptionsTopGap = optionsTopGap,
+            OptionH = optionH,
+            OptionGap = optionGap,
+            GhostLabelH = ghostLabelH,
+            GhostSelectorH = ghostSelectorH,
+            WarnLineGap = warnLineGap,
+            TitleScale = titleScale,
+            BodyScale = bodyScale,
+            SmallScale = smallScale
+        };
+    }
+
+    private static string TruncateToPanelWidth(string text, int maxWidth, int scale)
+    {
+        if (string.IsNullOrEmpty(text) || maxWidth <= 0)
+        {
+            return text ?? string.Empty;
+        }
+
+        if (SimpleTextRenderer.MeasureString(text, scale).X <= maxWidth)
+        {
+            return text;
+        }
+
+        const string ellipsis = "...";
+        int ellipsisWidth = SimpleTextRenderer.MeasureString(ellipsis, scale).X;
+        if (ellipsisWidth >= maxWidth)
+        {
+            return string.Empty;
+        }
+
+        for (int len = text.Length - 1; len >= 1; len--)
+        {
+            string candidate = text[..len] + ellipsis;
+            if (SimpleTextRenderer.MeasureString(candidate, scale).X <= maxWidth)
+            {
+                return candidate;
+            }
+        }
+
+        return ellipsis;
     }
 
     private bool AreCurrentPlaySettingsOfficial()
@@ -2745,7 +3024,7 @@ public sealed class LevelSelectScene : IScene
         }
 
         bool supportsWr = SteamGhostService.SupportsWorldRecordGhost(levelId);
-        bool hasPb = ReplayStorage.HasValidBestReplay(levelId);
+        bool hasPb = ReplayStorage.HasValidBestReplay(levelId, GetLeaderboardPlayerCount());
 
         GhostMode result = mode;
         if (!supportsWr && result.IncludesWorldRecord())

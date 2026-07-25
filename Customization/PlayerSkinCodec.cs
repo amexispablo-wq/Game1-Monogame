@@ -98,8 +98,7 @@ public static class PlayerSkinCodec
         var parts = new string[localMembers.Count];
         for (int i = 0; i < localMembers.Count; i++)
         {
-            PartyMember member = localMembers[i];
-            PlayerSkinData? skin = SkinLibraryStorage.GetSkinForMember(member.Id);
+            PlayerSkinData? skin = SkinLibraryStorage.GetSkinForLocalSlot(i);
             parts[i] = ToBase64(skin);
         }
 
@@ -151,8 +150,14 @@ public static class PlayerSkinCodec
     {
         if (member.IsLocallyOwned)
         {
-            string? skinId = SkinLibraryStorage.GetSelectedSkinId(member.Id);
-            return (SkinLibraryStorage.GetSkinForMember(member.Id), skinId);
+            int localSlot = LocalSlotIndex(members, member);
+            if (localSlot < 0)
+            {
+                return (null, null);
+            }
+
+            string? skinId = SkinLibraryStorage.GetSelectedSkinId(localSlot);
+            return (SkinLibraryStorage.GetSkinForLocalSlot(localSlot), skinId);
         }
 
         if (lobby is null || !lobby.IsInLobby || member.OwningSteamId == 0)

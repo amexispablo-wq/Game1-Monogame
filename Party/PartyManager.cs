@@ -10,6 +10,8 @@ public sealed class PartyManager
     public const int MaxMembers = 4;
 
     private readonly List<PartyMember> _members = new();
+    private readonly Dictionary<PartyMemberId, int> _menuDanceStyles = new();
+    private readonly Random _menuDanceRandom = new();
     private int _nextMemberId = 1;
     private SteamLobbyService? _steamLobby;
     private SteamPartyService? _steamParty;
@@ -17,6 +19,7 @@ public sealed class PartyManager
     public string LocalSteamUsername { get; set; } = "Unavailable";
 
     public IReadOnlyList<PartyMember> Members => _members;
+    public const int MenuDanceStyleCount = 4;
     public bool AssignmentsLocked { get; private set; }
     public bool IsInSteamLobby => _steamLobby?.IsInLobby == true;
     public ulong? LobbyId => IsInSteamLobby ? _steamLobby!.CurrentLobbyId : null;
@@ -40,6 +43,77 @@ public sealed class PartyManager
 
     public event Action? Changed;
     public event Action<SteamPartyError, string>? ErrorOccurred;
+
+    /// <summary>
+    /// Assigns unique menu dance styles (0..3) per current party member for this party session.
+    /// Styles free when members leave; new members roll among remaining styles.
+    /// </summary>
+    public void EnsureMenuDanceStyles()
+    {
+        var alive = new HashSet<PartyMemberId>();
+        for (int i = 0; i < _members.Count; i++)
+        {
+            alive.Add(_members[i].Id);
+        }
+
+        if (_menuDanceStyles.Count > 0)
+        {
+            List<PartyMemberId>? stale = null;
+            foreach (KeyValuePair<PartyMemberId, int> pair in _menuDanceStyles)
+            {
+                if (!alive.Contains(pair.Key))
+                {
+                    stale ??= new List<PartyMemberId>();
+                    stale.Add(pair.Key);
+                }
+            }
+
+            if (stale is not null)
+            {
+                for (int i = 0; i < stale.Count; i++)
+                {
+                    _menuDanceStyles.Remove(stale[i]);
+                }
+            }
+        }
+
+        var used = new HashSet<int>();
+        foreach (int style in _menuDanceStyles.Values)
+        {
+            used.Add(style);
+        }
+
+        Span<int> free = stackalloc int[MenuDanceStyleCount];
+        for (int i = 0; i < _members.Count; i++)
+        {
+            PartyMemberId id = _members[i].Id;
+            if (_menuDanceStyles.ContainsKey(id))
+            {
+                continue;
+            }
+
+            int freeCount = 0;
+            for (int style = 0; style < MenuDanceStyleCount; style++)
+            {
+                if (!used.Contains(style))
+                {
+                    free[freeCount++] = style;
+                }
+            }
+
+            if (freeCount == 0)
+            {
+                break;
+            }
+
+            int pick = free[_menuDanceRandom.Next(freeCount)];
+            _menuDanceStyles[id] = pick;
+            used.Add(pick);
+        }
+    }
+
+    public bool TryGetMenuDanceStyle(PartyMemberId id, out int style) =>
+        _menuDanceStyles.TryGetValue(id, out style);
 
     public void BindSteamServices(SteamLobbyService lobby, SteamPartyService party)
     {
@@ -386,6 +460,7 @@ public sealed class PartyManager
         ulong previousLeaderSteamId = Leader?.OwningSteamId ?? 0;
         int previousCount = _members.Count;
         _members.Clear();
+        _nextMemberId = 1;
         int applied = 0;
         foreach (PartyRosterEntry entry in entries)
         {

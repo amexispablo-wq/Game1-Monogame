@@ -255,7 +255,8 @@ public sealed class LeaderboardScene : IScene
             Color fill = GetRowFill(entry, index == 0 && _scope == LeaderboardScope.GlobalTop && _scrollOffset == 0);
             spriteBatch.Draw(pixel, row, fill);
 
-            string players = FormatPlayers(entry);
+            LeaderboardColumns cols = ComputeColumns(row.Width);
+            string players = FormatPlayers(entry, cols.PlayersWidth);
             string date = entry.CompletionDateUtc == default
                 ? "--"
                 : entry.CompletionDateUtc.ToLocalTime().ToString("yyyy-MM-dd");
@@ -266,6 +267,7 @@ public sealed class LeaderboardScene : IScene
                 spriteBatch,
                 pixel,
                 row,
+                cols,
                 $"#{entry.Rank}",
                 time,
                 players,
@@ -298,40 +300,164 @@ public sealed class LeaderboardScene : IScene
         return new Color(32, 40, 54);
     }
 
-    private static string FormatPlayers(SteamLeaderboardEntry entry)
+    private static string FormatPlayers(SteamLeaderboardEntry entry, int maxWidth)
     {
         if (entry.PlayerNames.Count == 0)
         {
             return entry.PlayerCount <= 1 ? "—" : $"{entry.PlayerCount}P";
         }
 
-        if (entry.PlayerNames.Count == 1)
-        {
-            return Truncate(entry.PlayerNames[0], 18);
-        }
+        string text = entry.PlayerNames.Count == 1
+            ? entry.PlayerNames[0]
+            : string.Join(", ", entry.PlayerNames);
 
-        return Truncate(string.Join(", ", entry.PlayerNames), 22);
+        return TruncateToWidth(text, maxWidth, scale: 2);
     }
 
-    private static string Truncate(string text, int maxChars)
+    private static string TruncateToWidth(string text, int maxWidth, int scale)
     {
-        if (string.IsNullOrEmpty(text) || text.Length <= maxChars)
+        if (string.IsNullOrEmpty(text) || maxWidth <= 0)
+        {
+            return text ?? string.Empty;
+        }
+
+        if (SimpleTextRenderer.MeasureString(text, scale).X <= maxWidth)
         {
             return text;
         }
 
-        return text[..(maxChars - 1)] + "…";
+        const string ellipsis = "...";
+        int ellipsisWidth = SimpleTextRenderer.MeasureString(ellipsis, scale).X;
+        if (ellipsisWidth >= maxWidth)
+        {
+            return string.Empty;
+        }
+
+        for (int len = text.Length - 1; len >= 1; len--)
+        {
+            string candidate = text[..len] + ellipsis;
+            if (SimpleTextRenderer.MeasureString(candidate, scale).X <= maxWidth)
+            {
+                return candidate;
+            }
+        }
+
+        return ellipsis;
     }
 
     private void DrawColumnLabels(SpriteBatch spriteBatch, Texture2D pixel, Rectangle row, Color color)
     {
-        DrawColumns(spriteBatch, pixel, row, "Rank", "Time", "Players", "Date", "Ver", "Mode", color);
+        LeaderboardColumns cols = ComputeColumns(row.Width);
+        DrawColumns(spriteBatch, pixel, row, cols, "Rank", "Time", "Players", "Date", "Ver", "Mode", color);
+    }
+
+    private struct LeaderboardColumns
+    {
+        public int RankX;
+        public int TimeX;
+        public int PlayersX;
+        public int DateX;
+        public int VerX;
+        public int ModeX;
+        public int PlayersWidth;
+    }
+
+    /// <summary>
+    /// Flex table: Rank/Time/Date/Ver/Mode keep preferred widths; Players fills leftover space.
+    /// On narrow tables, fixed columns shrink first so Players still gets usable room.
+    /// </summary>
+    private static LeaderboardColumns ComputeColumns(int rowWidth)
+    {
+        const int edgePad = 8;
+        const int gap = 12;
+        int inner = Math.Max(1, rowWidth - (edgePad * 2));
+
+        int rankW = 56;
+        int timeW = 100;
+        int dateW = 120;
+        int verW = 56;
+        int modeW = 56;
+        int fixedTotal = rankW + timeW + dateW + verW + modeW + (gap * 5);
+        int playersW = inner - fixedTotal;
+
+        const int minPlayers = 80;
+        if (playersW < minPlayers)
+        {
+            int need = minPlayers - Math.Max(0, playersW);
+            // Shrink fixed columns proportionally until Players has min room (or floor reached).
+            while (need > 0)
+            {
+                int before = need;
+                if (dateW > 72)
+                {
+                    dateW--;
+                    need--;
+                }
+                else if (timeW > 72)
+                {
+                    timeW--;
+                    need--;
+                }
+                else if (modeW > 40)
+                {
+                    modeW--;
+                    need--;
+                }
+                else if (verW > 40)
+                {
+                    verW--;
+                    need--;
+                }
+                else if (rankW > 40)
+                {
+                    rankW--;
+                    need--;
+                }
+                else
+                {
+                    break;
+                }
+
+                if (need == before)
+                {
+                    break;
+                }
+            }
+
+            fixedTotal = rankW + timeW + dateW + verW + modeW + (gap * 5);
+            playersW = Math.Max(40, inner - fixedTotal);
+        }
+
+        int x = edgePad;
+        int rankX = x;
+        x += rankW + gap;
+        int timeX = x;
+        x += timeW + gap;
+        int playersX = x;
+        x += playersW + gap;
+        int dateX = x;
+        x += dateW + gap;
+        int verX = x;
+        x += verW + gap;
+        int modeX = x;
+
+        return new LeaderboardColumns
+        {
+            RankX = rankX,
+            TimeX = timeX,
+            PlayersX = playersX,
+            DateX = dateX,
+            VerX = verX,
+            ModeX = modeX,
+            PlayersWidth = playersW
+        };
     }
 
     private static void DrawColumns(
         SpriteBatch spriteBatch,
         Texture2D pixel,
         Rectangle row,
+        LeaderboardColumns cols,
         string rank,
         string time,
         string players,
@@ -340,14 +466,14 @@ public sealed class LeaderboardScene : IScene
         string mode,
         Color color)
     {
-        int x = row.X + 8;
         int y = row.Y + (row.Height - 16) / 2;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, rank, new Vector2(x, y), 2, color);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, time, new Vector2(x + 70, y), 2, color);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, players, new Vector2(x + 180, y), 2, color);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, date, new Vector2(x + 420, y), 2, color);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, version, new Vector2(x + 560, y), 2, color);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, mode, new Vector2(x + 620, y), 2, color);
+        int baseX = row.X;
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, rank, new Vector2(baseX + cols.RankX, y), 2, color);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, time, new Vector2(baseX + cols.TimeX, y), 2, color);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, players, new Vector2(baseX + cols.PlayersX, y), 2, color);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, date, new Vector2(baseX + cols.DateX, y), 2, color);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, version, new Vector2(baseX + cols.VerX, y), 2, color);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, mode, new Vector2(baseX + cols.ModeX, y), 2, color);
     }
 
     private Color ScopeFill(LeaderboardScope scope) =>

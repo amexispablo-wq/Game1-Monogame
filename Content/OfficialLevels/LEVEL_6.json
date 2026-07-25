@@ -283,9 +283,9 @@
     },
     {
       "x": 832,
-      "y": -2048,
+      "y": -2016,
       "width": 384,
-      "height": 64,
+      "height": 32,
       "color": "Green"
     },
     {
@@ -306,7 +306,7 @@
       "x": 1024,
       "y": -2496,
       "width": 192,
-      "height": 448,
+      "height": 480,
       "color": "Green"
     },
     {
@@ -2413,8 +2413,8 @@
     }
   ],
   "playerSpawn": {
-    "x": 480,
-    "y": 128
+    "x": 576,
+    "y": 32
   },
   "playerSpawnColor": "Red",
   "musicId": "default_track_01",
@@ -2435,8 +2435,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-07-22T04:26:22.2495587Z",
-  "modifiedDate": "2026-07-22T06:12:59.6724527Z",
-  "version": 40,
+  "modifiedDate": "2026-07-24T16:17:33.8177609Z",
+  "version": 44,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

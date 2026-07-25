@@ -92,9 +92,16 @@ public static class SettingsManager
         settings.GamepadBindings ??= new Dictionary<string, string>();
         settings.SoundEffects ??= GameSettings.CreateDefaultSoundEffects();
 
-        foreach (KeyValuePair<string, bool> effect in GameSettings.CreateDefaultSoundEffects())
+        foreach (KeyValuePair<string, float> effect in GameSettings.CreateDefaultSoundEffects())
         {
             settings.SoundEffects.TryAdd(effect.Key, effect.Value);
+        }
+
+        string[] soundEffectKeys = new string[settings.SoundEffects.Count];
+        settings.SoundEffects.Keys.CopyTo(soundEffectKeys, 0);
+        foreach (string key in soundEffectKeys)
+        {
+            settings.SoundEffects[key] = Math.Clamp(settings.SoundEffects[key], 0f, 1f);
         }
 
         bool migratingOldJumpDefault = !settings.Keybindings.ContainsKey("PullRope")
@@ -128,7 +135,7 @@ public static class SettingsManager
             Keybindings = new Dictionary<string, string>(source.Keybindings),
             GamepadBindings = new Dictionary<string, string>(source.GamepadBindings),
             ColorMode = source.ColorMode,
-            SoundEffects = new Dictionary<string, bool>(source.SoundEffects)
+            SoundEffects = new Dictionary<string, float>(source.SoundEffects)
         };
     }
 

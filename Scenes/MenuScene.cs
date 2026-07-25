@@ -24,9 +24,11 @@ public sealed class MenuScene : IScene
     private readonly FocusableButton _quitFocus;
     private readonly FocusableButton _sandboxFocus;
     private readonly bool _showSandboxButton;
+    private readonly MenuPartyDanceStage _danceStage = new();
     private ButtonColumnLayout _layout = null!;
 
     private const string TitleText = "COLOR BLOCKS";
+    private const int FooterHeight = 160;
 
     public MenuScene(ColorBlocksGame game)
     {
@@ -45,6 +47,7 @@ public sealed class MenuScene : IScene
     public void Update(GameTime gameTime)
     {
         LayoutButtons();
+        _danceStage.Update(gameTime, _game);
 
         _focus.Clear();
         int playIndex = _focus.Add(_playFocus, "Play");
@@ -127,7 +130,7 @@ public sealed class MenuScene : IScene
 
         spriteBatch.Draw(
             pixel,
-            new Rectangle(0, viewport.Height - 160, viewport.Width, 160),
+            new Rectangle(0, viewport.Height - FooterHeight, viewport.Width, FooterHeight),
             ReplayMenuBackground.IsActive(_game) ? new Color(22, 26, 34, 180) : new Color(22, 26, 34));
 
         if (_layout.HasTitle)
@@ -140,6 +143,8 @@ public sealed class MenuScene : IScene
                 _layout.TitleScale,
                 Color.White);
         }
+
+        _danceStage.Draw(spriteBatch, pixel, _game);
 
         _playButton.Draw(spriteBatch, pixel);
         _partyButton.Draw(spriteBatch, pixel);
@@ -170,6 +175,39 @@ public sealed class MenuScene : IScene
             buttonHeight: 56,
             verticalGap: 20,
             titleText: TitleText);
+
+        int margin = Math.Max(20, viewport.Width / 48);
+        int stageWidth = Math.Clamp((int)(viewport.Width * 0.32f), 220, 420);
+        if (_layout.ButtonBounds.Length > 0)
+        {
+            int desiredButtonLeft = margin + stageWidth + 20;
+            int currentButtonLeft = _layout.ButtonBounds[0].X;
+            int buttonWidth = _layout.ButtonBounds[0].Width;
+            int maxShift = Math.Max(0, viewport.Width - margin - buttonWidth - currentButtonLeft);
+            int shift = Math.Clamp(desiredButtonLeft - currentButtonLeft, 0, maxShift);
+
+            if (shift > 0)
+            {
+                for (int i = 0; i < _layout.ButtonBounds.Length; i++)
+                {
+                    Rectangle b = _layout.ButtonBounds[i];
+                    _layout.ButtonBounds[i] = new Rectangle(b.X + shift, b.Y, b.Width, b.Height);
+                }
+            }
+
+            int stageRight = _layout.ButtonBounds[0].X - 16;
+            stageWidth = Math.Max(160, Math.Min(stageWidth, stageRight - margin));
+        }
+
+        int stageTop = _layout.HasTitle
+            ? _layout.TitleBounds.Bottom + Math.Max(12, viewport.Height / 40)
+            : Math.Max(24, viewport.Height / 20);
+        int stageBottom = viewport.Height - FooterHeight - 12;
+        _danceStage.SetBounds(new Rectangle(
+            margin,
+            stageTop,
+            stageWidth,
+            Math.Max(80, stageBottom - stageTop)));
 
         if (_layout.ButtonBounds.Length >= 6)
         {

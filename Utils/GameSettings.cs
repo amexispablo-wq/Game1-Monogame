@@ -33,11 +33,12 @@ public sealed class GameSettings
         { "Red", "J" },
         { "Blue", "K" },
         { "Green", "L" },
-        { "PullRope", "Space" }
+        { "PullRope", "Space" },
+        { "RestartLevel", "F5" }
     };
 
     // Optional per-action gamepad button overrides. Empty = use GamepadDefaults.
-    // Only button-style actions are rebindable (Jump, Respawn, Red, Blue, Green).
+    // Button-style rebindable: Jump, Respawn, RestartLevel, Red, Blue, Green, etc.
     [JsonPropertyName("GamepadBindings")]
     public Dictionary<string, string> GamepadBindings { get; set; } = new();
 
@@ -45,22 +46,23 @@ public sealed class GameSettings
     public ColorMode ColorMode { get; set; } = ColorMode.Normal;
 
     [JsonPropertyName("SoundEffects")]
-    public Dictionary<string, bool> SoundEffects { get; set; } = CreateDefaultSoundEffects();
+    [JsonConverter(typeof(SoundEffectVolumeDictionaryConverter))]
+    public Dictionary<string, float> SoundEffects { get; set; } = CreateDefaultSoundEffects();
 
-    public static Dictionary<string, bool> CreateDefaultSoundEffects()
+    public static Dictionary<string, float> CreateDefaultSoundEffects()
     {
-        return new Dictionary<string, bool>
+        return new Dictionary<string, float>
         {
-            { "Jump", true },
-            { "PullRope", true },
-            { "Red", true },
-            { "Blue", true },
-            { "Green", true },
-            { "Checkpoint", true },
-            { "PhysicsExpulsion", true },
-            { "LaunchPad", true },
-            { "MenuNavigation", true },
-            { "Lava", true }
+            { "Jump", 1f },
+            { "PullRope", 1f },
+            { "Red", 1f },
+            { "Blue", 1f },
+            { "Green", 1f },
+            { "Checkpoint", 1f },
+            { "PhysicsExpulsion", 1f },
+            { "LaunchPad", 1f },
+            { "MenuNavigation", 1f },
+            { "Lava", 1f }
         };
     }
 }

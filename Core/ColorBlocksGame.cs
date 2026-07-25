@@ -24,6 +24,8 @@ public class ColorBlocksGame : Game
     private readonly SteamGhostService _steamGhosts;
     private readonly SteamWorkshopService _steamWorkshop;
     private readonly PartyHudOverlay _partyHud = new();
+    private Popup? _partyInvitePopup;
+    private ulong _partyInvitePopupLobbyId;
     private readonly MusicManager _music = new();
     private readonly SfxManager _sfx = new();
     private readonly AudioOutputHotSwap _audioOutputHotSwap = new();
@@ -199,6 +201,19 @@ public class ColorBlocksGame : Game
 
         // Guest may have received START while on a scene that did not listen yet.
         _levelStartRouter.TryApplyPending();
+
+        bool inLevel = scene is GameScene;
+        _steamInvites.SetInLevel(inLevel);
+        if (inLevel)
+        {
+            // Suppress in-game invite UI during a level; pending stays queued.
+            _partyInvitePopup = null;
+            _partyInvitePopupLobbyId = 0;
+        }
+        else
+        {
+            SyncPartyInvitePopup();
+        }
     }
 
     /// <summary>
@@ -220,6 +235,53 @@ public class ColorBlocksGame : Game
         MultiplayerDebug.LogLobby(
             $"ExternalJoin → PartyScene lobby={_steamLobby.CurrentLobbyId} from={_currentScene?.GetType().Name ?? "null"}");
         ChangeScene(new PartyScene(this));
+    }
+
+    private void SyncPartyInvitePopup()
+    {
+        if (!_steamInvites.ShouldShowInvitePrompt || !_steamInvites.PendingInvite.HasValue)
+        {
+            _partyInvitePopup = null;
+            _partyInvitePopupLobbyId = 0;
+            return;
+        }
+
+        PendingPartyInvite invite = _steamInvites.PendingInvite.Value;
+        if (_partyInvitePopup is not null && _partyInvitePopupLobbyId == invite.LobbyId)
+        {
+            return;
+        }
+
+        _partyInvitePopupLobbyId = invite.LobbyId;
+        _partyInvitePopup = new Popup(
+            "Party Invite",
+            $"{invite.FriendName} invited you to a party.",
+            "Accept",
+            "Decline");
+        MultiplayerDebug.LogLobby(
+            $"InvitePrompt shown lobby={invite.LobbyId} from='{invite.FriendName}'");
+    }
+
+    private void UpdatePartyInvitePopup(GameTime gameTime)
+    {
+        if (_partyInvitePopup is null)
+        {
+            return;
+        }
+
+        _partyInvitePopup.Update(gameTime, _input, Viewport.Width, Viewport.Height);
+        if (_partyInvitePopup.Result == PopupResult.Confirmed)
+        {
+            _partyInvitePopup = null;
+            _partyInvitePopupLobbyId = 0;
+            _steamInvites.AcceptPending();
+        }
+        else if (_partyInvitePopup.Result == PopupResult.Cancelled)
+        {
+            _partyInvitePopup = null;
+            _partyInvitePopupLobbyId = 0;
+            _steamInvites.DeclinePending();
+        }
     }
 
     /// <summary>
@@ -354,7 +416,15 @@ public class ColorBlocksGame : Game
             _benchmarkOverlay.HandleInput(_input, BenchmarkManager.Runner);
         }
 
-        _currentScene.Update(gameTime);
+        SyncPartyInvitePopup();
+        if (_partyInvitePopup is not null)
+        {
+            UpdatePartyInvitePopup(gameTime);
+        }
+        else
+        {
+            _currentScene.Update(gameTime);
+        }
 
         base.Update(gameTime);
     }
@@ -382,6 +452,7 @@ public class ColorBlocksGame : Game
         }
 
         ReplayDebugOverlay.Draw(_spriteBatch, _pixel, Viewport);
+        _partyInvitePopup?.Draw(gameTime, _spriteBatch, _pixel);
         _spriteBatch.End();
 
         renderWatch.Stop();

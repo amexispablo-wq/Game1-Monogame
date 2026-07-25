@@ -25,7 +25,6 @@ public sealed class SteamLobbyService
         _callbacks.LobbyEnter += OnLobbyEnter;
         _callbacks.LobbyChatUpdate += OnLobbyChatUpdate;
         _callbacks.LobbyDataUpdate += OnLobbyDataUpdate;
-        _callbacks.LobbyInvite += OnLobbyInvite;
         _callbacks.LobbyMatchList += OnLobbyMatchList;
         _callbacks.LobbyChatMsg += OnLobbyChatMsg;
     }
@@ -682,13 +681,6 @@ public sealed class SteamLobbyService
         {
             LobbyStateChanged?.Invoke();
         }
-    }
-
-    private void OnLobbyInvite(LobbyInvite_t callback)
-    {
-        // Notification only — join happens on GameLobbyJoinRequested (user Accept) via SteamInviteManager.
-        MultiplayerDebug.LogLobby(
-            $"InviteReceived lobby={callback.m_ulSteamIDLobby} from={callback.m_ulSteamIDUser} (await Accept)");
     }
 
     private void OnLobbyMatchList(LobbyMatchList_t callback)

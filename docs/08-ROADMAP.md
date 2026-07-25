@@ -13,19 +13,20 @@ Este documento resume estado actual vs. pasos sugeridos. No es un compromiso de 
 | Gameplay local (1–4 jugadores) | ✅ Funcional |
 | Física de soga (rewrite Verlet 2026) | ✅ Funcional; regresiones en benchmark |
 | Dev: Rope Sandbox + tuning F6 + benchmarks | ✅ Funcional (requiere `developerMode`) |
-| Editor de niveles | ✅ Funcional (local) |
-| Mejores tiempos locales | ✅ `best_times.json` |
+| Editor de niveles | ✅ Funcional (Local; Official en dev) |
+| Mejores tiempos locales | ✅ `BestTimeStorage` |
 | UI / navegación gamepad+teclado+mouse | ✅ Grafo explícito, debug F8/F9 |
-| Rebinding teclado + gamepad | ✅ Options; verificar persistencia gamepad en `SettingsManager` |
+| Rebinding teclado + gamepad | ✅ Options; verificar persistencia gamepad |
 | Coop local (teclado + gamepads) | ✅ `PartyManager`, `PartyScene` |
 | Steam init + callbacks | ✅ `SteamManager` |
-| Steam lobby + invitaciones + roster | ✅ `SteamLobbyService`, `SteamPartyService` |
-| Sincronizar inicio de nivel vía lobby | ✅ Líder elige nivel, todos cargan |
+| Steam lobby + invitaciones + roster | ✅ Lobby/Party/Invite (+ prompt in-game) |
+| Sync inicio de nivel vía lobby | ✅ Líder elige nivel, todos cargan |
 | Coop online (simulación sincronizada) | 🟡 v1 host-authoritative; falta predicción + QA |
-| Highscores globales (Steam Leaderboards) | ❌ No implementado |
-| Steam Workshop (UGC) | ❌ No implementado |
+| Highscores globales (Steam Leaderboards) | ✅ Código (`SteamLeaderboardService` + UI); QA/Partner |
+| Steam Workshop (UGC) | ✅ Código (`SteamWorkshopService` + `LevelLibrary`); QA/Partner |
+| Replay / Ghost WR | ✅ `SteamReplayService` / `SteamGhostService` — doc 10 |
 | Achievements / cloud saves | ❌ No implementado |
-| Empaquetado SteamPipe / depots | ❌ Fuera del repo |
+| Empaquetado SteamPipe / depots | 🟡 Scripts parciales; ship Partner pendiente |
 
 ---
 
@@ -50,16 +51,15 @@ Objetivo: soga estable en niveles reales antes de más features Steam.
 
 ## Fase 1 — Pulido pre-Steam (corto plazo)
 
-Objetivo: experiencia sólida en single-player y coop local antes de abrir online.
+Objetivo: experiencia sólida en single-player y coop local.
 
-1. **Fix persistencia gamepad bindings** — `SettingsManager` debe copiar/guardar `GamepadBindings` igual que `Keybindings`.
-2. **Completar flags de nivel** — `LavaRise`, `Player1..4`, modos de soga: verificar gameplay cableado end-to-end.
-3. **`LevelManager.RenameLevel`** — implementar o quitar del UI.
-4. **Audio** — confirmar que `MusicVolume` de Options afecta al motor de audio.
-5. **QA resoluciones** — Options responsive en 720p–3440×1440; sin overflow de UI.
-6. **Niveles versionados** — mover niveles de fábrica al source tree / Content pipeline; evitar perderlos al `dotnet clean`.
-7. **`.gitignore`** — excluir `bin/`, `obj/` del repo.
-8. **Rich presence** — strings localizados en Steam Partner (`#StatusInParty`, en partida, en editor).
+1. **Fix persistencia gamepad bindings** — `SettingsManager` / `GamepadBindings`.
+2. **Completar flags de nivel** — `LavaRise`, `Player1..4`, modos de soga end-to-end.
+3. **Audio** — confirmar `MusicVolume` de Options afecta al motor.
+4. **QA resoluciones** — Options responsive 720p–3440×1440.
+5. **Niveles oficiales versionados** — `Content/OfficialLevels/` en source (ya); no perder al clean.
+6. **`.gitignore`** — excluir `bin/`, `obj/` si aún entran.
+7. **Rich presence Partner** — tokens `#StatusInParty` etc. desde `Steam/rich_presence_english.txt`.
 
 ---
 
@@ -67,28 +67,17 @@ Objetivo: experiencia sólida en single-player y coop local antes de abrir onlin
 
 **v1 scaffold listo.** Lobby + transporte + loop host-authoritative. Falta QA 2-client, predicción, interpolación.
 
-### 2.1 Transporte — hecho
+### 2.1–2.3 Hecho
 
 - `SteamGameNetworkService` — `ISteamNetworkingMessages`, canales 0/1.
-- `NetworkPacketCodec` — binario `InputFrame` + `GameSnapshot`.
-
-### 2.2 Sesión — parcial
-
-- `GameSession.CreateOnline` en lobby (Host/Client).
-- `OwnerId` + `NetworkPlayerId` vía roster + `AssignNetworkPlayerIds`.
-- Input remoto en **host** vía `GameNetworkCoordinator` → `NetworkInputBuffer` (no `InputManager`).
-
-### 2.3 Loop de red — hecho (v1)
-
-```
-Host:  PumpIncoming → Advance → BroadcastSnapshot
-Client: SendLocalInput → TryConsumeClientSnapshot → ApplySnapshot
-```
+- `NetworkPacketCodec` — `InputFrame` + `GameSnapshot`.
+- `GameSession.CreateOnline`, roster `OwnerId` / `NetworkPlayerId`.
+- Loop: Host PumpIncoming → Advance → BroadcastSnapshot; Client SendLocalInput → ApplySnapshot.
 
 ### 2.4 Gameplay online — pendiente
 
-- Spawn roster: `SpawnFromParty` (OK). `SpawnRemotePlayer` mid-game: sin cablear.
 - Interpolación entre snapshots.
+- Predicción client-side (opcional v1.1).
 - Desconexión parcial (`MemberLeft` → PartyScene).
 - F3 debug: rol NET + snapshot seq.
 
@@ -98,118 +87,92 @@ Client: SendLocalInput → TryConsumeClientSnapshot → ApplySnapshot
 
 ---
 
-## Fase 3 — Highscores globales
+## Fase 3 — Leaderboards (código listo → polish)
 
-Objetivo: ranking por nivel en Steam Leaderboards, además del récord local.
+Objetivo: ranking confiable en store / marketing. **API + UI ya existen.**
 
-### 3.1 Steam Leaderboards API
+### Hecho
 
-- Crear leaderboards en Steam Partner: uno por nivel oficial (o leaderboard con metadata `level_id`).
-- Score = tiempo en **centisegundos** (entero; menor = mejor) — alineado con `BestTimeStorage.RoundToCentiseconds`.
-- `SteamUserStats.UploadLeaderboardScore` al completar nivel (solo si mejor que récord local o siempre según diseño).
-- `DownloadLeaderboardEntries` para UI de ranking (top N + posición del jugador).
+- `SteamLeaderboardService` — boards `{levelId}_v{ver}_p{n}`, upload al completar, details + UGC replay.
+- `LeaderboardScene` + hooks Level Select / post-run.
+- Ghost WR vía `SteamGhostService` (doc 10).
 
-### 3.2 UX
+### Pendiente (polish)
 
-- Level Select: mostrar récord local + mejor global (o top 3).
-- Pantalla post-nivel: "Nuevo récord global #42".
-- Modo offline: solo récord local.
-
-### 3.3 Anti-cheat (mínimo viable)
-
-- Host-authoritative en online (tiempo validado por host).
-- En single: aceptar riesgo de cheats en leaderboards globales v1, o validación heurística (tiempo mínimo teórico por nivel).
-- Opcional futuro: firmar tiempo con sesión online host-validated.
+1. Crear/verificar boards en Steam Partner (nombres alineados al código).
+2. QA upload/download Official + Workshop; offline fallback (solo local).
+3. UX: feedback “Nuevo récord global #N” si falta.
+4. Anti-cheat mínimo: documentar confianza single-player; host-auth en online.
 
 ---
 
-## Fase 4 — Steam Workshop
+## Fase 4 — Workshop (código listo → polish)
 
-Objetivo: subir, descargar y jugar niveles creados por la comunidad.
+Objetivo: comunidad publica y juega niveles. **UGC sync ya existe.**
 
-### 4.1 Infra Steam
+### Hecho
 
-- Habilitar Workshop en App ID.
-- `SteamUGC` API: `CreateItem`, `SubmitItemUpdate`, `SubscribeItem`, `DownloadItem`.
-- Tags: dificultad, jugadores, soga, lava, etc.
+- `SteamWorkshopService` — publish Local, sync subs → `%LocalAppData%/…/Workshop/{id}/`.
+- `LevelLibrary` lista Workshop read-only; Duplicate → Local.
+- Leaderboards Workshop vía mismo servicio LB (board por level id/version/players).
 
-### 4.2 Formato y empaquetado
+### Pendiente (polish)
 
-- Paquete = `level.json` (mismo `LevelData`) + preview PNG + metadata (nombre, autor, versión).
-- Versión de formato (`SteamConstants` o header en JSON) para migraciones futuras.
-- Thumbnail: reutilizar `LevelPreviewManager`.
+1. Habilitar Workshop en App ID / legal agreement flow UX.
+2. QA publish → subscribe en otra cuenta → jugar.
+3. Tags / explorar Workshop (overlay o in-game) si Product lo pide.
+4. Moderación: report Steam + validación JSON al cargar.
 
-### 4.3 Directorios
+Paths reales (no `Content/Workshop/`):
 
 ```
-Content/Levels/          → niveles oficiales (shipped)
-Content/Workshop/        → niveles suscritos (por PublishedFileId)
+Content/OfficialLevels/                         → oficiales shipped
+%LocalAppData%/Color Blocks/UserLevels/         → Local
+%LocalAppData%/Color Blocks/Workshop/{id}/      → suscritos
 ```
-
-- `LevelManager` escanea ambos; UI distingue oficial vs. Workshop.
-- No mezclar UGC con niveles de fábrica en el mismo folder.
-
-### 4.4 Flujo jugador
-
-1. Editor → "Publicar en Workshop" (solo si nivel válido: meta, spawn, etc.).
-2. Level Select → pestaña/filtro Workshop + botón "Explorar Workshop" (overlay Steam o in-game).
-3. Al suscribirse: descargar → aparecer en lista → jugar con mismas reglas de timer/highscore.
-
-### 4.5 Highscores en niveles Workshop
-
-- Decidir: leaderboard separado por `PublishedFileId` o solo récord local.
-- Steam permite leaderboards dinámicos o metadata — diseñar antes de implementar.
-
-### 4.6 Moderación
-
-- Reportar contenido vía Steam.
-- Validación al cargar: rechazar JSON corrupto o niveles imposibles (sin meta).
 
 ---
 
 ## Fase 5 — Release Steam
 
 1. **App ID producción** en `steam_appid.txt` (hoy `4796400` en repo).
-2. **SteamPipe**: depots Windows x64, build automático CI → upload.
-3. **Store page**: capturas, descripción coop local/online, Workshop, leaderboards.
-4. **Achievements** (opcional v1): completar todos los niveles oficiales, tiempo bajo X, etc.
-5. **Cloud saves** (opcional): `settings.json`, progreso — evaluar si récords deben ser solo leaderboards.
-6. **Beta branch** en Steam para probar online + Workshop antes de public.
+2. **SteamPipe**: depots Windows x64; quitar `steam_appid.txt` de build publicada.
+3. **Steam Input Partner**: template Gamepad → Publish (ver [`STEAM_INPUT_OFFICIAL_SHIP.md`](STEAM_INPUT_OFFICIAL_SHIP.md)).
+4. **Store page**: capturas, coop local/online, Workshop, leaderboards.
+5. **Achievements** / **Cloud saves** (opcional v1).
+6. **Beta branch** para online + Workshop antes de public.
 7. **Legal**: EULA, privacidad si hay analytics.
 
 ---
 
-## Orden sugerido de implementación
+## Orden sugerido
 
 ```
-[Fase 0 rope QA] → [Fase 1 pulido] → [Fase 2 online QA] → [Fase 3 leaderboards] → [Fase 4 Workshop] → [Fase 5 release]
-        ↑                    ↑
-   ahora (feel + niveles)   deuda settings/lava/gitignore
+[Fase 0 rope QA] → [Fase 1 pulido] → [Fase 2 online QA]
+        → [Fase 3 LB polish] ↔ [Fase 4 Workshop polish] → [Fase 5 release]
 ```
 
-### Qué hacer ahora (prioridad)
+### Prioridad ahora
 
-1. **QA manual rope** — jugar 2–3 niveles oficiales en `ColoredPhysics`: pull, esquinas, cambio de color mid-air, 3–4 jugadores.
-2. **Benchmark en cada cambio de rope** — `--benchmark rope`; no mergear si FAIL.
-3. **Fase 1 rápida** — gamepad bindings persist, `.gitignore` bin/obj, niveles versionados en source tree.
-4. **Fase 2 QA** — 2 Steam clients, latencia 50–150 ms, verificar snapshots + desconexión.
-5. Después: leaderboards (Fase 3) o Workshop (Fase 4) según prioridad de marketing.
-
-Workshop y leaderboards pueden paralelizarse parcialmente después de online estable.
-
-Leaderboards **sin** online son posibles antes (solo single-player trusted) — útil para marketing pre-release.
+1. QA manual rope en niveles oficiales (`ColoredPhysics`).
+2. Benchmark en cada cambio rope — `--benchmark rope`.
+3. Fase 1 rápida (bindings, gitignore, audio).
+4. Fase 2 QA — 2 clients, latencia 50–150 ms.
+5. Partner: boards LB + Workshop + Steam Input Publish + rich presence tokens.
 
 ---
 
-## Referencias en código (ampliado)
+## Referencias en código
 
 | Tema | Archivos clave |
 |------|----------------|
-| Rope / física | `Entities/Rope.cs`, `Entities/RopeConstraint.cs`, `Managers/PhysicsWorld.cs`, `Gameplay/GameplayTuning.cs` |
-| Dev / benchmarks | `Developer/GameplayBenchmark/`, `Scenes/RopeSandboxScene.cs`, `docs/09-HERRAMIENTAS-DEV.md` |
-| Red / sesión | `Networking/GameSession.cs`, `Networking/Packets/`, `Networking/Replication/` |
-| Steam lobby | `Steam/SteamLobbyService.cs`, `Steam/SteamPartyService.cs` |
-| Party | `Party/PartyManager.cs`, `Scenes/PartyScene.cs` |
-| Tiempos locales | `Managers/BestTimeStorage.cs`, `Core/GameSimulation.cs` |
-| Niveles | `LevelSystem/LevelManager.cs`, `Scenes/EditorScene.cs` |
+| Rope / física | `Entities/Rope.cs`, `Managers/PhysicsWorld.cs`, `Gameplay/GameplayTuning.cs` |
+| Dev / benchmarks | `Developer/GameplayBenchmark/`, `docs/09-HERRAMIENTAS-DEV.md` |
+| Red / sesión | `Networking/`, `Steam/SteamGameNetworkService.cs` |
+| Steam lobby / invites | `SteamLobbyService`, `SteamInviteManager`, `SteamPartyService` |
+| Leaderboards | `SteamLeaderboardService`, `LeaderboardScene` |
+| Workshop | `SteamWorkshopService`, `LevelLibrary` |
+| Replay / Ghost | `Replay/`, `SteamReplayService`, `SteamGhostService`, doc 10 |
+| Niveles | `LevelSystem/LevelLibrary.cs`, `EditorScene` |
 | UI | `docs/07-UI-NAVEGACION.md` |
+| Playbook reutilizable | `docs/monogame-playbook/` |

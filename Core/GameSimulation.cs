@@ -203,10 +203,12 @@ public sealed class GameSimulation
         _session.State = GameSessionState.Playing;
         _fixedTimeAccumulator = 0f;
         _latchedLocalInput.Clear();
+        _inputBuffer.Clear();
         CurrentTick = SimulationTick.Zero;
         // Keep SnapshotCount monotonic for the online session — zeroing it makes clients
         // drop post-restart snaps until seq climbs past the old latch (felt multi-minute freeze).
         LastSnapshot = CreateSnapshot(SimulationTick.Zero);
+        DiagnosticsLog.Info("Sim", "RestartLevel — cleared input latch + InputBuffer (tick→0)");
     }
 
     public void ApplySnapshot(GameSnapshot snapshot)
@@ -390,7 +392,11 @@ public sealed class GameSimulation
                     LavaRiseEnabled,
                     PlayerCollisionEnabled,
                     Players.Count);
-            bool savedRecord = BestTimeStorage.SaveIfRecord(_session.SelectedLevelId, FinalTime, official);
+            bool savedRecord = BestTimeStorage.SaveIfRecord(
+                _session.SelectedLevelId,
+                FinalTime,
+                official,
+                Players.Count);
             NewRecord = official && savedRecord;
             if (ForceUnofficial)
             {
@@ -506,6 +512,8 @@ public sealed class GameSimulation
 
             PlayerManager.RespawnPlayer(player);
             PhysicsWorld.ResetRopesForPlayer(player);
+            DiagnosticsLog.Info("Sim", $"APPLY Respawn netId={player.NetworkId}");
+            InputDiagnostics.NoteSimApplyRespawn();
         }
     }
 
