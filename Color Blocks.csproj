@@ -82,4 +82,10 @@
       </None>
     </ItemGroup>
   </Target>
+  <!-- Official level integrity: SHA256 catalog of Content\OfficialLevels\*.json -->
+  <Target Name="GenerateOfficialManifest" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\BuildTools\Generate-OfficialManifest.ps1&quot; -ProjectRoot &quot;$(MSBuildProjectDirectory)&quot;"
+          ContinueOnError="true"
+          StandardOutputImportance="low" />
+  </Target>
 </Project>

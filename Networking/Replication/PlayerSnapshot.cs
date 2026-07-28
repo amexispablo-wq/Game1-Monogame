@@ -13,4 +13,9 @@ public readonly record struct PlayerSnapshot(
     bool IsGrounded,
     bool IsFrozen,
     string CosmeticSkinId = "",
-    byte[]? CosmeticSkinPixels = null);
+    byte[]? CosmeticSkinPixels = null,
+    float VisualRotation = 0f,
+    float SpeedBuffRemaining = 0f,
+    float SpeedBuffMultiplier = 1f,
+    float JumpBuffRemaining = 0f,
+    float JumpBuffMultiplier = 1f);

@@ -487,6 +487,16 @@ public sealed class SteamLobbyService
             return false;
         }
 
+        LevelMetadata? metadata = LevelLibrary.GetLevel(levelId);
+        if (metadata is not null
+            && metadata.Source == LevelSource.Official
+            && !OfficialLevelManifest.VerifyLevelFile(levelId, metadata.FilePath, out string manifestReason))
+        {
+            MultiplayerDebug.LogError("OfficialManifest", $"StartLevelRequested CANCELLED — {manifestReason}");
+            DiagnosticsLog.Info("OfficialManifest", manifestReason);
+            return false;
+        }
+
         PublishLobbySettings(levelId, ropeMode, lavaRiseEnabled);
         string levelHash = SessionDiagnostics.ComputeLevelHash(levelId);
         SetLobbyData(SteamConstants.LobbyDataLevelHash, levelHash);

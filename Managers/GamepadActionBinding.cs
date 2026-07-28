@@ -15,7 +15,8 @@ public enum GamepadBindingKind
     DPadLeft,
     DPadRight,
     DPadUp,
-    DPadDown
+    DPadDown,
+    Unbound
 }
 
 public readonly struct GamepadActionBinding
@@ -34,11 +35,19 @@ public readonly struct GamepadActionBinding
             ? new GamepadActionBinding(GamepadBindingKind.DefaultAxis)
             : new GamepadActionBinding(GamepadBindingKind.Button, GamepadDefaults.GetDefaultButton(action));
 
+    public static GamepadActionBinding Unbound { get; } = new(GamepadBindingKind.Unbound);
+
     public static GamepadActionBinding Parse(string? stored, GameplayInputAction action)
     {
-        if (string.IsNullOrWhiteSpace(stored) || stored == GamepadBindingTokens.Default)
+        // null = no override → defaults. Empty / Unbound = explicitly cleared.
+        if (stored is null || stored == GamepadBindingTokens.Default)
         {
             return DefaultFor(action);
+        }
+
+        if (string.IsNullOrWhiteSpace(stored) || stored == GamepadBindingTokens.Unbound)
+        {
+            return Unbound;
         }
 
         if (Enum.TryParse(stored, out Buttons button))
@@ -62,9 +71,14 @@ public readonly struct GamepadActionBinding
 
     public static string FormatToken(string? stored, GameplayInputAction action)
     {
-        if (string.IsNullOrWhiteSpace(stored) || stored == GamepadBindingTokens.Default)
+        if (stored is null || stored == GamepadBindingTokens.Default)
         {
             return GamepadDefaults.GetDisplayName(action);
+        }
+
+        if (string.IsNullOrWhiteSpace(stored) || stored == GamepadBindingTokens.Unbound)
+        {
+            return "—";
         }
 
         if (Enum.TryParse(stored, out Buttons button))
@@ -91,6 +105,7 @@ public readonly struct GamepadActionBinding
         _ = action;
         return Kind switch
         {
+            GamepadBindingKind.Unbound => false,
             GamepadBindingKind.Button => current.IsButtonDown(Button),
             GamepadBindingKind.DefaultAxis => IsDefaultAxisActive(processedStick, action),
             GamepadBindingKind.StickLeft => processedStick.X < -GamepadDefaults.MenuStickDirectionThreshold,
@@ -207,6 +222,7 @@ public readonly struct GamepadActionBinding
 public static class GamepadBindingTokens
 {
     public const string Default = "Default";
+    public const string Unbound = "Unbound";
     public const string StickLeft = "StickLeft";
     public const string StickRight = "StickRight";
     public const string StickUp = "StickUp";

@@ -19,6 +19,13 @@ internal static class ContentResolver
     {
         assetPath = StripExtension(assetPath.Replace('\\', '/'));
 
+        // Raw .ogg first — Content.Load breaks on paths with spaces (level editor/).
+        Song? fromFile = TryLoadSongFromFile(assetPath);
+        if (fromFile is not null)
+        {
+            return fromFile;
+        }
+
         if (_game is not null)
         {
             try
@@ -37,11 +44,11 @@ internal static class ContentResolver
             }
             catch
             {
-                // Fall through to raw file load.
+                // Fall through.
             }
         }
 
-        return TryLoadSongFromFile(assetPath);
+        return null;
     }
 
     public static SoundEffect? TryLoadSoundEffect(string relativePath)
@@ -79,8 +86,10 @@ internal static class ContentResolver
 
         try
         {
-            string name = Path.GetFileNameWithoutExtension(fullPath);
-            return Song.FromUri(name, new Uri(fullPath));
+            // Unique name per relative path — same filename in folder vs root must not collide.
+            string name = StripExtension(relativePath).Replace('/', '_').Replace(' ', '_');
+            var uri = new Uri(Path.GetFullPath(fullPath), UriKind.Absolute);
+            return Song.FromUri(name, uri);
         }
         catch (Exception ex)
         {
@@ -130,6 +139,9 @@ internal static class ContentResolver
 
         return null;
     }
+
+    /// <summary>Expose content file resolution for music duration fallback.</summary>
+    public static string? TryResolveContentFilePath(string relativePath) => ResolveContentPath(relativePath);
 
     private static string StripExtension(string path)
     {

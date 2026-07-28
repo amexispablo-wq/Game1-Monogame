@@ -79,6 +79,29 @@ public sealed class ReplayWorld
     ElapsedTime = frame.Timer.ElapsedTime;
     LavaSurfaceY = frame.LavaSurfaceY;
 
+    float tickSeconds = 1f / Math.Max(1, Header.TicksPerSecond);
+    float timeSeconds = frame.Tick * tickSeconds;
+    foreach (Platform platform in Level.Platforms)
+    {
+      platform.ApplyColorAtTime(timeSeconds);
+
+      if (!platform.HasMotion)
+      {
+        if (platform.Bounds.X != platform.HomeX || platform.Bounds.Y != platform.HomeY)
+        {
+          platform.Bounds = new Rectangle(
+            platform.HomeX,
+            platform.HomeY,
+            platform.Bounds.Width,
+            platform.Bounds.Height);
+        }
+
+        continue;
+      }
+
+      platform.ApplyMotionAtTime(timeSeconds);
+    }
+
     foreach (CheckpointFlag checkpoint in Level.CheckpointFlags)
     {
       checkpoint.IsActive = false;
@@ -98,6 +121,23 @@ public sealed class ReplayWorld
       {
         PlayerManager.ActivateCheckpoint(checkpoint, playSfx: false);
       }
+    }
+
+    ApplyPowerUpRuntime(frame.PowerUps);
+  }
+
+  private void ApplyPowerUpRuntime(ReplayPowerUpRuntimeSnapshot[] powerUpSnapshots)
+  {
+    if (powerUpSnapshots is null || powerUpSnapshots.Length == 0)
+    {
+      return;
+    }
+
+    int count = Math.Min(Level.PowerUps.Count, powerUpSnapshots.Length);
+    for (int i = 0; i < count; i++)
+    {
+      ReplayPowerUpRuntimeSnapshot snapshot = powerUpSnapshots[i];
+      Level.PowerUps[i].ApplyRuntimeState(snapshot.IsAvailable, snapshot.RespawnRemaining);
     }
   }
 

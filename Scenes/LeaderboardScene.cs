@@ -262,6 +262,10 @@ public sealed class LeaderboardScene : IScene
                 : entry.CompletionDateUtc.ToLocalTime().ToString("yyyy-MM-dd");
             string mode = entry.PlayerCount <= 1 ? "Solo" : "Coop";
             string time = BestTimeStorage.FormatTime(entry.TimeSeconds);
+            if (entry.IsSuspicious)
+            {
+                time = $"!{time}";
+            }
 
             DrawColumns(
                 spriteBatch,
@@ -274,7 +278,7 @@ public sealed class LeaderboardScene : IScene
                 date,
                 $"v{entry.LevelVersion}",
                 mode,
-                Color.White);
+                entry.IsSuspicious ? new Color(255, 180, 120) : Color.White);
 
             y += RowHeight;
         }
@@ -282,6 +286,11 @@ public sealed class LeaderboardScene : IScene
 
     private static Color GetRowFill(SteamLeaderboardEntry entry, bool isWorldRecord)
     {
+        if (entry.IsSuspicious)
+        {
+            return new Color(70, 45, 40);
+        }
+
         if (entry.IsLocalUser)
         {
             return new Color(55, 90, 70);

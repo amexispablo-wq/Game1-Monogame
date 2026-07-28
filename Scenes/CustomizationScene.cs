@@ -286,12 +286,7 @@ public sealed class CustomizationScene : IScene
 
     public void OnExit()
     {
-        ApplyChanges();
-        if (_game.SteamLobby.IsInLobby)
-        {
-            _game.SteamParty.PublishLocalMemberData(_game.Party);
-        }
-
+        // Apply only via Apply button — Back/cancel must leave working edits unsaved.
         _virtualCursor.Reset();
         _game.Input.SetUiPointerOverride(null);
         _game.Input.Navigation.PreferMouse();

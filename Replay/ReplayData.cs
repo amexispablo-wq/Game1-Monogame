@@ -21,6 +21,9 @@ public sealed class ReplayHeader
   public LevelData? RecordedLevel { get; init; }
 }
 
+/// <summary>Per-power-up runtime state captured each replay frame (pickup / respawn).</summary>
+public readonly record struct ReplayPowerUpRuntimeSnapshot(bool IsAvailable, float RespawnRemaining);
+
 /// <summary>Immutable per-frame snapshot stored in exported <see cref="ReplayData"/>.</summary>
 public sealed class ReplayFrameSnapshot
 {
@@ -34,4 +37,5 @@ public sealed class ReplayFrameSnapshot
   public PlayerSnapshot[] Players { get; init; } = Array.Empty<PlayerSnapshot>();
   public RopeSnapshot[] Ropes { get; init; } = Array.Empty<RopeSnapshot>();
   public CheckpointFlagSnapshot[] Checkpoints { get; init; } = Array.Empty<CheckpointFlagSnapshot>();
+  public ReplayPowerUpRuntimeSnapshot[] PowerUps { get; init; } = Array.Empty<ReplayPowerUpRuntimeSnapshot>();
 }

@@ -5,7 +5,7 @@ namespace ColorBlocks;
 
 public static class NetworkPacketCodec
 {
-    private const byte PacketVersion = 2;
+    private const byte PacketVersion = 3;
 
     public static byte[] EncodeInputFrame(InputFrame frame)
     {
@@ -46,6 +46,15 @@ public static class NetworkPacketCodec
         foreach (RopeSnapshot rope in snapshot.Ropes)
         {
             WriteRope(buffer, rope);
+        }
+
+        IReadOnlyList<PowerUpSnapshot> powerUps = snapshot.Level?.PowerUps ?? (IReadOnlyList<PowerUpSnapshot>)Array.Empty<PowerUpSnapshot>();
+        buffer.WriteUInt16((ushort)Math.Min(powerUps.Count, ushort.MaxValue));
+        for (int i = 0; i < powerUps.Count && i < ushort.MaxValue; i++)
+        {
+            PowerUpSnapshot powerUp = powerUps[i];
+            buffer.WriteBool(powerUp.IsAvailable);
+            buffer.WriteSingle(powerUp.RespawnRemaining);
         }
 
         return buffer.ToArray();
@@ -134,6 +143,24 @@ public static class NetworkPacketCodec
         for (int i = 0; i < ropeCount; i++)
         {
             snapshot.Ropes.Add(ReadRope(ref reader));
+        }
+
+        ushort powerUpCount = reader.ReadUInt16();
+        for (int i = 0; i < powerUpCount; i++)
+        {
+            bool isAvailable = reader.ReadBool();
+            float respawnRemaining = reader.ReadSingle();
+            snapshot.Level.PowerUps.Add(new PowerUpSnapshot(
+                0,
+                0,
+                0,
+                0,
+                PowerUpType.Speed,
+                0f,
+                1f,
+                0f,
+                isAvailable,
+                respawnRemaining));
         }
 
         return snapshot;
@@ -231,6 +258,11 @@ public static class NetworkPacketCodec
             ? player.CosmeticSkinPixels
             : new byte[PlayerSkinCodec.PackedByteCount];
         buffer.WriteBytes(pixels);
+        buffer.WriteSingle(player.VisualRotation);
+        buffer.WriteSingle(player.SpeedBuffRemaining);
+        buffer.WriteSingle(player.SpeedBuffMultiplier);
+        buffer.WriteSingle(player.JumpBuffRemaining);
+        buffer.WriteSingle(player.JumpBuffMultiplier);
     }
 
     private static PlayerSnapshot ReadPlayer(ref PacketReader reader)
@@ -248,7 +280,12 @@ public static class NetworkPacketCodec
             reader.ReadBool(),
             reader.ReadBool(),
             reader.ReadString(),
-            reader.ReadBytes(PlayerSkinCodec.PackedByteCount));
+            reader.ReadBytes(PlayerSkinCodec.PackedByteCount),
+            reader.ReadSingle(),
+            reader.ReadSingle(),
+            reader.ReadSingle(),
+            reader.ReadSingle(),
+            reader.ReadSingle());
     }
 
     private static void WriteRope(PacketBuffer buffer, RopeSnapshot rope)

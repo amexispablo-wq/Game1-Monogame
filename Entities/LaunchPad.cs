@@ -12,11 +12,15 @@ public sealed class LaunchPad
     public static float LaunchPadForce { get; set; } = 980f;
     public static float LaunchPadCooldown { get; set; } = 0.22f;
     public static float LaunchPadParticleRate { get; set; } = 7f;
+    public const float MinLaunchForce = 100f;
+    public const float MaxLaunchForce = 3000f;
+    public const float LaunchForceStep = 50f;
 
-    public LaunchPad(Rectangle bounds, float rotationDegrees = 0f)
+    public LaunchPad(Rectangle bounds, float rotationDegrees = 0f, float launchForce = -1f)
     {
         Bounds = bounds;
         RotationDegrees = rotationDegrees;
+        LaunchForce = launchForce < 0f ? LaunchPadForce : ClampLaunchForce(launchForce);
     }
 
     public Point Position
@@ -27,9 +31,13 @@ public sealed class LaunchPad
 
     public Rectangle Bounds { get; set; }
     public float RotationDegrees { get; set; }
+    public float LaunchForce { get; set; }
     public float RotationRadians => MathHelper.ToRadians(NormalizeRotation(RotationDegrees));
     public Rectangle TriggerBounds => Bounds;
     public Vector2 Center => new(Bounds.Center.X, Bounds.Center.Y);
+
+    public static float ClampLaunchForce(float value) =>
+        MathHelper.Clamp(value, MinLaunchForce, MaxLaunchForce);
 
     public Vector2 LaunchDirection
     {

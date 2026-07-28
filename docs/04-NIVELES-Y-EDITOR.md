@@ -2,7 +2,7 @@
 
 ## Modelo de nivel
 
-- **Runtime:** `LevelSystem/Level.cs` — geometría viva (platforms, goals, checkpoints, launch pads), `PlayerStart`, `WorldSize` (auto-calculado con padding de 200px), `Name`, `MusicId` y flags.
+- **Runtime:** `LevelSystem/Level.cs` — geometría viva (platforms, goals, checkpoints, launch pads, power-ups), `PlayerStart`, `WorldSize` (auto-calculado con padding de 200px), `Name`, `MusicId` y flags.
 - **Serializable:** `LevelSystem/LevelData.cs` — DTO con atributos `JsonPropertyName`. Conversión `Level.FromData(data)` / `level.ToData()`.
 - `Level.CreateDefault()` genera un nivel de ejemplo (fallback si falla la carga).
 
@@ -30,7 +30,12 @@ Mismo `LevelData` para Official / Local / Workshop. Serializado con `System.Text
 {
   "name": "Level 1",
   "platforms": [
-    { "x": 0, "y": 400, "width": 800, "height": 40, "color": "Red" }
+    {
+      "x": 0, "y": 400, "width": 800, "height": 40, "color": "Red",
+      "moveVertical": false, "verticalSpeed": 20, "verticalDistanceBlocks": 2, "verticalDirection": "Up",
+      "moveHorizontal": false, "horizontalSpeed": 15, "horizontalDistanceBlocks": 1, "horizontalDirection": "Right",
+      "colorChangeEnabled": false, "colorCycle": ["Red", "Blue"], "colorChangePeriodSeconds": 2, "colorChangePhaseSeconds": 0
+    }
   ],
   "goals": [
     { "x": 1216, "y": 356 }
@@ -49,9 +54,13 @@ Mismo `LevelData` para Official / Local / Workshop. Serializado con `System.Text
 }
 ```
 
-- `color`: `"Red" | "Blue" | "Green"`.
+- `color`: `"Red" | "Blue" | "Green" | "White"`. Es el color de inicio (también `colorCycle[0]` si hay ciclo).
+- Plataformas pueden tener motion ping-pong opcional en **un solo eje** (`moveVertical` XOR `moveHorizontal`). Speed en px/s (step 5), distance en blocks de 32px. Dirección: `verticalDirection` (`Up`/`Down`), `horizontalDirection` (`Left`/`Right`). Defaults: off / Up / Right.
+- Color cycle opcional (independiente de motion): `colorChangeEnabled`, `colorCycle` (lista 2+), `colorChangePeriodSeconds` (segundos por paso, loop), `colorChangePhaseSeconds` (offset). Campos ausentes = off (niveles viejos OK). Editor: panel bajo motion; preview live con tiempo del editor.
 - `rotation` de launch pad en grados (normalizada).
-- Plataformas/pads con width o height <= 0 se ignoran al cargar.
+- `powerUps[]` opcional (backward compatible: ausente → vacío). Props: `type` (`Speed`/`Jump`), `durationSeconds`, `multiplier`, `respawnSeconds` (0 = sin respawn), `consumable` (default true).
+- Launch pads: `launchForce` opcional (default 980).
+- Plataformas/pads/power-ups con width o height <= 0 se ignoran al cargar.
 
 ## Gestión — `LevelSystem/LevelLibrary.cs`
 
@@ -89,8 +98,10 @@ Mismo `LevelData` para Official / Local / Workshop. Serializado con `System.Text
 
 ## Editor — `Scenes/EditorScene.cs`
 
-- Grid snap 32, create/move/resize, multi-select, Goal/Checkpoint/LaunchPad toolbar.
-- Color de plataforma, copy/paste, pan/zoom, dirty flag.
+- Grid snap 32, create/move/resize, multi-select, Goal/Checkpoint/LaunchPad/PowerUp toolbar.
+- Color de plataforma, panel de motion (V/H ping-pong), panel color cycle (loop + period + swatches), copy/paste, pan/zoom, dirty flag.
+- **Properties panel (derecha):** aparece solo si selección homogénea de Platform / LaunchPad / PowerUp / Lava. Mixed selection → sin panel.
+- PowerUp: Type / Duration / Multiplier / Respawn / Consumable. LaunchPad: Launch Force / Rotation.
 - Guarda con `LevelLibrary.SaveLevel`.
 
 ### Flujo

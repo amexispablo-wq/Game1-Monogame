@@ -154,6 +154,12 @@ public sealed class ReplayRecorder
       checkpoints[i] = frame.Checkpoints[i];
     }
 
+    ReplayPowerUpRuntimeSnapshot[] powerUps = new ReplayPowerUpRuntimeSnapshot[frame.PowerUps.Count];
+    for (int i = 0; i < powerUps.Length; i++)
+    {
+      powerUps[i] = frame.PowerUps[i];
+    }
+
     return new ReplayFrameSnapshot
     {
       Tick = frame.Tick,
@@ -165,7 +171,8 @@ public sealed class ReplayRecorder
       CameraZoom = frame.CameraZoom,
       Players = players,
       Ropes = ropes,
-      Checkpoints = checkpoints
+      Checkpoints = checkpoints,
+      PowerUps = powerUps
     };
   }
 }

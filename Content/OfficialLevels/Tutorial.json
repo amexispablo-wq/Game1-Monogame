@@ -1,0 +1,131 @@
+{
+  "name": "LEVEL 0",
+  "platforms": [
+    {
+      "x": 0,
+      "y": 420,
+      "width": 480,
+      "height": 40,
+      "color": "Red"
+    },
+    {
+      "x": 480,
+      "y": 420,
+      "width": 192,
+      "height": 40,
+      "color": "Blue"
+    },
+    {
+      "x": 672,
+      "y": 420,
+      "width": 192,
+      "height": 40,
+      "color": "Green"
+    },
+    {
+      "x": 864,
+      "y": 420,
+      "width": 160,
+      "height": 40,
+      "color": "Red"
+    },
+    {
+      "x": 864,
+      "y": 420,
+      "width": 160,
+      "height": 40,
+      "color": "Blue"
+    },
+    {
+      "x": 1024,
+      "y": 420,
+      "width": 224,
+      "height": 40,
+      "color": "Red",
+      "colorChangeEnabled": true,
+      "colorCycle": [ "Red", "Blue", "Green" ],
+      "colorChangePeriodSeconds": 6
+    },
+    {
+      "x": 1248,
+      "y": 420,
+      "width": 320,
+      "height": 40,
+      "color": "Red"
+    },
+    {
+      "x": 200,
+      "y": 320,
+      "width": 128,
+      "height": 28,
+      "color": "Red"
+    }
+  ],
+  "goals": [
+    {
+      "x": 1440,
+      "y": 356
+    }
+  ],
+  "checkpointFlags": [],
+  "launchPads": [],
+  "powerUps": [],
+  "signs": [
+    {
+      "x": 24,
+      "y": 220,
+      "text": "MOVE <{MoveLeft}  {MoveRight}>\nJUMP ^{Jump}",
+      "scale": 2
+    },
+    {
+      "x": 24,
+      "y": 280,
+      "text": "FALL {FastFall}",
+      "scale": 2
+    },
+    {
+      "x": 480,
+      "y": 240,
+      "text": "COLORS\nRED {Red}  BLUE {Blue}\nGREEN {Green}",
+      "scale": 2
+    },
+    {
+      "x": 480,
+      "y": 320,
+      "text": "MATCH YOUR COLOR",
+      "scale": 2
+    },
+    {
+      "x": 864,
+      "y": 280,
+      "text": "MIXED: STAND ON\nYOUR COLOR ONLY",
+      "scale": 2
+    },
+    {
+      "x": 1024,
+      "y": 240,
+      "text": "COLOR CHANGE\nWATCH BORDER",
+      "scale": 2
+    },
+    {
+      "x": 1248,
+      "y": 240,
+      "text": "RESPAWN {Respawn}\nRESTART {RestartLevel}",
+      "scale": 2
+    },
+    {
+      "x": 1248,
+      "y": 300,
+      "text": "REACH GOAL >",
+      "scale": 2
+    }
+  ],
+  "playerSpawn": {
+    "x": 64,
+    "y": 340
+  },
+  "playerSpawnColor": "Red",
+  "musicId": "default",
+  "allPlayers": true,
+  "version": 1
+}

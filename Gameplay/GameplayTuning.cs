@@ -14,6 +14,7 @@ public sealed class GameplayTuning
     public float GroundFriction { get; set; } = 16f;
     public float AirAcceleration { get; set; } = 1050f;
     public float GroundAcceleration { get; set; } = 2600f;
+    public float MaxMoveSpeed { get; set; } = 260f;
     public float JumpImpulse { get; set; } = 560f;
     public float LaunchForceMultiplier { get; set; } = 1f;
 
@@ -39,6 +40,7 @@ public sealed class GameplayTuning
         player.GroundFriction = GroundFriction;
         player.AirAcceleration = AirAcceleration;
         player.GroundAcceleration = GroundAcceleration;
+        player.MaxMoveSpeed = MaxMoveSpeed;
         player.JumpImpulse = JumpImpulse;
     }
 

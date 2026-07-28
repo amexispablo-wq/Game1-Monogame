@@ -188,6 +188,9 @@ public class ColorBlocksGame : Game
 
     public void ChangeScene(IScene scene)
     {
+        bool leavingGameplay = _currentScene is GameScene;
+        bool enteringGameplay = scene is GameScene;
+
         _currentScene?.OnExit();
         _currentScene = scene;
         NavigationDebug.CurrentScene = scene.GetType().Name;
@@ -201,6 +204,20 @@ public class ColorBlocksGame : Game
 
         // Guest may have received START while on a scene that did not listen yet.
         _levelStartRouter.TryApplyPending();
+
+        // Lobby gameplay flag: set after scene swap so GameScene→GameScene (next/replay)
+        // does not get cleared by the previous scene's teardown.
+        if (_steamLobby.IsInLobby && Party.IsLeader)
+        {
+            if (enteringGameplay)
+            {
+                _steamLobby.SetGameplayActive(true);
+            }
+            else if (leavingGameplay)
+            {
+                _steamLobby.SetGameplayActive(false);
+            }
+        }
 
         bool inLevel = scene is GameScene;
         _steamInvites.SetInLevel(inLevel);
@@ -303,7 +320,16 @@ public class ColorBlocksGame : Game
         switch (scene)
         {
             case GameScene gameScene:
-                _music.PlayLevelMusic(gameScene.LevelMusicId);
+                if (SettingsManager.CurrentSettings.ContinueMenuMusicInLevels
+                    && _music.IsMenuPlaylistActive)
+                {
+                    _music.KeepMenuMusicThroughGameplay();
+                }
+                else
+                {
+                    _music.PlayLevelMusic(gameScene.LevelMusicId);
+                }
+
                 break;
             case EditorScene:
                 _music.PlayEditorMusic();
@@ -384,6 +410,7 @@ public class ColorBlocksGame : Game
         _input.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
         GameAudio.Update(dt);
+        _music.Update(dt);
         _audioOutputHotSwap.Update(dt);
 
         if (_input.SteamInputOriginDumpPressed && _steamInput.IsInitialized)

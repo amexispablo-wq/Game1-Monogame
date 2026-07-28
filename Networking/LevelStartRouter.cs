@@ -142,6 +142,15 @@ public sealed class LevelStartRouter
                 message.LavaRiseEnabled,
                 playerCollisionEnabled: level.PlayerCollision));
         }
+        catch (LevelIntegrityException ex)
+        {
+            PendingStartAlert = ("LEVEL INTEGRITY", ex.UserMessage);
+            MultiplayerDebug.LogSim($"START rejected — integrity: {ex.UserMessage}");
+            if (_game.CurrentScene is not PartyScene and not LevelSelectScene)
+            {
+                _game.ChangeScene(new PartyScene(_game));
+            }
+        }
         finally
         {
             _applying = false;

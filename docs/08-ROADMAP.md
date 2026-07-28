@@ -102,7 +102,7 @@ Objetivo: ranking confiable en store / marketing. **API + UI ya existen.**
 1. Crear/verificar boards en Steam Partner (nombres alineados al código).
 2. QA upload/download Official + Workshop; offline fallback (solo local).
 3. UX: feedback “Nuevo récord global #N” si falta.
-4. Anti-cheat mínimo: documentar confianza single-player; host-auth en online.
+4. Anti-cheat mínimo: documentar confianza single-player; host-auth en online. **Hecho** — ver [`docs/11-SEGURIDAD.md`](11-SEGURIDAD.md) (manifest oficiales, HMAC BestTimes, LevelValidator, LeaderboardSanity).
 
 ---
 
@@ -121,7 +121,7 @@ Objetivo: comunidad publica y juega niveles. **UGC sync ya existe.**
 1. Habilitar Workshop en App ID / legal agreement flow UX.
 2. QA publish → subscribe en otra cuenta → jugar.
 3. Tags / explorar Workshop (overlay o in-game) si Product lo pide.
-4. Moderación: report Steam + validación JSON al cargar.
+4. Moderación: report Steam + validación JSON al cargar. **Hecho (validación)** — `LevelValidator` Strict en Workshop publish/download + listing Playable; report Steam sigue pendiente.
 
 Paths reales (no `Content/Workshop/`):
 

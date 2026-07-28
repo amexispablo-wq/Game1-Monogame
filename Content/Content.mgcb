@@ -12,15 +12,6 @@
 
 #---------------------------------- Content ---------------------------------#
 
-#begin Audio/Music/MainMenu.ogg
-/importer:OggImporter
-/processor:SongProcessor
-/processorParam:Quality=Best
-/build:Audio/Music/MainMenu.ogg
-
-#begin Audio/Music/levelEditor.ogg
-/importer:OggImporter
-/processor:SongProcessor
-/processorParam:Quality=Best
-/build:Audio/Music/levelEditor.ogg
+# Music loads at runtime from Content/Audio/Music (raw .ogg via Song.FromUri).
+# Add/remove tracks without editing this file.
 

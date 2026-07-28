@@ -62,7 +62,7 @@ public static class SettingsManager
             Directory.CreateDirectory(directory);
 
             string json = JsonSerializer.Serialize(_currentSettings, JsonOptions);
-            File.WriteAllText(path, json);
+            AtomicFileWriter.WriteAllText(path, json);
         }
         catch (Exception ex)
         {
@@ -84,6 +84,7 @@ public static class SettingsManager
     }
 
     public static float GetMusicVolume() => _currentSettings.MusicVolume;
+    public static bool GetContinueMenuMusicInLevels() => _currentSettings.ContinueMenuMusicInLevels;
     public static string GetKeybinding(string actionName) => _currentSettings.Keybindings.TryGetValue(actionName, out var key) ? key : "UNBOUND";
 
     private static GameSettings NormalizeSettings(GameSettings settings)
@@ -131,6 +132,7 @@ public static class SettingsManager
             ResolutionWidth = source.ResolutionWidth,
             ResolutionHeight = source.ResolutionHeight,
             MusicVolume = source.MusicVolume,
+            ContinueMenuMusicInLevels = source.ContinueMenuMusicInLevels,
             FpsLimit = source.FpsLimit,
             Keybindings = new Dictionary<string, string>(source.Keybindings),
             GamepadBindings = new Dictionary<string, string>(source.GamepadBindings),

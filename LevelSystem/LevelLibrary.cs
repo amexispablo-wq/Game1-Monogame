@@ -112,6 +112,15 @@ public static class LevelLibrary
             return Level.CreateDefault();
         }
 
+        if (metadata.Source == LevelSource.Official
+            && !OfficialLevelManifest.VerifyLevelFile(levelId, metadata.FilePath, out string manifestReason))
+        {
+            throw new LevelIntegrityException(
+                levelId,
+                "Official level files were modified. Verify integrity of game files in Steam.",
+                manifestReason);
+        }
+
         try
         {
             if (File.Exists(metadata.FilePath))
@@ -120,16 +129,62 @@ public static class LevelLibrary
                 LevelData? data = JsonSerializer.Deserialize<LevelData>(json, JsonOptions);
                 if (data is not null)
                 {
+                    LevelValidationResult validation = LevelValidator.Validate(
+                        data,
+                        LevelValidationProfile.Playable);
+                    if (!validation.IsValid)
+                    {
+                        string detail = validation.Summary;
+                        DiagnosticsLog.Info("LevelLibrary", $"Reject load {levelId}: {detail}");
+                        if (metadata.Source is LevelSource.Official or LevelSource.Workshop)
+                        {
+                            throw new LevelIntegrityException(
+                                levelId,
+                                metadata.Source == LevelSource.Official
+                                    ? "Official level failed validation. Verify integrity of game files in Steam."
+                                    : "Workshop level failed validation and cannot be loaded.",
+                                detail);
+                        }
+
+                        return Level.CreateDefault();
+                    }
+
                     return Level.FromData(data);
                 }
             }
         }
+        catch (LevelIntegrityException)
+        {
+            throw;
+        }
         catch
         {
-            // Fall back to default if loading fails.
+            if (metadata.Source is LevelSource.Official or LevelSource.Workshop)
+            {
+                throw new LevelIntegrityException(
+                    levelId,
+                    metadata.Source == LevelSource.Official
+                        ? "Official level could not be loaded. Verify integrity of game files in Steam."
+                        : "Workshop level could not be loaded.",
+                    "Deserialize or I/O failure");
+            }
         }
 
         return Level.CreateDefault();
+    }
+
+    /// <summary>Load without throwing integrity exceptions — returns null on integrity failure.</summary>
+    public static Level? TryLoadLevel(string levelId)
+    {
+        try
+        {
+            return LoadLevel(levelId);
+        }
+        catch (LevelIntegrityException ex)
+        {
+            DiagnosticsLog.Info("LevelLibrary", $"TryLoadLevel blocked {levelId}: {ex.UserMessage}");
+            return null;
+        }
     }
 
     public static bool CanSaveLevel(string levelId)
@@ -179,10 +234,18 @@ public static class LevelLibrary
         {
             LevelData data = level.ToData();
             ApplyMetadataOnSave(data, metadata);
+            LevelValidationResult validation = LevelValidator.Validate(data, LevelValidationProfile.Editor);
+            if (!validation.IsValid)
+            {
+                Console.WriteLine($"Save blocked for {levelId}: {validation.Summary}");
+                return false;
+            }
+
             string json = JsonSerializer.Serialize(data, JsonOptions);
-            File.WriteAllText(metadata.FilePath, json);
+            AtomicFileWriter.WriteAllText(metadata.FilePath, json);
             if (metadata.Source == LevelSource.Official)
             {
+                OfficialLevelManifest.ResetCache();
                 SyncOfficialFileToProject(metadata.FilePath);
             }
 
@@ -380,6 +443,11 @@ public static class LevelLibrary
 
         foreach (string filePath in Directory.GetFiles(root, "*.json").OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
         {
+            if (string.Equals(Path.GetFileName(filePath), OfficialLevelManifest.ManifestFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             LevelMetadata? metadata = TryCreateMetadataFromJsonFile(source, filePath);
             if (metadata is not null)
             {
@@ -422,7 +490,7 @@ public static class LevelLibrary
 
     private static void SortLevelsByName(List<LevelMetadata> levels)
     {
-        levels.Sort(static (a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+        levels.Sort(static (a, b) => NaturalStringComparer.Compare(a.Name, b.Name));
     }
 
     private static LevelMetadata? TryCreateMetadataFromJsonFile(
@@ -435,12 +503,27 @@ public static class LevelLibrary
             string fileStem = workshopIdOverride ?? Path.GetFileNameWithoutExtension(filePath);
             string levelId = LevelIdentity.Compose(source, fileStem);
             LevelData? data = ReadLevelData(filePath);
-            string displayName = data is not null && !string.IsNullOrWhiteSpace(data.Name)
+            if (data is null)
+            {
+                return null;
+            }
+
+            LevelValidationProfile listProfile = source == LevelSource.Local
+                ? LevelValidationProfile.Editor
+                : LevelValidationProfile.Playable;
+            LevelValidationResult validation = LevelValidator.Validate(data, listProfile);
+            if (!validation.IsValid)
+            {
+                DiagnosticsLog.Info("LevelLibrary", $"Skip listing {levelId}: {validation.Summary}");
+                return null;
+            }
+
+            string displayName = !string.IsNullOrWhiteSpace(data.Name)
                 ? data.Name
                 : fileStem;
 
-            DateTime created = data?.CreatedDate ?? File.GetCreationTimeUtc(filePath);
-            DateTime modified = data?.ModifiedDate ?? File.GetLastWriteTimeUtc(filePath);
+            DateTime created = data.CreatedDate ?? File.GetCreationTimeUtc(filePath);
+            DateTime modified = data.ModifiedDate ?? File.GetLastWriteTimeUtc(filePath);
 
             return new LevelMetadata
             {
@@ -450,14 +533,14 @@ public static class LevelLibrary
                 Source = source,
                 Author = LevelAuthorProvider.GetAuthorForSource(source, data),
                 WorkshopId = source == LevelSource.Workshop
-                    ? (string.IsNullOrWhiteSpace(data?.WorkshopId) ? fileStem : data.WorkshopId)
+                    ? (string.IsNullOrWhiteSpace(data.WorkshopId) ? fileStem : data.WorkshopId)
                     : string.Empty,
                 CreatedDate = created,
                 ModifiedDate = modified,
-                Version = data?.Version ?? 1,
-                OwnerSteamId = data?.OwnerSteamId ?? string.Empty,
-                DownloadedVersion = data?.DownloadedVersion ?? string.Empty,
-                LastSync = data?.LastSync
+                Version = data.Version > 0 ? data.Version : 1,
+                OwnerSteamId = data.OwnerSteamId ?? string.Empty,
+                DownloadedVersion = data.DownloadedVersion ?? string.Empty,
+                LastSync = data.LastSync
             };
         }
         catch

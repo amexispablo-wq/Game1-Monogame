@@ -54,7 +54,15 @@ public sealed class LevelInfoScene : IScene
     {
         _game = game;
         _levelId = levelId;
-        _level = LevelLibrary.LoadLevel(levelId);
+        Level? loaded = LevelLibrary.TryLoadLevel(levelId);
+        if (loaded is null)
+        {
+            throw new LevelIntegrityException(
+                levelId,
+                "This level failed integrity checks and cannot be opened.");
+        }
+
+        _level = loaded;
         _nameInput = new TextInputComponent(_level.Name);
 
         _musicDropdown.Label = string.Empty;

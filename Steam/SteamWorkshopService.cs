@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ColorBlocks.Replay;
@@ -115,6 +116,12 @@ public sealed class SteamWorkshopService : IDisposable
         if (metadata is null || metadata.Source != LevelSource.Local)
         {
             onComplete(Fail("Only local levels can be uploaded to the Workshop."));
+            return;
+        }
+
+        if (!TryValidateLevelForPublish(metadata, out string validationError))
+        {
+            onComplete(Fail(validationError));
             return;
         }
 
@@ -255,8 +262,119 @@ public sealed class SteamWorkshopService : IDisposable
 
         Directory.CreateDirectory(staging);
         string levelSource = Path.GetFullPath(metadata.FilePath);
+        // Whitelist: only level.json leaves staging. Preview is set separately via SetItemPreview.
         File.Copy(levelSource, Path.Combine(staging, "level.json"), overwrite: true);
         return staging;
+    }
+
+    private static bool TryValidateLevelForPublish(LevelMetadata metadata, out string error)
+    {
+        error = string.Empty;
+        try
+        {
+            var info = new FileInfo(metadata.FilePath);
+            if (!info.Exists)
+            {
+                error = "Level file is missing.";
+                return false;
+            }
+
+            if (info.Length > LevelValidator.MaxLevelFileBytes)
+            {
+                error = $"Level file exceeds {LevelValidator.MaxLevelFileBytes / (1024 * 1024)} MB limit.";
+                return false;
+            }
+
+            LevelData? data = JsonSerializer.Deserialize<LevelData>(
+                File.ReadAllText(metadata.FilePath),
+                JsonOptions);
+            if (data is null)
+            {
+                error = "Level JSON could not be parsed.";
+                return false;
+            }
+
+            LevelValidationResult validation = LevelValidator.Validate(data, LevelValidationProfile.Strict);
+            if (!validation.IsValid)
+            {
+                error = $"Level failed validation: {validation.Summary}";
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Level validation failed: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static readonly byte[] PngMagic = { 0x89, 0x50, 0x4E, 0x47 };
+    private const long MaxPreviewBytes = 4L * 1024 * 1024;
+
+    private static bool IsValidPngPreview(string path, long minBytes)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length < minBytes || info.Length > MaxPreviewBytes)
+            {
+                return false;
+            }
+
+            using FileStream stream = File.OpenRead(path);
+            Span<byte> header = stackalloc byte[4];
+            if (stream.Read(header) < 4)
+            {
+                return false;
+            }
+
+            return header.SequenceEqual(PngMagic);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static readonly string[] DangerousWorkshopExtensions =
+    {
+        ".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".msi", ".scr", ".com"
+    };
+
+    private static bool InstallFolderHasDangerousExtras(string installFolder)
+    {
+        try
+        {
+            foreach (string file in Directory.EnumerateFiles(installFolder, "*", SearchOption.AllDirectories))
+            {
+                string name = Path.GetFileName(file);
+                if (string.Equals(name, "level.json", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(name, "preview.png", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string ext = Path.GetExtension(file);
+                foreach (string dangerous in DangerousWorkshopExtensions)
+                {
+                    if (ext.Equals(dangerous, StringComparison.OrdinalIgnoreCase))
+                    {
+                        DiagnosticsLog.Info(
+                            "SteamWorkshop",
+                            $"Rejecting workshop install with dangerous file '{file}'");
+                        return true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("SteamWorkshop", $"Install folder scan failed: {ex.Message}");
+        }
+
+        return false;
     }
 
     private static string? TryFindPreviewFile(string levelId)
@@ -281,12 +399,11 @@ public sealed class SteamWorkshopService : IDisposable
                 }
 
                 string fullPath = Path.GetFullPath(file);
-                var info = new FileInfo(fullPath);
-                if (!info.Exists || info.Length < MinPreviewBytes)
+                if (!IsValidPngPreview(fullPath, MinPreviewBytes))
                 {
                     DiagnosticsLog.Info(
                         "SteamWorkshop",
-                        $"Skipping invalid preview level={levelId} path='{fullPath}' size={info.Length}");
+                        $"Skipping invalid preview level={levelId} path='{fullPath}'");
                     continue;
                 }
 
@@ -499,6 +616,23 @@ public sealed class SteamWorkshopService : IDisposable
             return;
         }
 
+        if (InstallFolderHasDangerousExtras(installFolder))
+        {
+            DiagnosticsLog.Info(
+                "SteamWorkshop",
+                $"Skip sync — dangerous extras in install folder id={fileId.m_PublishedFileId}");
+            return;
+        }
+
+        var sourceInfo = new FileInfo(sourceLevel);
+        if (sourceInfo.Length > LevelValidator.MaxLevelFileBytes)
+        {
+            DiagnosticsLog.Info(
+                "SteamWorkshop",
+                $"Skip sync — level.json too large ({sourceInfo.Length} bytes) id={fileId.m_PublishedFileId}");
+            return;
+        }
+
         ulong workshopId = fileId.m_PublishedFileId;
         string destinationLevel = UserDataPaths.GetWorkshopLevelFile(workshopId.ToString());
 
@@ -507,6 +641,15 @@ public sealed class SteamWorkshopService : IDisposable
             LevelData? data = JsonSerializer.Deserialize<LevelData>(File.ReadAllText(sourceLevel), JsonOptions);
             if (data is null)
             {
+                return;
+            }
+
+            LevelValidationResult validation = LevelValidator.Validate(data, LevelValidationProfile.Strict);
+            if (!validation.IsValid)
+            {
+                DiagnosticsLog.Info(
+                    "SteamWorkshop",
+                    $"Skip sync — validation failed id={workshopId}: {validation.Summary}");
                 return;
             }
 
@@ -527,10 +670,10 @@ public sealed class SteamWorkshopService : IDisposable
             data.LastSync = DateTime.UtcNow;
 
             Directory.CreateDirectory(Path.GetDirectoryName(destinationLevel)!);
-            File.WriteAllText(destinationLevel, JsonSerializer.Serialize(data, JsonOptions));
+            AtomicFileWriter.WriteAllText(destinationLevel, JsonSerializer.Serialize(data, JsonOptions));
 
             string sourcePreview = Path.Combine(installFolder, "preview.png");
-            if (File.Exists(sourcePreview))
+            if (File.Exists(sourcePreview) && IsValidPngPreview(sourcePreview, minBytes: 16))
             {
                 File.Copy(sourcePreview, UserDataPaths.GetWorkshopPreviewFile(workshopId.ToString()), overwrite: true);
             }

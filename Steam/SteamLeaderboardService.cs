@@ -44,6 +44,8 @@ public sealed class SteamLeaderboardEntry
     public ulong GhostId { get; init; }
     public bool IsLocalUser { get; init; }
     public bool IsFriend { get; init; }
+    /// <summary>Client-side flag for empty details / absurd times — UI warning only.</summary>
+    public bool IsSuspicious { get; init; }
 }
 
 /// <summary>
@@ -307,7 +309,7 @@ public sealed class SteamLeaderboardService
             anyFriend |= SteamFriends.GetFriendRelationship(steamId) == EFriendRelationship.k_EFriendRelationshipFriend;
         }
 
-        return new SteamLeaderboardEntry
+        var entry = new SteamLeaderboardEntry
         {
             Rank = raw.m_nGlobalRank,
             TimeSeconds = raw.m_nScore / 100f,
@@ -323,6 +325,25 @@ public sealed class SteamLeaderboardService
             GhostId = raw.m_hUGC.m_UGCHandle == UGCHandle_t.Invalid.m_UGCHandle ? 0 : raw.m_hUGC.m_UGCHandle,
             IsLocalUser = anyLocal,
             IsFriend = anyFriend && !anyLocal
+        };
+
+        return new SteamLeaderboardEntry
+        {
+            Rank = entry.Rank,
+            TimeSeconds = entry.TimeSeconds,
+            OwnerSteamId = entry.OwnerSteamId,
+            SteamIds = entry.SteamIds,
+            PlayerNames = entry.PlayerNames,
+            PlayerCount = entry.PlayerCount,
+            CompletionDateUtc = entry.CompletionDateUtc,
+            GameVersion = entry.GameVersion,
+            BuildGuidPrefix = entry.BuildGuidPrefix,
+            LevelVersion = entry.LevelVersion,
+            ReplayId = entry.ReplayId,
+            GhostId = entry.GhostId,
+            IsLocalUser = entry.IsLocalUser,
+            IsFriend = entry.IsFriend,
+            IsSuspicious = LeaderboardSanity.IsSuspiciousEntry(entry)
         };
     }
 

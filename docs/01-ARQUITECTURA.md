@@ -38,7 +38,7 @@ UI/             Widgets + navegación
 
 Entities/       Objetos de juego
   Player, Rope, RopeNode, RopeConstraint, RopeTensionPhase, RopeGameplayMode,
-  Platform, Goal, CheckpointFlag, LaunchPad, PlayerState, PlayerIdentity
+  Platform, Goal, CheckpointFlag, LaunchPad, PowerUp, PlayerState, PlayerIdentity
 
 Managers/       Servicios y estado
   PhysicsWorld, PlayerManager, InputManager (+ Input/ backends), SettingsManager,
@@ -121,7 +121,7 @@ ColorBlocksGame (host: input, steam, escena, prompt invite)
   GameSimulation  ── autoridad: tick, timer, meta, snapshots
         │
         ├─ PlayerManager   (spawns, checkpoints, respawn)
-        ├─ PhysicsWorld    (gravedad, colisiones, sogas, launch pads)
+        ├─ PhysicsWorld    (gravedad, colisiones, sogas, launch pads, power-ups)
         ├─ NetworkInputBuffer (inputs por tick y por jugador)
         └─ Level           (geometría)
         │

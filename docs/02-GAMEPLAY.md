@@ -16,6 +16,8 @@ Plataformas 2D donde los jugadores cambian de **color** (Rojo / Azul / Verde). S
 
 - Plataformas superpuestas de distinto color se dibujan mezcladas (amarillo, magenta, cian, blanco si las 3) — `Level.MixColors` / `DrawMixedPlatformIntersections`.
 - El jugador colisiona sólo con `Level.GetCollidablePlatforms(playerColor)` (mismo color).
+- Plataformas pueden hacer ping-pong en un solo eje (V u H) con dirección Up/Down o Left/Right (`Platform.ApplyMotionAtTime`); colisiones y mezcla usan `Bounds` vivos. Jugadores grounded y nodos de rope se llevan con el delta (`PhysicsWorld.UpdateMovingPlatformsAndCarry`).
+- Plataformas pueden ciclar color en loop con lista ordenada + `ColorChangePeriodSeconds` por paso (`Platform.ApplyColorAtTime`), mismo reloj que motion. Independiente del movimiento. `White` permitido (sólido para todos; rope no colisiona con White). Si el color vivo deja de coincidir, el jugador cae; si pasa a colisionable mientras hay overlap, eyección vía `TryStartEjectionFromOverlaps`. Últimos 3s de cada paso: borde parpadea progresivo (más rápido/fuerte) en el **próximo** color del ciclo.
 
 ### Cambio de color
 
@@ -51,12 +53,14 @@ Constante global: `PhysicsWorld.Gravity = 1600`, `FixedTimeStep = 1/60`.
 
 Cuando el jugador se solapa con una plataforma sólida (por cambio de color o por moverse dentro), entra en `Ejecting` y es empujado hacia afuera:
 
-- `Player.TryStartEjectionFromOverlaps` busca la mejor plataforma candidata (mayor influencia al centro + penetración).
-- Dirección = del centro de la plataforma hacia el centro del jugador (con fallbacks: velocidad, última normal, o arriba).
+- `Player.TryStartEjectionFromOverlaps` agrupa plataformas colisionables conectadas (overlap transitivo, incl. anidadas) en un cluster; scorea por influencia al centro + penetración sobre el **AABB unión**.
+- Dirección = MTV cardinal (cara más cercana) desde la unión; se **bloquea** al inicio (sin flip live top/bottom).
+- Colisión ignora **todas** las plataformas del cluster hasta salir de la entidad falsa.
 - Fuerza con rampa suave (`GetEjectionRampAmount`) y multiplicador por cercanía al centro (`EjectionCenterForceMultiplier`).
 - Al salir, hay una ventana de "launch control" (`LaunchControlSeconds = 0.24`) con control aéreo reducido.
 - Parámetros: `EjectionAcceleration=4400`, `EjectionMaxSpeed=820`, `EjectionDuration=0.28`, `EjectionControlFactor=0.35`.
 - Eventos: `OnEjectionStart`, `OnEjectionPeak`, `OnEjectionEnd`.
+- Salto: `JumpImpulse` fija `Velocity.Y` (no suma sobre caída); buffer ~0.1s para aterrizaje.
 
 ## Sogas / Rope (`Entities/Rope.cs`)
 
@@ -94,9 +98,19 @@ Se elige en `LevelSelectScene` (campo `static` entre transiciones) → `GameScen
 
 Plataformas de impulso con rotación. Al tocarlas, lanzan al jugador en la dirección de la pad.
 
-- `LaunchPadForce = 980`, `LaunchPadCooldown = 0.22s` (cooldown por jugador en `PhysicsWorld`).
+- `LaunchPadForce = 980` default por instancia (`LaunchForce`); `LaunchPadCooldown = 0.22s` (cooldown por jugador en `PhysicsWorld`).
 - Dirección = `(sin(rot), -cos(rot))` normalizada; rotación en grados, normalizada.
-- Default 96x36. Conserva algo de velocidad lateral (clampeada).
+- Default 96x36. Conserva algo de velocidad lateral (clampeada). Force por pad clampeado ~100–3000.
+
+## Power-Ups (`Entities/PowerUp.cs`)
+
+Pickups temporales. Overlap AABB con el jugador → buff instantáneo (sin inventario).
+
+- Tipos v1: `Speed` (multiplica `MaxMoveSpeed` + `GroundAcceleration` + `AirAcceleration`) y `Jump` (multiplica `JumpImpulse`).
+- Props por instancia: `Bounds`, `Type`, `DurationSeconds` (default 5), `Multiplier` (1–3, default 1.5), `RespawnSeconds` (0 = one-shot hasta reload), `Consumable` (default true; false = no se consume / queda disponible).
+- Stacking: un buff activo **por tipo** por jugador; re-pickup refresca timer + reemplaza multiplier. Speed y Jump coexisten.
+- `GameplayTuning.ApplyTo` corre cada tick; buffs se aplican **después** (y `MaxMoveSpeed` también viene del tuning). Al expirar, el próximo apply restaura base.
+- Collect en `PhysicsWorld` (host/sim); estado de buff en `PlayerSnapshot`; disponibilidad/respawn en `LevelSnapshot` / paquete de snapshot (índice).
 
 ## Checkpoints (`Entities/CheckpointFlag.cs`)
 

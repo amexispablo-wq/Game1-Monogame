@@ -4,11 +4,13 @@ namespace ColorBlocks.Replay;
 
 public sealed class ReplayFileMetadata
 {
-  public const int CurrentFormatVersion = 1;
+  public const int CurrentFormatVersion = 2;
 
   public int FormatVersion { get; init; } = CurrentFormatVersion;
   public string LevelId { get; init; } = string.Empty;
   public string LevelContentHash { get; init; } = string.Empty;
+  /// <summary>SHA256 of serialized <see cref="ReplayData"/> payload. Empty on legacy replays.</summary>
+  public string DataChecksum { get; init; } = string.Empty;
   public float DurationSeconds { get; init; }
   public int PlayerCount { get; init; }
   public float OfficialBestTime { get; init; }

@@ -201,6 +201,44 @@ public static class GamepadDefaults
         return GetDisplayName(action);
     }
 
+    /// <summary>Canonical conflict token for the effective binding (exact match only).</summary>
+    public static string GetEffectiveBindingToken(
+        GameplayInputAction action,
+        IReadOnlyDictionary<string, string>? overrides)
+    {
+        if (overrides != null && overrides.TryGetValue(action.ToString(), out string? stored))
+        {
+            if (string.IsNullOrWhiteSpace(stored) || stored == GamepadBindingTokens.Unbound)
+            {
+                return GamepadBindingTokens.Unbound;
+            }
+
+            if (stored == GamepadBindingTokens.Default)
+            {
+                return GetDefaultBindingToken(action);
+            }
+
+            return stored;
+        }
+
+        return GetDefaultBindingToken(action);
+    }
+
+    public static string GetDefaultBindingToken(GameplayInputAction action) => action switch
+    {
+        GameplayInputAction.MoveLeft => GamepadBindingTokens.StickLeft,
+        GameplayInputAction.MoveRight => GamepadBindingTokens.StickRight,
+        GameplayInputAction.FastFall => GamepadBindingTokens.StickDown,
+        GameplayInputAction.Jump => Buttons.A.ToString(),
+        GameplayInputAction.Respawn => Buttons.Back.ToString(),
+        GameplayInputAction.RestartLevel => Buttons.RightStick.ToString(),
+        GameplayInputAction.Red => Buttons.X.ToString(),
+        GameplayInputAction.Blue => Buttons.B.ToString(),
+        GameplayInputAction.Green => Buttons.Y.ToString(),
+        GameplayInputAction.PullRope => "TriggerRight",
+        _ => GamepadBindingTokens.Unbound
+    };
+
     public static string GetDisplayName(GameplayInputAction action)
     {
         return action switch

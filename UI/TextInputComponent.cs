@@ -33,6 +33,8 @@ public sealed class TextInputComponent
 
     public int MaxLength { get; set; } = 50;
     public Rectangle Bounds { get; set; }
+    public int TextScale { get; set; } = 2;
+    public TextInputMode Mode { get; set; } = TextInputMode.FreeText;
 
     public TextInputComponent()
     {
@@ -67,23 +69,22 @@ public sealed class TextInputComponent
 
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel)
     {
-        // Draw background
-        Color bgColor = _isFocused ? new Color(62, 71, 90) : new Color(52, 61, 80);
+        Color bgColor = _isFocused ? new Color(38, 48, 62) : new Color(28, 34, 44);
         spriteBatch.Draw(pixel, Bounds, bgColor);
 
-        // Draw border
-        Color borderColor = _isFocused ? new Color(100, 200, 255) : new Color(80, 90, 110);
-        DrawHelper.DrawBorder(spriteBatch, pixel, Bounds, borderColor, 2);
+        Color borderColor = _isFocused ? new Color(120, 200, 255) : new Color(70, 82, 102);
+        DrawHelper.DrawBorder(spriteBatch, pixel, Bounds, borderColor, _isFocused ? 2 : 1);
 
-        // Draw text
-        Vector2 textPos = new(Bounds.X + 8, Bounds.Y + 6);
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, _text, textPos, 2, Color.White);
+        int scale = Math.Max(1, TextScale);
+        Point textSize = SimpleTextRenderer.MeasureString(_text, scale);
+        int textY = Bounds.Y + Math.Max(2, (Bounds.Height - textSize.Y) / 2);
+        Vector2 textPos = new(Bounds.X + 6, textY);
+        SimpleTextRenderer.DrawString(spriteBatch, pixel, _text, textPos, scale, Color.White);
 
-        // Draw caret if focused and blinking
         if (_isFocused && _caretBlinkTime < CaretBlinkInterval)
         {
-            int caretX = (int)textPos.X + (_text.Length * 12);
-            spriteBatch.Draw(pixel, new Rectangle(caretX, (int)textPos.Y, 2, 14), Color.White);
+            int caretX = (int)textPos.X + textSize.X + 1;
+            spriteBatch.Draw(pixel, new Rectangle(caretX, textY, 2, Math.Max(8, textSize.Y)), Color.White);
         }
     }
 
@@ -143,6 +144,12 @@ public sealed class TextInputComponent
 
     private void AddCharacterForKey(Keys key, KeyboardState keyboardState)
     {
+        if (Mode is TextInputMode.Integer or TextInputMode.Decimal)
+        {
+            AddNumericCharacter(key);
+            return;
+        }
+
         if (key >= Keys.A && key <= Keys.Z)
         {
             if (_text.Length < MaxLength)
@@ -152,11 +159,11 @@ public sealed class TextInputComponent
                 _text += c;
             }
         }
-        else if (key >= Keys.D0 && key <= Keys.D9)
+        else if (TryGetDigit(key, out char digit))
         {
             if (_text.Length < MaxLength)
             {
-                _text += (char)('0' + (key - Keys.D0));
+                _text += digit;
             }
         }
         else if (key == Keys.Space)
@@ -170,6 +177,62 @@ public sealed class TextInputComponent
         {
             _text = _text.Substring(0, _text.Length - 1);
         }
+    }
+
+    private void AddNumericCharacter(Keys key)
+    {
+        if (key == Keys.Back)
+        {
+            if (_text.Length > 0)
+            {
+                _text = _text[..^1];
+            }
+
+            return;
+        }
+
+        if (key is Keys.OemMinus or Keys.Subtract)
+        {
+            if (_text.Length == 0)
+            {
+                _text = "-";
+            }
+
+            return;
+        }
+
+        if (Mode == TextInputMode.Decimal && key is Keys.OemPeriod or Keys.Decimal)
+        {
+            if (!_text.Contains('.') && _text.Length < MaxLength)
+            {
+                _text += _text.Length == 0 || _text == "-" ? "0." : ".";
+            }
+
+            return;
+        }
+
+        if (TryGetDigit(key, out char digit) && _text.Length < MaxLength)
+        {
+            _text += digit;
+        }
+    }
+
+    private static bool TryGetDigit(Keys key, out char digit)
+    {
+        if (key >= Keys.D0 && key <= Keys.D9)
+        {
+            digit = (char)('0' + (key - Keys.D0));
+            return true;
+        }
+
+        if (key >= Keys.NumPad0 && key <= Keys.NumPad9)
+        {
+            digit = (char)('0' + (key - Keys.NumPad0));
+            return true;
+        }
+
+        digit = '\0';
+        return false;
     }
 
     public void SetFocus(bool focused)
@@ -186,5 +249,12 @@ public sealed class TextInputComponent
             _keyHoldTimers.Clear();
         }
     }
+}
+
+public enum TextInputMode
+{
+    FreeText,
+    Integer,
+    Decimal
 }
 

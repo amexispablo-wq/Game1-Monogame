@@ -78,12 +78,16 @@ public sealed class MenuPartyDanceStage
         int rowWidth = (count * bodySize) + ((count - 1) * gap);
         int boomboxHeight = Math.Max(28, bodySize / 2);
         int boomboxWidth = Math.Max(48, (int)(bodySize * 1.15f));
-        int stackHeight = bodySize + 16 + boomboxHeight;
+        // Solo: body is large — fixed 12px looked glued. Multi already has visual air beside boombox.
+        int bodyToBoomGap = count <= 1
+            ? Math.Max(40, bodySize / 2)
+            : Math.Max(12, bodySize / 5);
+        int stackHeight = bodySize + bodyToBoomGap + boomboxHeight;
         int originX = _bounds.X + Math.Max(0, (_bounds.Width - rowWidth) / 2);
         int originY = _bounds.Y + Math.Max(0, (_bounds.Height - stackHeight) / 2);
 
         int boomX = _bounds.X + (_bounds.Width - boomboxWidth) / 2;
-        int boomY = originY + bodySize + 12;
+        int boomY = originY + bodySize + bodyToBoomGap;
         int antennaPad = Math.Max(10, boomboxHeight / 3) + 6;
         _boomboxHitBounds = new Rectangle(
             boomX,

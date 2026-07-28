@@ -244,6 +244,11 @@ public static class LevelPreviewManager
             bounds = bounds.IsEmpty ? launchPad.Bounds : Rectangle.Union(bounds, launchPad.Bounds);
         }
 
+        foreach (PowerUp powerUp in level.PowerUps)
+        {
+            bounds = bounds.IsEmpty ? powerUp.Bounds : Rectangle.Union(bounds, powerUp.Bounds);
+        }
+
         if (bounds.IsEmpty)
         {
             return new Rectangle(0, 0, level.WorldSize.X, level.WorldSize.Y);

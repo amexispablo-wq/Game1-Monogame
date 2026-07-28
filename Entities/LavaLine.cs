@@ -34,6 +34,9 @@ public sealed class LavaLine
     public int SurfaceY { get; set; }
     public float RiseSpeed { get; set; }
 
+    public static float ClampRiseSpeed(float speed) =>
+        MathHelper.Clamp(speed, MinRiseSpeed, MaxRiseSpeed);
+
     public bool HitTest(Point worldPoint) => Math.Abs(worldPoint.Y - SurfaceY) <= EditorHitMargin;
 
     /// <summary>Player dies when any part of its body sinks below the lava surface.</summary>

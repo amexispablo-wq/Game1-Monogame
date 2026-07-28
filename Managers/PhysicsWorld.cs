@@ -75,7 +75,10 @@ public sealed class PhysicsWorld
         LastSimulationStepSeconds = dt;
         RefreshSimulationOrder();
         ApplyGameplayTuning();
+        TickPlayerBuffs(dt);
+        ApplyActiveBuffMultipliers();
         UpdateLaunchPadCooldowns(dt);
+        TickPowerUpRespawns(dt);
 
         // Phase 1: read input and accumulate forces for every player.
         foreach (Player player in _simulationOrder)
@@ -112,13 +115,210 @@ public sealed class PhysicsWorld
             MoveVertically(player, dt);
         }
 
-        // Phase 6: launch pads and final velocity clamp for every player.
+        // Phase 6: launch pads, power-ups, and final velocity clamp for every player.
         foreach (Player player in _simulationOrder)
         {
             ApplyLaunchPads(player);
+            ApplyPowerUps(player);
             player.ClampGroundedMoveSpeed();
             player.ClampVelocity();
         }
+
+        // Phase 7: visual air spin for every player (draw-only; remotes use snapshot velocity).
+        foreach (Player player in _simulationOrder)
+        {
+            player.UpdateVisualSpin(dt);
+        }
+    }
+
+    /// <summary>
+    /// Moves platforms to their deterministic pose for <paramref name="timeSeconds"/>,
+    /// then carries grounded players and resting rope nodes by the same delta.
+    /// Must run before <see cref="UpdatePhysics"/>.
+    /// </summary>
+    public void UpdateMovingPlatformsAndCarry(float timeSeconds)
+    {
+        const float ropeNodeRadius = 5f;
+        const float rideFeetSlop = 8f;
+        const float standingRescueMaxPen = 24f;
+
+        foreach (Platform platform in _level.Platforms)
+        {
+            platform.ApplyColorAtTime(timeSeconds);
+
+            if (!platform.HasMotion)
+            {
+                if (platform.Bounds.X != platform.HomeX || platform.Bounds.Y != platform.HomeY)
+                {
+                    platform.Bounds = new Rectangle(
+                        platform.HomeX,
+                        platform.HomeY,
+                        platform.Bounds.Width,
+                        platform.Bounds.Height);
+                }
+
+                continue;
+            }
+
+            Rectangle oldBounds = platform.Bounds;
+            Vector2 delta = platform.ApplyMotionAtTime(timeSeconds);
+            if (delta == Vector2.Zero)
+            {
+                RescueStandingPenetration(platform, standingRescueMaxPen);
+                continue;
+            }
+
+            foreach (Player player in Players)
+            {
+                if (!CanPlayerRidePlatform(player, platform, oldBounds, rideFeetSlop, delta))
+                {
+                    continue;
+                }
+
+                player.Position += delta;
+                // Glue feet to the new top so float/int error cannot seed ejection overlaps.
+                StickPlayerToPlatformTop(player, platform);
+            }
+
+            foreach (Rope rope in Ropes)
+            {
+                foreach (RopeNode node in rope.Nodes)
+                {
+                    if (node.IsPinned)
+                    {
+                        continue;
+                    }
+
+                    if (!IsRopeNodeRestingOn(node.Position, ropeNodeRadius, oldBounds, rideFeetSlop))
+                    {
+                        continue;
+                    }
+
+                    node.Position += delta;
+                }
+            }
+
+            // Platform rose into a non-carried player (or residual clip): snap standing contacts, never eject.
+            RescueStandingPenetration(platform, standingRescueMaxPen);
+        }
+    }
+
+    private void RescueStandingPenetration(Platform platform, float maxPenetration)
+    {
+        foreach (Player player in Players)
+        {
+            if (player.IsFrozen || player.IsEjecting)
+            {
+                continue;
+            }
+
+            if (!IsPlatformCollidableFor(player, platform))
+            {
+                continue;
+            }
+
+            if (!TryGetStandingTopPenetration(player, platform.Bounds, maxPenetration, out _))
+            {
+                continue;
+            }
+
+            StickPlayerToPlatformTop(player, platform);
+        }
+    }
+
+    private static void StickPlayerToPlatformTop(Player player, Platform platform)
+    {
+        player.Position = new Vector2(
+            player.Position.X,
+            platform.Bounds.Top - player.Size.Y);
+        player.IsGrounded = true;
+        if (player.Velocity.Y > 0f)
+        {
+            player.Velocity = new Vector2(player.Velocity.X, 0f);
+        }
+    }
+
+    private static bool TryGetStandingTopPenetration(
+        Player player,
+        Rectangle platformBounds,
+        float maxPenetration,
+        out float feetPenetration)
+    {
+        feetPenetration = (player.Position.Y + player.Size.Y) - platformBounds.Top;
+        if (feetPenetration <= 0f || feetPenetration > maxPenetration)
+        {
+            return false;
+        }
+
+        // Standing contact: body mostly above the top surface (not buried mid-solid).
+        float playerCenterY = player.Position.Y + (player.Size.Y * 0.5f);
+        if (playerCenterY > platformBounds.Top)
+        {
+            return false;
+        }
+
+        return player.Position.X + player.Size.X > platformBounds.Left
+            && player.Position.X < platformBounds.Right;
+    }
+
+    private static bool CanPlayerRidePlatform(
+        Player player,
+        Platform platform,
+        Rectangle oldBounds,
+        float feetSlop,
+        Vector2 platformDelta)
+    {
+        if (player.IsFrozen || player.IsEjecting)
+        {
+            return false;
+        }
+
+        if (!IsPlatformCollidableFor(player, platform))
+        {
+            return false;
+        }
+
+        float feetY = player.Position.Y + player.Size.Y;
+        // When the platform rises, allow a wider catch window so a missed grounded flag
+        // cannot leave the player inside the solid for ejection.
+        float upwardCatch = platformDelta.Y < 0f ? MathF.Max(feetSlop, -platformDelta.Y + feetSlop) : feetSlop;
+        if (feetY < oldBounds.Top - 2f || feetY > oldBounds.Top + upwardCatch)
+        {
+            return false;
+        }
+
+        if (player.Position.X + player.Size.X <= oldBounds.Left
+            || player.Position.X >= oldBounds.Right)
+        {
+            return false;
+        }
+
+        // Rising platform: carry anyone whose feet were on the old top (catches float gaps).
+        if (platformDelta.Y < 0f)
+        {
+            return true;
+        }
+
+        return player.IsGrounded;
+    }
+
+    private static bool IsPlatformCollidableFor(Player player, Platform platform) =>
+        platform.PlatformColor == GameColor.White || platform.PlatformColor == player.CurrentColor;
+
+    private static bool IsRopeNodeRestingOn(
+        Vector2 nodePosition,
+        float nodeRadius,
+        Rectangle oldBounds,
+        float feetSlop)
+    {
+        float bottom = nodePosition.Y + nodeRadius;
+        if (bottom < oldBounds.Top - 2f || bottom > oldBounds.Top + feetSlop)
+        {
+            return false;
+        }
+
+        return nodePosition.X + nodeRadius > oldBounds.Left
+            && nodePosition.X - nodeRadius < oldBounds.Right;
     }
 
     public void ResetRopesForPlayer(Player player)
@@ -163,6 +363,35 @@ public sealed class PhysicsWorld
         foreach (Rope rope in Ropes)
         {
             tuning.ApplyTo(rope);
+        }
+    }
+
+    private void ApplyActiveBuffMultipliers()
+    {
+        foreach (Player player in Players)
+        {
+            player.ApplyBuffMultipliers();
+        }
+    }
+
+    private void TickPlayerBuffs(float dt)
+    {
+        foreach (Player player in _simulationOrder)
+        {
+            if (!ShouldSimulate(player))
+            {
+                continue;
+            }
+
+            player.TickBuffs(dt);
+        }
+    }
+
+    private void TickPowerUpRespawns(float dt)
+    {
+        foreach (PowerUp powerUp in _level.PowerUps)
+        {
+            powerUp.TickRespawn(dt);
         }
     }
 
@@ -232,18 +461,50 @@ public sealed class PhysicsWorld
             }
 
             Vector2 direction = launchPad.LaunchDirection;
+            float padForce = LaunchPad.ClampLaunchForce(launchPad.LaunchForce);
             Vector2 lateralVelocity = player.Velocity - (direction * Vector2.Dot(player.Velocity, direction));
-            float maxLateralSpeed = MathF.Max(60f, LaunchPad.LaunchPadForce * 0.18f);
+            float maxLateralSpeed = MathF.Max(60f, padForce * 0.18f);
             if (lateralVelocity.LengthSquared() > maxLateralSpeed * maxLateralSpeed)
             {
                 lateralVelocity = Vector2.Normalize(lateralVelocity) * maxLateralSpeed;
             }
 
-            Vector2 launchVelocity = (direction * LaunchPad.LaunchPadForce * launchMultiplier) + (lateralVelocity * 0.25f);
+            Vector2 launchVelocity = (direction * padForce * launchMultiplier) + (lateralVelocity * 0.25f);
             player.LaunchFromPad(launchVelocity);
             _launchPadCooldowns[player.NetworkId] = MathF.Max(0.01f, LaunchPad.LaunchPadCooldown);
-            LastLaunchForce = direction * LaunchPad.LaunchPadForce * launchMultiplier;
+            LastLaunchForce = direction * padForce * launchMultiplier;
             GameAudio.Play(SfxManager.LaunchPad);
+            return;
+        }
+    }
+
+    private void ApplyPowerUps(Player player)
+    {
+        if (!ShouldSimulate(player) || player.IsFrozen)
+        {
+            return;
+        }
+
+        foreach (PowerUp powerUp in _level.PowerUps)
+        {
+            if (!powerUp.IsAvailable
+                || !CollisionHelper.Intersects(player.Position, player.Size, powerUp.TriggerBounds))
+            {
+                continue;
+            }
+
+            bool hadBuff = powerUp.Type == PowerUpType.Speed
+                ? player.HasSpeedBuff
+                : player.HasJumpBuff;
+            player.CollectPowerUp(powerUp.Type, powerUp.DurationSeconds, powerUp.Multiplier);
+            powerUp.Collect();
+            if (powerUp.Consumable || !hadBuff)
+            {
+                GameAudio.Play(SfxManager.Jump);
+            }
+
+            GameplayTuning.Active.ApplyTo(player);
+            player.ApplyBuffMultipliers();
             return;
         }
     }

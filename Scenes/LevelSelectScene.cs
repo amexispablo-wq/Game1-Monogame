@@ -42,6 +42,7 @@ public sealed class LevelSelectScene : IScene
 
     private readonly ColorBlocksGame _game;
     private readonly LevelSelectMode _mode;
+    public LevelSelectMode Mode => _mode;
     private IReadOnlyList<LevelMetadata> _levels = new List<LevelMetadata>();
     private GridLayout _gridLayout = null!;
     private int? _selectedIndex;
@@ -1575,20 +1576,39 @@ public sealed class LevelSelectScene : IScene
 
                 if (!_game.SteamLobby.BroadcastLevelStart(levelId, s_selectedRopeMode, s_lavaRiseEnabled))
                 {
-                    _alertPopup = new AlertPopup(
-                        "VERSION MISMATCH",
-                        $"Host: {SessionDiagnostics.HostBuildLabel} Client: {SessionDiagnostics.ClientBuildLabel}");
+                    LevelMetadata? startMeta = LevelLibrary.GetLevel(levelId);
+                    if (startMeta?.Source == LevelSource.Official
+                        && !OfficialLevelManifest.VerifyLevelFile(levelId, startMeta.FilePath, out _))
+                    {
+                        _alertPopup = new AlertPopup(
+                            "LEVEL INTEGRITY",
+                            "Official level files were modified. Verify integrity of game files in Steam.");
+                    }
+                    else
+                    {
+                        _alertPopup = new AlertPopup(
+                            "VERSION MISMATCH",
+                            $"Host: {SessionDiagnostics.HostBuildLabel} Client: {SessionDiagnostics.ClientBuildLabel}");
+                    }
+
                     return;
                 }
             }
 
-            _game.ChangeScene(new GameScene(
-                _game,
-                levelId,
-                s_selectedRopeMode,
-                s_lavaRiseEnabled,
-                s_ghostMode,
-                s_playerCollisionEnabled));
+            try
+            {
+                _game.ChangeScene(new GameScene(
+                    _game,
+                    levelId,
+                    s_selectedRopeMode,
+                    s_lavaRiseEnabled,
+                    s_ghostMode,
+                    s_playerCollisionEnabled));
+            }
+            catch (LevelIntegrityException ex)
+            {
+                _alertPopup = new AlertPopup("LEVEL INTEGRITY", ex.UserMessage);
+            }
         }
         else
         {
@@ -1693,7 +1713,14 @@ public sealed class LevelSelectScene : IScene
             return;
 
         LevelMetadata level = _levels[_selectedIndex.Value];
-        _game.ChangeScene(new LevelInfoScene(_game, level.Id));
+        try
+        {
+            _game.ChangeScene(new LevelInfoScene(_game, level.Id));
+        }
+        catch (LevelIntegrityException ex)
+        {
+            _alertPopup = new AlertPopup("LEVEL INTEGRITY", ex.UserMessage);
+        }
     }
 
     private void HandleDeleteLevel()
@@ -1914,7 +1941,19 @@ public sealed class LevelSelectScene : IScene
 
         LevelMetadata metadata = _levels[_selectedIndex.Value];
         _selectedLevelId = metadata.Id;
-        _selectedLevel = LevelLibrary.LoadLevel(metadata.Id);
+        Level? loaded = LevelLibrary.TryLoadLevel(metadata.Id);
+        if (loaded is null)
+        {
+            _selectedLevel = null;
+            _selectedLevelPreview = null;
+            RefreshDetailsPanelCache();
+            _alertPopup = new AlertPopup(
+                "LEVEL INTEGRITY",
+                "This level failed integrity checks and cannot be loaded.");
+            return;
+        }
+
+        _selectedLevel = loaded;
         _selectedLevelPreview = LevelPreviewManager.GetPreview(_game.GraphicsDevice, _game.Pixel, _selectedLevel, metadata.Id);
         RefreshDetailsPanelCache();
         ApplyLevelPlayDefaults(_selectedLevel);

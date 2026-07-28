@@ -14,6 +14,7 @@ public sealed class ReplayFrame
   private readonly List<PlayerSnapshot> _players = new(4);
   private readonly List<ReplayRopeState> _ropes = new(3);
   private readonly List<CheckpointFlagSnapshot> _checkpoints = new(8);
+  private readonly List<ReplayPowerUpRuntimeSnapshot> _powerUps = new(8);
 
   public long Tick { get; private set; }
   public TimerSnapshot Timer { get; private set; }
@@ -26,6 +27,7 @@ public sealed class ReplayFrame
   public IReadOnlyList<PlayerSnapshot> Players => _players;
   public IReadOnlyList<ReplayRopeState> Ropes => _ropes;
   public IReadOnlyList<CheckpointFlagSnapshot> Checkpoints => _checkpoints;
+  public IReadOnlyList<ReplayPowerUpRuntimeSnapshot> PowerUps => _powerUps;
 
   public void CopyFrom(GameSimulation simulation, Camera camera)
   {
@@ -61,6 +63,12 @@ public sealed class ReplayFrame
         checkpoint.Position.Y,
         checkpoint.IsActive));
     }
+
+    _powerUps.Clear();
+    foreach (PowerUp powerUp in simulation.Level.PowerUps)
+    {
+      _powerUps.Add(new ReplayPowerUpRuntimeSnapshot(powerUp.IsAvailable, powerUp.RespawnRemaining));
+    }
   }
 
   public void CopyFrom(ReplayFrame other)
@@ -91,6 +99,12 @@ public sealed class ReplayFrame
     foreach (CheckpointFlagSnapshot checkpoint in other._checkpoints)
     {
       _checkpoints.Add(checkpoint);
+    }
+
+    _powerUps.Clear();
+    foreach (ReplayPowerUpRuntimeSnapshot powerUp in other._powerUps)
+    {
+      _powerUps.Add(powerUp);
     }
   }
 

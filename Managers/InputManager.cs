@@ -612,10 +612,13 @@ public sealed class InputManager : ILocalPlayerInputSource
         return false;
     }
 
-    public bool IsKeyDown(Keys key) => _currentKeyboard.IsKeyDown(key);
+    public bool IsKeyDown(Keys key) =>
+        key != Keys.None && _currentKeyboard.IsKeyDown(key);
 
     public bool IsNewKeyPress(Keys key) =>
-        _currentKeyboard.IsKeyDown(key) && !_previousKeyboard.IsKeyDown(key);
+        key != Keys.None
+        && _currentKeyboard.IsKeyDown(key)
+        && !_previousKeyboard.IsKeyDown(key);
 
     /// <summary>Binding tokens for PhantomInputSummary export.</summary>
     public string DescribeBindingsForDiagnostics()
@@ -1584,13 +1587,19 @@ public sealed class InputManager : ILocalPlayerInputSource
 
         private static Keys GetSettingKey(GameSettings settings, string actionName, Keys fallback)
         {
-            if (settings.Keybindings.TryGetValue(actionName, out string? keyName)
-                && Enum.TryParse(keyName, ignoreCase: true, out Keys key))
+            if (!settings.Keybindings.TryGetValue(actionName, out string? keyName))
             {
-                return key;
+                return fallback;
             }
 
-            return fallback;
+            // Explicit clear in options — do not fall back to default.
+            if (string.IsNullOrWhiteSpace(keyName)
+                || string.Equals(keyName, "None", StringComparison.OrdinalIgnoreCase))
+            {
+                return Keys.None;
+            }
+
+            return Enum.TryParse(keyName, ignoreCase: true, out Keys key) ? key : fallback;
         }
     }
 
@@ -1621,7 +1630,11 @@ public sealed class InputManager : ILocalPlayerInputSource
 
         private static GamepadActionBinding Resolve(GameSettings settings, GameplayInputAction action)
         {
-            settings.GamepadBindings.TryGetValue(action.ToString(), out string? stored);
+            if (!settings.GamepadBindings.TryGetValue(action.ToString(), out string? stored))
+            {
+                return GamepadActionBinding.DefaultFor(action);
+            }
+
             return GamepadActionBinding.Parse(stored, action);
         }
     }

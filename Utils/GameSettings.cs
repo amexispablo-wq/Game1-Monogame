@@ -18,6 +18,10 @@ public sealed class GameSettings
     [JsonPropertyName("musicVolume")]
     public float MusicVolume { get; set; } = 0.75f;
 
+    /// <summary>When true, menu playlist keeps playing during levels instead of level/silence tracks.</summary>
+    [JsonPropertyName("continueMenuMusicInLevels")]
+    public bool ContinueMenuMusicInLevels { get; set; }
+
     // FPS cap. -1 = VSync (monitor refresh), 0 = Unlimited, >0 = hard cap.
     [JsonPropertyName("fpsLimit")]
     public int FpsLimit { get; set; } = 0;

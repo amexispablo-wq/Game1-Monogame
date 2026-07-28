@@ -198,6 +198,8 @@ public sealed class GameScene : IScene
             _game.SteamLobby.MemberLeft += OnLobbyMemberLeft;
             _game.SteamLobby.LevelLeaveReceived += OnLevelLeaveReceived;
 
+            // Host also sets this in ChangeScene after swap; set early so guests see the
+            // lobby flag while this scene is still constructing.
             if (_session.Role == GameSessionRole.Host && _game.SteamLobby.IsInLobby)
             {
                 _game.SteamLobby.SetGameplayActive(true);
@@ -218,10 +220,8 @@ public sealed class GameScene : IScene
         ReplayDiagnostics.ActiveRecorder = null;
         if (!_editorTestMode)
         {
-            if (_session.Role == GameSessionRole.Host && _game.SteamLobby.IsInLobby)
-            {
-                _game.SteamLobby.SetGameplayActive(false);
-            }
+            // GameplayActive is owned by ColorBlocksGame.ChangeScene so GameScene→GameScene
+            // (next/replay) does not clear the lobby flag after the new scene already set it.
 
             _game.SteamLobby.MemberLeft -= OnLobbyMemberLeft;
             _game.SteamLobby.LevelLeaveReceived -= OnLevelLeaveReceived;
@@ -236,7 +236,8 @@ public sealed class GameScene : IScene
         _photoMode = false;
         _game.GameNetwork.Reset();
         GameAudio.StopAllLoops();
-        _game.Music.Stop();
+        // Music ownership stays with ApplySceneMusic on the next scene.
+        // Stopping here forced a new menu track + MediaPlayer Stop/Play flap (scratched disc).
     }
 
     private void FinalizeSessionRecording()
@@ -285,6 +286,14 @@ public sealed class GameScene : IScene
         int levelVersion = LevelLibrary.GetLevel(_levelId)?.Version ?? 1;
         float finalTime = _simulation.FinalTime;
         int playerCount = _playerManager.Players.Count;
+        string replayPath = ReplayStorage.GetBestReplayPath(_levelId, playerCount);
+
+        if (!LeaderboardSanity.TryValidateUpload(_levelId, finalTime, playerCount, replayPath, out string sanityReason))
+        {
+            DiagnosticsLog.Info("SteamLeaderboard", $"Skip upload — {sanityReason}");
+            MultiplayerDebug.LogSim($"Skip Steam leaderboard upload — {sanityReason}");
+            return;
+        }
 
         var steamIds = new List<ulong>();
         foreach (PartyMember member in _game.Party.Members)
@@ -296,7 +305,6 @@ public sealed class GameScene : IScene
         }
 
         string levelId = _levelId;
-        string replayPath = ReplayStorage.GetBestReplayPath(levelId, playerCount);
         ColorBlocksGame game = _game;
         int scoreCentiseconds = (int)MathF.Round(BestTimeStorage.RoundToCentiseconds(finalTime) * 100f);
 
@@ -1119,10 +1127,47 @@ public sealed class GameScene : IScene
 
     private void ReplayLevel()
     {
+        if (_game.SteamLobby.IsInLobby)
+        {
+            if (!_game.Party.IsLeader)
+            {
+                // Guests follow host START; local click still restarts if host already left them behind.
+                RestartLocalGameplayScene();
+                return;
+            }
+
+            MultiplayerDebug.LogSim(
+                $"HOST REPLAY level={_levelId} partyMembers={_game.Party.Members.Count} " +
+                $"rope={_ropeGameplayMode} lava={_lavaRiseEnabled}");
+            if (!_game.SteamLobby.BroadcastLevelStart(_levelId, _ropeGameplayMode, _lavaRiseEnabled))
+            {
+                _alertPopup = new AlertPopup(
+                    "VERSION MISMATCH",
+                    $"Host: {SessionDiagnostics.HostBuildLabel} Client: {SessionDiagnostics.ClientBuildLabel}");
+                return;
+            }
+
+            RestartLocalGameplayScene();
+            return;
+        }
+
         _completionUiActive = false;
         _completionUiElapsed = 0f;
         _game.Input.GameplayInputBlocked = false;
         ResetGameplaySession();
+    }
+
+    private void RestartLocalGameplayScene()
+    {
+        LevelSelectScene.SyncPlaySettings(_ropeGameplayMode, _lavaRiseEnabled, _playerCollisionEnabled);
+        _game.ChangeScene(new GameScene(
+            _game,
+            _levelId,
+            _ropeGameplayMode,
+            _lavaRiseEnabled,
+            _ghostMode,
+            _playerCollisionEnabled,
+            _editorTestMode));
     }
 
     private void ResetGameplaySession()

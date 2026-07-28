@@ -36,6 +36,8 @@ public sealed class SteamManager : IDisposable
 
             RefreshSteamInfo();
             Status = "Steam initialized";
+            SaveIntegrity.SteamIdProvider = () =>
+                IsInitialized ? SteamUser.GetSteamID().m_SteamID : 0UL;
         }
         catch (Exception ex) when (IsRecoverableSteamException(ex))
         {

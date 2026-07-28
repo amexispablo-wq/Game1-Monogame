@@ -6,32 +6,48 @@ namespace ColorBlocks;
 
 public static class PlayerSkinRenderer
 {
+    private static readonly Vector2 PixelOrigin = new(0.5f, 0.5f);
+
     public static void DrawBody(
         SpriteBatch spriteBatch,
         Texture2D pixel,
         Rectangle bodyBounds,
         Color gameplayColor,
-        PlayerSkinData? cosmeticSkin)
+        PlayerSkinData? cosmeticSkin,
+        float rotation = 0f)
     {
-        spriteBatch.Draw(pixel, bodyBounds, gameplayColor);
+        Vector2 center = new(bodyBounds.Center.X, bodyBounds.Center.Y);
+
+        DrawRotatedRect(
+            spriteBatch,
+            pixel,
+            center,
+            bodyBounds.Width,
+            bodyBounds.Height,
+            rotation,
+            gameplayColor);
 
         if (cosmeticSkin is not null)
         {
-            DrawSkinOverlay(spriteBatch, pixel, bodyBounds, cosmeticSkin);
+            DrawSkinOverlay(spriteBatch, pixel, bodyBounds, cosmeticSkin, rotation);
         }
 
-        DrawHelper.DrawBorder(spriteBatch, pixel, bodyBounds, Color.Black, 3);
+        DrawHelper.DrawBorder(spriteBatch, pixel, bodyBounds, Color.Black, 3, rotation);
     }
 
     public static void DrawSkinOverlay(
         SpriteBatch spriteBatch,
         Texture2D pixel,
         Rectangle bodyBounds,
-        PlayerSkinData skin)
+        PlayerSkinData skin,
+        float rotation = 0f)
     {
         int grid = PlayerSkinData.GridSize;
         float cellW = bodyBounds.Width / (float)grid;
         float cellH = bodyBounds.Height / (float)grid;
+        Vector2 center = new(bodyBounds.Center.X, bodyBounds.Center.Y);
+        float cos = MathF.Cos(rotation);
+        float sin = MathF.Sin(rotation);
 
         for (int y = 0; y < grid; y++)
         {
@@ -42,12 +58,36 @@ public static class PlayerSkinRenderer
                     continue;
                 }
 
-                int px = (int)MathF.Round(bodyBounds.X + (x * cellW));
-                int py = (int)MathF.Round(bodyBounds.Y + (y * cellH));
+                float localX = bodyBounds.X + ((x + 0.5f) * cellW) - center.X;
+                float localY = bodyBounds.Y + ((y + 0.5f) * cellH) - center.Y;
+                float worldX = center.X + (localX * cos) - (localY * sin);
+                float worldY = center.Y + (localX * sin) + (localY * cos);
+
                 int pw = Math.Max(1, (int)MathF.Ceiling(cellW));
                 int ph = Math.Max(1, (int)MathF.Ceiling(cellH));
-                spriteBatch.Draw(pixel, new Rectangle(px, py, pw, ph), Color.Black);
+                DrawRotatedRect(spriteBatch, pixel, new Vector2(worldX, worldY), pw, ph, rotation, Color.Black);
             }
         }
+    }
+
+    private static void DrawRotatedRect(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        Vector2 center,
+        float width,
+        float height,
+        float rotation,
+        Color color)
+    {
+        spriteBatch.Draw(
+            pixel,
+            center,
+            null,
+            color,
+            rotation,
+            PixelOrigin,
+            new Vector2(width, height),
+            SpriteEffects.None,
+            0f);
     }
 }

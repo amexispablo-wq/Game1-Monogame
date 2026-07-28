@@ -12,6 +12,8 @@ public sealed class Level
     private readonly List<Goal> _goals = new();
     private readonly List<CheckpointFlag> _checkpointFlags = new();
     private readonly List<LaunchPad> _launchPads = new();
+    private readonly List<PowerUp> _powerUps = new();
+    private readonly List<LevelSign> _signs = new();
 
     public Level()
     {
@@ -26,6 +28,7 @@ public sealed class Level
         IEnumerable<Goal> goals,
         IEnumerable<CheckpointFlag> checkpointFlags = null,
         IEnumerable<LaunchPad> launchPads = null,
+        IEnumerable<PowerUp> powerUps = null,
         string name = "")
     {
         PlayerStart = playerStart;
@@ -41,6 +44,11 @@ public sealed class Level
         if (launchPads is not null)
         {
             _launchPads.AddRange(launchPads);
+        }
+
+        if (powerUps is not null)
+        {
+            _powerUps.AddRange(powerUps);
         }
 
         RecalculateWorldSize();
@@ -66,6 +74,8 @@ public sealed class Level
     public IReadOnlyList<Goal> Goals => _goals;
     public IReadOnlyList<CheckpointFlag> CheckpointFlags => _checkpointFlags;
     public IReadOnlyList<LaunchPad> LaunchPads => _launchPads;
+    public IReadOnlyList<PowerUp> PowerUps => _powerUps;
+    public IReadOnlyList<LevelSign> Signs => _signs;
 
     public static Level CreateDefault()
     {
@@ -108,6 +118,7 @@ public sealed class Level
         List<Goal> goals = new();
         List<CheckpointFlag> checkpointFlags = new();
         List<LaunchPad> launchPads = new();
+        List<PowerUp> powerUps = new();
 
         foreach (PlatformData platform in data.Platforms)
         {
@@ -118,7 +129,40 @@ public sealed class Level
 
             platforms.Add(new Platform(
                 new Rectangle(platform.X, platform.Y, platform.Width, platform.Height),
-                platform.Color));
+                platform.Color)
+            {
+                MoveVertical = platform.MoveVertical,
+                VerticalSpeed = Platform.ClampSpeed(platform.VerticalSpeed),
+                VerticalDistanceBlocks = Platform.ClampDistanceBlocks(platform.VerticalDistanceBlocks),
+                VerticalDirection = platform.VerticalDirection,
+                MoveHorizontal = platform.MoveHorizontal,
+                HorizontalSpeed = Platform.ClampSpeed(platform.HorizontalSpeed),
+                HorizontalDistanceBlocks = Platform.ClampDistanceBlocks(platform.HorizontalDistanceBlocks),
+                HorizontalDirection = platform.HorizontalDirection,
+                ColorChangeEnabled = platform.ColorChangeEnabled,
+                ColorCycle = platform.ColorCycle is { Count: > 0 }
+                    ? new List<GameColor>(platform.ColorCycle)
+                    : new List<GameColor>(),
+                ColorChangePeriodSeconds = Platform.ClampColorChangePeriod(
+                    platform.ColorChangePeriodSeconds <= 0f
+                        ? Platform.DefaultColorChangePeriodSeconds
+                        : platform.ColorChangePeriodSeconds),
+                ColorChangePhaseSeconds = platform.ColorChangePhaseSeconds
+            });
+
+            // Mutual exclusion: prefer vertical if both were authored somehow.
+            Platform added = platforms[^1];
+            if (added.MoveVertical && added.MoveHorizontal)
+            {
+                added.MoveHorizontal = false;
+            }
+
+            if (added.ColorChangeEnabled)
+            {
+                added.EnsureColorCycleSeeded();
+                added.ColorCycle[0] = platform.Color;
+                added.PlatformColor = platform.Color;
+            }
         }
 
         foreach (GoalData goal in data.Goals)
@@ -140,7 +184,41 @@ public sealed class Level
 
             launchPads.Add(new LaunchPad(
                 new Rectangle(launchPad.X, launchPad.Y, launchPad.Width, launchPad.Height),
-                launchPad.RotationDegrees));
+                launchPad.RotationDegrees,
+                launchPad.LaunchForce <= 0f ? LaunchPad.LaunchPadForce : launchPad.LaunchForce));
+        }
+
+        if (data.PowerUps is not null)
+        {
+            foreach (PowerUpData powerUp in data.PowerUps)
+            {
+                if (powerUp.Width <= 0 || powerUp.Height <= 0)
+                {
+                    continue;
+                }
+
+                powerUps.Add(new PowerUp(
+                    new Rectangle(powerUp.X, powerUp.Y, powerUp.Width, powerUp.Height),
+                    powerUp.Type,
+                    powerUp.DurationSeconds,
+                    powerUp.Multiplier,
+                    powerUp.RespawnSeconds,
+                    powerUp.Consumable));
+            }
+        }
+
+        List<LevelSign> signs = new();
+        if (data.Signs is not null)
+        {
+            foreach (SignData sign in data.Signs)
+            {
+                if (string.IsNullOrWhiteSpace(sign.Text))
+                {
+                    continue;
+                }
+
+                signs.Add(new LevelSign(new Vector2(sign.X, sign.Y), sign.Text, sign.Scale));
+            }
         }
 
         Level level = new Level(
@@ -149,6 +227,7 @@ public sealed class Level
             goals,
             checkpointFlags,
             launchPads,
+            powerUps,
             data.Name)
         {
             PlayerStartColor = NormalizePlayerStartColor(data.PlayerSpawnColor),
@@ -164,6 +243,8 @@ public sealed class Level
             LavaRise = data.LavaRise,
             PlayerCollision = data.PlayerCollision
         };
+
+        level._signs.AddRange(signs);
 
         // Legacy / incomplete: neither mode set → treat as Any.
         if (!level.AnyRope && !level.ColoredRope && !level.RegularRope)
@@ -210,11 +291,25 @@ public sealed class Level
         {
             data.Platforms.Add(new PlatformData
             {
-                X = platform.Bounds.X,
-                Y = platform.Bounds.Y,
+                X = platform.HomeX,
+                Y = platform.HomeY,
                 Width = platform.Bounds.Width,
                 Height = platform.Bounds.Height,
-                Color = platform.PlatformColor
+                Color = platform.ColorCycle.Count > 0 ? platform.ColorCycle[0] : platform.PlatformColor,
+                MoveVertical = platform.MoveVertical,
+                VerticalSpeed = platform.VerticalSpeed,
+                VerticalDistanceBlocks = platform.VerticalDistanceBlocks,
+                VerticalDirection = platform.VerticalDirection,
+                MoveHorizontal = platform.MoveHorizontal,
+                HorizontalSpeed = platform.HorizontalSpeed,
+                HorizontalDistanceBlocks = platform.HorizontalDistanceBlocks,
+                HorizontalDirection = platform.HorizontalDirection,
+                ColorChangeEnabled = platform.ColorChangeEnabled,
+                ColorCycle = platform.ColorCycle.Count > 0
+                    ? new List<GameColor>(platform.ColorCycle)
+                    : new List<GameColor>(),
+                ColorChangePeriodSeconds = platform.ColorChangePeriodSeconds,
+                ColorChangePhaseSeconds = platform.ColorChangePhaseSeconds
             });
         }
 
@@ -245,7 +340,35 @@ public sealed class Level
                 Y = launchPad.Bounds.Y,
                 Width = launchPad.Bounds.Width,
                 Height = launchPad.Bounds.Height,
-                RotationDegrees = LaunchPad.NormalizeRotation(launchPad.RotationDegrees)
+                RotationDegrees = LaunchPad.NormalizeRotation(launchPad.RotationDegrees),
+                LaunchForce = LaunchPad.ClampLaunchForce(launchPad.LaunchForce)
+            });
+        }
+
+        foreach (PowerUp powerUp in _powerUps)
+        {
+            data.PowerUps.Add(new PowerUpData
+            {
+                X = powerUp.Bounds.X,
+                Y = powerUp.Bounds.Y,
+                Width = powerUp.Bounds.Width,
+                Height = powerUp.Bounds.Height,
+                Type = powerUp.Type,
+                DurationSeconds = PowerUp.ClampDuration(powerUp.DurationSeconds),
+                Multiplier = PowerUp.ClampMultiplier(powerUp.Multiplier),
+                RespawnSeconds = PowerUp.ClampRespawn(powerUp.RespawnSeconds),
+                Consumable = powerUp.Consumable
+            });
+        }
+
+        foreach (LevelSign sign in _signs)
+        {
+            data.Signs.Add(new SignData
+            {
+                X = (int)MathF.Round(sign.Position.X),
+                Y = (int)MathF.Round(sign.Position.Y),
+                Text = sign.TextTemplate,
+                Scale = sign.Scale
             });
         }
 
@@ -279,6 +402,10 @@ public sealed class Level
         _checkpointFlags.AddRange(loaded.CheckpointFlags);
         _launchPads.Clear();
         _launchPads.AddRange(loaded.LaunchPads);
+        _powerUps.Clear();
+        _powerUps.AddRange(loaded.PowerUps);
+        _signs.Clear();
+        _signs.AddRange(loaded.Signs);
         RecalculateWorldSize();
     }
 
@@ -335,6 +462,18 @@ public sealed class Level
         RecalculateWorldSize();
     }
 
+    public void AddPowerUp(PowerUp powerUp)
+    {
+        _powerUps.Add(powerUp);
+        RecalculateWorldSize();
+    }
+
+    public void RemovePowerUp(PowerUp powerUp)
+    {
+        _powerUps.Remove(powerUp);
+        RecalculateWorldSize();
+    }
+
     public void RecalculateWorldSize()
     {
         int width = 1280;
@@ -342,8 +481,9 @@ public sealed class Level
 
         foreach (Platform platform in _platforms)
         {
-            width = System.Math.Max(width, platform.Bounds.Right + 200);
-            height = System.Math.Max(height, platform.Bounds.Bottom + 200);
+            Rectangle extents = platform.GetMotionExtents();
+            width = System.Math.Max(width, extents.Right + 200);
+            height = System.Math.Max(height, extents.Bottom + 200);
         }
 
         foreach (Goal goal in _goals)
@@ -364,6 +504,12 @@ public sealed class Level
             height = System.Math.Max(height, launchPad.Bounds.Bottom + 200);
         }
 
+        foreach (PowerUp powerUp in _powerUps)
+        {
+            width = System.Math.Max(width, powerUp.Bounds.Right + 200);
+            height = System.Math.Max(height, powerUp.Bounds.Bottom + 200);
+        }
+
         WorldSize = new Point(width, height);
     }
 
@@ -380,6 +526,7 @@ public sealed class Level
         foreach (Goal goal in _goals) maxBottom = System.Math.Max(maxBottom, goal.Bounds.Bottom);
         foreach (CheckpointFlag checkpoint in _checkpointFlags) maxBottom = System.Math.Max(maxBottom, checkpoint.Bounds.Bottom);
         foreach (LaunchPad launchPad in _launchPads) maxBottom = System.Math.Max(maxBottom, launchPad.Bounds.Bottom);
+        foreach (PowerUp powerUp in _powerUps) maxBottom = System.Math.Max(maxBottom, powerUp.Bounds.Bottom);
 
         if (maxBottom == int.MinValue)
         {
@@ -412,6 +559,16 @@ public sealed class Level
         DrawGoals(spriteBatch, pixel, debugDraw);
         DrawCheckpointFlags(spriteBatch, pixel, debugDraw);
         DrawLaunchPads(spriteBatch, pixel, debugDraw, animationSeconds, isEditorMode);
+        DrawPowerUps(spriteBatch, pixel, debugDraw, animationSeconds, isEditorMode);
+        DrawSigns(spriteBatch, pixel);
+    }
+
+    public void DrawSigns(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        foreach (LevelSign sign in _signs)
+        {
+            sign.Draw(spriteBatch, pixel);
+        }
     }
 
     public void DrawPlatforms(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw)
@@ -454,6 +611,14 @@ public sealed class Level
         }
     }
 
+    public void DrawPowerUps(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, float animationSeconds = 0f, bool isEditorMode = false)
+    {
+        foreach (PowerUp powerUp in _powerUps)
+        {
+            powerUp.Draw(spriteBatch, pixel, debugDraw, animationSeconds, isEditorMode: isEditorMode);
+        }
+    }
+
     public int GetNextCheckpointId()
     {
         int maxId = 0;
@@ -492,7 +657,9 @@ public sealed class Level
 
     private void DrawMixedPlatformIntersections(SpriteBatch spriteBatch, Texture2D pixel)
     {
-        List<Rectangle> mixedBounds = new();
+        // Fill + black first, then warn on top (same order as Platform.Draw).
+        // Mixed fill used to paint over per-platform warn borders in overlaps.
+        List<(Rectangle Bounds, float WarnAlpha, Color WarnColor)> mixedRegions = new();
 
         for (int firstIndex = 0; firstIndex < _platforms.Count; firstIndex++)
         {
@@ -514,7 +681,8 @@ public sealed class Level
                 });
 
                 spriteBatch.Draw(pixel, pairIntersection, mixedColor);
-                mixedBounds.Add(pairIntersection);
+                GetOverlapColorChangeWarn(first, second, null, out float warnAlpha, out Color warnColor);
+                mixedRegions.Add((pairIntersection, warnAlpha, warnColor));
             }
         }
 
@@ -548,15 +716,67 @@ public sealed class Level
                     });
 
                     spriteBatch.Draw(pixel, tripleIntersection, mixedColor);
-                    mixedBounds.Add(tripleIntersection);
+                    GetOverlapColorChangeWarn(first, second, third, out float warnAlpha, out Color warnColor);
+                    mixedRegions.Add((tripleIntersection, warnAlpha, warnColor));
                 }
             }
         }
 
-        foreach (Rectangle bounds in mixedBounds)
+        foreach ((Rectangle bounds, float _, Color _) in mixedRegions)
         {
             DrawHelper.DrawBorder(spriteBatch, pixel, bounds, Color.Black, 2);
         }
+
+        foreach ((Rectangle bounds, float warnAlpha, Color warnColor) in mixedRegions)
+        {
+            if (warnAlpha <= 0.01f)
+            {
+                continue;
+            }
+
+            Color warn = warnColor * warnAlpha;
+            warn.A = (byte)MathHelper.Clamp((int)(255f * warnAlpha), 0, 255);
+            DrawHelper.DrawBorder(spriteBatch, pixel, bounds, warn, 7);
+        }
+    }
+
+    private static void GetOverlapColorChangeWarn(
+        Platform first,
+        Platform second,
+        Platform? third,
+        out float warnAlpha,
+        out Color warnColor)
+    {
+        float maxAlpha = 0f;
+        List<GameColor> warnColors = new(3);
+
+        void Consider(Platform platform)
+        {
+            float alpha = platform.ColorChangeWarnAlpha;
+            if (alpha <= 0.01f)
+            {
+                return;
+            }
+
+            if (alpha > maxAlpha)
+            {
+                maxAlpha = alpha;
+            }
+
+            warnColors.Add(platform.ColorChangeWarnColor);
+        }
+
+        Consider(first);
+        Consider(second);
+        if (third is not null)
+        {
+            Consider(third);
+        }
+
+        warnAlpha = maxAlpha;
+        warnColor = warnColors.Count > 0
+            ? MixGameColors(warnColors)
+            : Color.White;
     }
 
     public static Rectangle GetIntersection(Rectangle a, Rectangle b)

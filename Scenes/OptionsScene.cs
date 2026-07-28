@@ -46,6 +46,10 @@ public sealed class OptionsScene : IScene
 
     // Audio settings
     private Slider _volumeSlider = new("Music Volume", 0.75f, 0f, 1f);
+    private readonly Checkbox _continueMenuMusicCheckbox = new()
+    {
+        Label = "Continue in levels"
+    };
     private readonly List<(string Key, string Label, Slider Slider, FocusableSlider Focus)> _soundEffectVolumes = new();
 
     // Buttons
@@ -57,6 +61,7 @@ public sealed class OptionsScene : IScene
     private readonly FocusableCycleSelector<int> _fpsLimitFocus;
     private readonly FocusableCycleSelector<ColorMode> _colorModeFocus;
     private readonly FocusableSlider _volumeFocus;
+    private readonly FocusableCheckbox _continueMenuMusicFocus;
     private readonly FocusableResolutionDropdown _resolutionFocus;
     private readonly FocusableButton _applyFocus;
     private readonly FocusableButton _backFocus;
@@ -91,6 +96,7 @@ public sealed class OptionsScene : IScene
     private const int CompactKeyRowHeight = 40;
     private const int KeyRowGap = 8;
     private const int CompactKeyRowGap = 6;
+    private const int MinAudioRowHeight = 28;
     private const int LabelToControlGap = 18;
     private const int TopSectionGap = 28;
     private const int ButtonHeight = 46;
@@ -141,6 +147,7 @@ public sealed class OptionsScene : IScene
         _resolutionDropdown.Label = string.Empty;
         _volumeSlider.Label = string.Empty;
         _volumeSlider.Value = pending.MusicVolume;
+        _continueMenuMusicCheckbox.IsChecked = pending.ContinueMenuMusicInLevels;
 
         _backButton.TextScale = 3;
         _applyButton.TextScale = 3;
@@ -175,6 +182,7 @@ public sealed class OptionsScene : IScene
         _fpsLimitFocus = new FocusableCycleSelector<int>(_fpsLimitSelector);
         _colorModeFocus = new FocusableCycleSelector<ColorMode>(_colorModeSelector);
         _volumeFocus = new FocusableSlider(_volumeSlider);
+        _continueMenuMusicFocus = new FocusableCheckbox(_continueMenuMusicCheckbox);
         _resolutionFocus = new FocusableResolutionDropdown(_resolutionDropdown);
         _resolutionDropdown.RefreshSupportedResolutions(_game.GraphicsDevice);
         _applyFocus = new FocusableButton(_applyButton);
@@ -469,10 +477,12 @@ public sealed class OptionsScene : IScene
         else if (_activeSection == OptionsSection.Audio)
         {
             int volumeIndex = _focus.Add(_volumeFocus, "MusicVolume");
+            int continueIndex = _focus.Add(_continueMenuMusicFocus, "ContinueMenuMusic");
             _focus.Navigation.LinkVertical(audioTabIndex, volumeIndex);
+            _focus.Navigation.LinkVertical(volumeIndex, continueIndex);
             sectionEntryIndex = volumeIndex;
-            sectionExitIndex = volumeIndex;
-            int previous = volumeIndex;
+            sectionExitIndex = continueIndex;
+            int previous = continueIndex;
             for (int i = 0; i < _soundEffectVolumes.Count; i++)
             {
                 int effectIndex = _focus.Add(_soundEffectVolumes[i].Focus, $"SoundEffect{i}");
@@ -750,22 +760,37 @@ public sealed class OptionsScene : IScene
     private void DrawAudioSettings(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
     {
         DrawSection(spriteBatch, pixel, layout, layout.AudioSectionBounds, "AUDIO SETTINGS");
-        DrawSettingLabel(spriteBatch, pixel, "MUSIC VOLUME", layout.AudioLabelBounds, layout.VolumeBounds);
+        DrawSettingLabel(
+            spriteBatch,
+            pixel,
+            "MUSIC VOLUME",
+            new Rectangle(layout.AudioLabelBounds.X, layout.VolumeBounds.Y, layout.AudioLabelBounds.Width, layout.VolumeBounds.Height),
+            layout.VolumeBounds);
         _volumeSlider.Draw(spriteBatch, pixel);
 
-        int titleY = layout.VolumeBounds.Bottom + 24;
-        SimpleTextRenderer.DrawString(spriteBatch, pixel, "SOUND EFFECTS", new Vector2(layout.AudioSectionBounds.X + layout.SectionPadding, titleY), SectionTitleScale, Accent);
-        int effectY = titleY + 36;
-        int rowHeight = layout.VolumeBounds.Height;
-        int rowStride = rowHeight + 8;
+        DrawSettingLabel(
+            spriteBatch,
+            pixel,
+            "MENU MUSIC",
+            new Rectangle(layout.AudioLabelBounds.X, layout.ContinueMenuMusicBounds.Y, layout.AudioLabelBounds.Width, layout.ContinueMenuMusicBounds.Height),
+            layout.ContinueMenuMusicBounds);
+        _continueMenuMusicCheckbox.Draw(spriteBatch, pixel);
 
-        foreach ((string _, string label, Slider slider, _) in _soundEffectVolumes)
+        SimpleTextRenderer.DrawString(
+            spriteBatch,
+            pixel,
+            "SOUND EFFECTS",
+            new Vector2(layout.AudioSectionBounds.X + layout.SectionPadding, layout.AudioSfxTitleY),
+            SectionTitleScale,
+            Accent);
+
+        for (int i = 0; i < _soundEffectVolumes.Count; i++)
         {
-            Rectangle labelBounds = new(layout.AudioLabelBounds.X, effectY, layout.AudioLabelBounds.Width, rowHeight);
-            Rectangle sliderBounds = new(layout.AudioControlBounds.X, effectY, layout.AudioControlBounds.Width, rowHeight);
+            (_, string label, Slider slider, _) = _soundEffectVolumes[i];
+            GetSoundEffectRowBounds(layout, i, out Rectangle labelBounds, out Rectangle sliderBounds);
+            slider.Bounds = sliderBounds;
             DrawSettingLabel(spriteBatch, pixel, label, labelBounds, sliderBounds);
             slider.Draw(spriteBatch, pixel);
-            effectY += rowStride;
         }
     }
 
@@ -796,12 +821,16 @@ public sealed class OptionsScene : IScene
 
             DrawColumnDivider(spriteBatch, pixel, layout, rowBounds.Y, rowBounds.Height);
 
-            string keyText = rebindingKey ? "PRESS KEY" : FormatKeyName(_controlBindings[i].keyName);
+            string keyText = rebindingKey
+                ? "PRESS KEY"
+                : (IsKeyboardUnbound(_controlBindings[i].keyName) ? "—" : FormatKeyName(_controlBindings[i].keyName));
             string padText = rebindingPad
                 ? "PRESS BTN"
                 : _controlBindings[i].gamepadName;
-            DrawBindingBox(spriteBatch, pixel, keyBounds, rebindingKey, keyText);
-            DrawBindingBox(spriteBatch, pixel, padBounds, rebindingPad, padText);
+            bool keyUnbound = !rebindingKey && IsKeyboardUnbound(_controlBindings[i].keyName);
+            bool padUnbound = !rebindingPad && IsGamepadUnboundDisplay(padText);
+            DrawBindingBox(spriteBatch, pixel, keyBounds, rebindingKey, keyText, keyUnbound);
+            DrawBindingBox(spriteBatch, pixel, padBounds, rebindingPad, padText, padUnbound);
 
             string displayAction = FormatActionName(_controlBindings[i].action);
             DrawFittedLeft(spriteBatch, pixel, displayAction, labelBounds, 2, LabelColor);
@@ -882,7 +911,8 @@ public sealed class OptionsScene : IScene
         Texture2D pixel,
         Rectangle bounds,
         bool highlighted,
-        string value)
+        string value,
+        bool unbound = false)
     {
         spriteBatch.Draw(pixel, bounds, highlighted ? new Color(121, 76, 78) : new Color(25, 32, 47));
         DrawHelper.DrawBorder(spriteBatch, pixel, bounds, highlighted ? Accent : new Color(106, 122, 154), highlighted ? 2 : 1);
@@ -894,7 +924,10 @@ public sealed class OptionsScene : IScene
             bounds.Y + padY,
             Math.Max(1, bounds.Width - (padX * 2)),
             Math.Max(1, bounds.Height - (padY * 2)));
-        DrawFittedCentered(spriteBatch, pixel, value, valueBounds, 2, highlighted ? Accent : Color.White);
+        Color textColor = unbound
+            ? new Color(230, 70, 70)
+            : (highlighted ? Accent : Color.White);
+        DrawFittedCentered(spriteBatch, pixel, value, valueBounds, 2, textColor);
     }
 
     private void DrawButtonTray(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
@@ -998,9 +1031,17 @@ public sealed class OptionsScene : IScene
         }
 
         Keys newKey = pressedKeys[0];
+        if (newKey == Keys.None || newKey == Keys.Escape)
+        {
+            return;
+        }
+
+        string newKeyName = newKey.ToString();
         var (action, _, gamepadName) = _controlBindings[_rebindingIndex!.Value];
-        _controlBindings[_rebindingIndex.Value] = (action, newKey.ToString(), gamepadName);
-        SettingsManager.PendingSettings.Keybindings[action] = newKey.ToString();
+        ClearConflictingKeyboardBindings(action, newKeyName);
+        _controlBindings[_rebindingIndex.Value] = (action, newKeyName, gamepadName);
+        SettingsManager.PendingSettings.Keybindings[action] = newKeyName;
+        RefreshControlBindingRows();
 
         _rebindingIndex = null;
         _rebindingWaitTime = 0;
@@ -1026,20 +1067,123 @@ public sealed class OptionsScene : IScene
             if (bindingToken == GamepadBindingTokens.Default)
             {
                 SettingsManager.PendingSettings.GamepadBindings.Remove(action);
+                ClearConflictingGamepadBindings(action, GamepadDefaults.GetDefaultBindingToken(gameplayAction));
             }
             else
             {
+                ClearConflictingGamepadBindings(action, bindingToken);
                 SettingsManager.PendingSettings.GamepadBindings[action] = bindingToken;
             }
 
-            _controlBindings[_rebindingIndex.Value] =
-                (action, keyName, GamepadDefaults.GetGamepadDisplayName(gameplayAction, SettingsManager.PendingSettings.GamepadBindings));
+            RefreshControlBindingRows();
 
             _rebindingIndex = null;
             _rebindingWaitTime = 0;
             return;
         }
     }
+
+    private void ClearConflictingKeyboardBindings(string assignedAction, string newKeyName)
+    {
+        for (int i = 0; i < _controlBindings.Count; i++)
+        {
+            string otherAction = _controlBindings[i].action;
+            if (otherAction == assignedAction)
+            {
+                continue;
+            }
+
+            string effective = GetEffectiveKeyboardKeyName(otherAction);
+            if (!string.Equals(effective, newKeyName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            SettingsManager.PendingSettings.Keybindings[otherAction] = string.Empty;
+            var (_, _, pad) = _controlBindings[i];
+            _controlBindings[i] = (otherAction, string.Empty, pad);
+        }
+    }
+
+    private void ClearConflictingGamepadBindings(string assignedAction, string newToken)
+    {
+        if (string.IsNullOrWhiteSpace(newToken)
+            || newToken == GamepadBindingTokens.Unbound
+            || newToken == GamepadBindingTokens.Default)
+        {
+            return;
+        }
+
+        var overrides = SettingsManager.PendingSettings.GamepadBindings;
+        for (int i = 0; i < _controlBindings.Count; i++)
+        {
+            string otherAction = _controlBindings[i].action;
+            if (otherAction == assignedAction
+                || !Enum.TryParse(otherAction, out GameplayInputAction otherGameplay)
+                || !GamepadDefaults.IsButtonRebindable(otherGameplay))
+            {
+                continue;
+            }
+
+            string effective = GamepadDefaults.GetEffectiveBindingToken(otherGameplay, overrides);
+            if (!string.Equals(effective, newToken, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            overrides[otherAction] = GamepadBindingTokens.Unbound;
+            var (_, key, _) = _controlBindings[i];
+            _controlBindings[i] = (otherAction, key, "—");
+        }
+    }
+
+    private void RefreshControlBindingRows()
+    {
+        for (int i = 0; i < _controlBindings.Count; i++)
+        {
+            string action = _controlBindings[i].action;
+            string keyName = SettingsManager.PendingSettings.Keybindings.TryGetValue(action, out string? stored)
+                ? stored
+                : string.Empty;
+            _controlBindings[i] = (action, keyName, ResolveGamepadColumnText(action));
+        }
+    }
+
+    private static string GetEffectiveKeyboardKeyName(string action)
+    {
+        if (SettingsManager.PendingSettings.Keybindings.TryGetValue(action, out string? keyName))
+        {
+            if (string.IsNullOrWhiteSpace(keyName)
+                || string.Equals(keyName, "None", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            return keyName;
+        }
+
+        return action switch
+        {
+            "MoveLeft" => "A",
+            "MoveRight" => "D",
+            "Jump" => "W",
+            "Respawn" => "R",
+            "RestartLevel" => "F5",
+            "PullRope" => "Space",
+            "FastFall" => "S",
+            "Red" => "J",
+            "Green" => "L",
+            "Blue" => "K",
+            _ => string.Empty
+        };
+    }
+
+    private static bool IsKeyboardUnbound(string keyName) =>
+        string.IsNullOrWhiteSpace(keyName)
+        || string.Equals(keyName, "None", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsGamepadUnboundDisplay(string padText) =>
+        string.IsNullOrWhiteSpace(padText) || padText == "—";
 
     private void LayoutUI()
     {
@@ -1062,15 +1206,13 @@ public sealed class OptionsScene : IScene
         _resolutionDropdown.OpenUpwards = false;
         _fpsLimitSelector.Bounds = layout.FpsLimitBounds;
         _volumeSlider.Bounds = layout.VolumeBounds;
+        _continueMenuMusicCheckbox.Bounds = layout.ContinueMenuMusicBounds;
         _colorModeSelector.Bounds = layout.ColorModeBounds;
 
-        int effectY = layout.VolumeBounds.Bottom + 60;
-        int rowHeight = layout.VolumeBounds.Height;
-        int rowStride = rowHeight + 8;
-        foreach ((string _, string _, Slider slider, _) in _soundEffectVolumes)
+        for (int i = 0; i < _soundEffectVolumes.Count; i++)
         {
-            slider.Bounds = new Rectangle(layout.AudioControlBounds.X, effectY, layout.AudioControlBounds.Width, rowHeight);
-            effectY += rowStride;
+            GetSoundEffectRowBounds(layout, i, out _, out Rectangle sliderBounds);
+            _soundEffectVolumes[i].Slider.Bounds = sliderBounds;
         }
 
         ControlWidth = layout.ControlSectionBounds.Width;
@@ -1082,27 +1224,30 @@ public sealed class OptionsScene : IScene
 
     private LayoutMetrics GetLayoutMetrics(Viewport viewport)
     {
-        int outerMarginX = Math.Clamp(viewport.Width / 32, 32, 96);
-        int outerMarginY = Math.Clamp(viewport.Height / 18, 28, 72);
+        int outerMarginX = Math.Clamp(viewport.Width / 32, 24, 96);
+        // Short viewports (720p): reclaim vertical space so audio SFX list can fit.
+        int outerMarginY = viewport.Height < 800
+            ? Math.Clamp(viewport.Height / 40, 10, 24)
+            : Math.Clamp(viewport.Height / 18, 28, 72);
         int maxWidth = Math.Max(1, Math.Min(MaxPanelWidth, viewport.Width - (outerMarginX * 2)));
         int minWidth = Math.Min(MinPanelWidth, maxWidth);
         int preferredWidth = (int)(viewport.Width * 0.88f);
         int panelWidth = Math.Clamp(preferredWidth, minWidth, maxWidth);
 
-        int maxPanelHeight = Math.Max(480, viewport.Height - (outerMarginY * 2));
+        int maxPanelHeight = Math.Max(420, viewport.Height - (outerMarginY * 2));
         int bindingCount = Math.Max(1, _controlBindings.Count);
+        int sfxCount = Math.Max(1, _soundEffectVolumes.Count);
 
         // Pass 1: estimate compactness from viewport before final panel height is known.
-        bool compact = viewport.Height < 760;
-        int panelPadding = Math.Clamp(panelWidth / 44, compact ? 24 : 30, compact ? 30 : 38);
-        int sectionPadding = compact ? 18 : 22;
+        bool compact = viewport.Height < 800;
+        int panelPadding = Math.Clamp(panelWidth / 44, compact ? 18 : 30, compact ? 28 : 38);
+        int sectionPadding = compact ? 14 : 22;
         int sectionTitleHeight = SimpleTextRenderer.MeasureString("DISPLAY SETTINGS", SectionTitleScale).Y;
-        int sectionTitleSpacing = compact ? 16 : 24;
-        int sectionGap = compact ? 16 : 28;
-        int titleToSectionsGap = compact ? 16 : 28;
+        int sectionTitleSpacing = compact ? 12 : 24;
+        int sectionGap = compact ? 12 : 28;
+        int titleToSectionsGap = compact ? 12 : 28;
         int rowHeight = compact ? CompactRowHeight : RowHeight;
         int keyRowGap = compact ? CompactKeyRowGap : KeyRowGap;
-        int topSectionHeight = compact ? CompactTopSectionHeight : TopSectionHeight;
         int titleScale = compact ? 4 : 5;
         int preferredRowHeight = compact ? CompactKeyRowHeight : KeyRowHeight;
 
@@ -1125,21 +1270,51 @@ public sealed class OptionsScene : IScene
         int displayRows = 4;
         int displayContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing
             + (rowHeight + 10) * (displayRows - 1) + rowHeight;
-        int soundEffectsTitleHeight = 36;
-        int sfxRowStride = rowHeight + 8;
-        int audioContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing + rowHeight
-            + 24 + soundEffectsTitleHeight + (_soundEffectVolumes.Count * sfxRowStride) + sectionPadding;
+
+        int musicToContinueGap = compact ? 6 : 10;
+        int continueToSfxGap = compact ? 10 : 16;
+        int sfxTitleHeight = compact ? 22 : 28;
+        int sfxTitleGap = compact ? 8 : 14;
+        int audioRowGap = compact ? 4 : 8;
+        int audioColumns = compact ? 2 : 1;
+        int audioRowHeight = rowHeight;
+        FitAudioRows(
+            sfxCount,
+            sectionPadding,
+            sectionTitleHeight,
+            sectionTitleSpacing,
+            musicToContinueGap,
+            ref continueToSfxGap,
+            sfxTitleHeight,
+            sfxTitleGap,
+            maxPanelHeight - (panelPadding * 2) - topBlockHeight - buttonBlockHeight,
+            ref audioColumns,
+            ref audioRowHeight,
+            ref audioRowGap);
+        int audioContentHeight = MeasureAudioSectionHeight(
+            sfxCount,
+            audioColumns,
+            audioRowHeight,
+            audioRowGap,
+            sectionPadding,
+            sectionTitleHeight,
+            sectionTitleSpacing,
+            musicToContinueGap,
+            continueToSfxGap,
+            sfxTitleHeight,
+            sfxTitleGap);
 
         int comfortableDataHeight = (bindingCount * preferredRowHeight) + ((bindingCount - 1) * keyRowGap);
         int estimatedControlSectionHeight = controlChromeHeight + comfortableDataHeight;
         int maxSectionHeight = Math.Max(displayContentHeight, Math.Max(audioContentHeight, estimatedControlSectionHeight));
         int desiredContentHeight = TitleHeight + titleToSectionsGap + 56 + maxSectionHeight + sectionGap + buttonBlockHeight;
         int desiredPanelHeight = desiredContentHeight + (panelPadding * 2);
-        int panelHeight = Math.Clamp(desiredPanelHeight, 520, maxPanelHeight);
+        int panelHeight = Math.Clamp(desiredPanelHeight, Math.Min(480, maxPanelHeight), maxPanelHeight);
 
-        // Pass 2: if viewport caps panel height, shrink row height so table always fits inside section.
+        // Pass 2: if viewport caps panel height, shrink rows so content always fits inside section.
         int contentHeight = panelHeight - (panelPadding * 2);
-        int availableControlHeight = contentHeight - topBlockHeight - buttonBlockHeight;
+        int availableSectionHeight = Math.Max(120, contentHeight - topBlockHeight - buttonBlockHeight);
+        int availableControlHeight = availableSectionHeight;
         int dataAreaHeight = Math.Max(1, availableControlHeight - controlChromeHeight);
         int keyRowHeight = (dataAreaHeight - ((bindingCount - 1) * keyRowGap)) / bindingCount;
         keyRowHeight = Math.Min(preferredRowHeight, Math.Max(1, keyRowHeight));
@@ -1147,9 +1322,41 @@ public sealed class OptionsScene : IScene
         int actualDataHeight = (bindingCount * keyRowHeight) + ((bindingCount - 1) * keyRowGap);
         int controlSectionHeight = controlChromeHeight + actualDataHeight;
 
+        // Re-fit audio against the real available section height.
+        audioColumns = compact ? 2 : 1;
+        audioRowHeight = rowHeight;
+        audioRowGap = compact ? 4 : 8;
+        continueToSfxGap = compact ? 10 : 16;
+        FitAudioRows(
+            sfxCount,
+            sectionPadding,
+            sectionTitleHeight,
+            sectionTitleSpacing,
+            musicToContinueGap,
+            ref continueToSfxGap,
+            sfxTitleHeight,
+            sfxTitleGap,
+            availableSectionHeight,
+            ref audioColumns,
+            ref audioRowHeight,
+            ref audioRowGap);
+        audioContentHeight = MeasureAudioSectionHeight(
+            sfxCount,
+            audioColumns,
+            audioRowHeight,
+            audioRowGap,
+            sectionPadding,
+            sectionTitleHeight,
+            sectionTitleSpacing,
+            musicToContinueGap,
+            continueToSfxGap,
+            sfxTitleHeight,
+            sfxTitleGap);
+        int audioSectionHeight = Math.Min(audioContentHeight, availableSectionHeight);
+
         int activeSectionHeight = _activeSection switch
         {
-            OptionsSection.Audio => audioContentHeight,
+            OptionsSection.Audio => audioSectionHeight,
             OptionsSection.Controls => controlSectionHeight,
             _ => displayContentHeight
         };
@@ -1213,7 +1420,23 @@ public sealed class OptionsScene : IScene
         Rectangle fpsLimitBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 2), displayControlBounds.Width, rowHeight);
         Rectangle colorModeBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 3), displayControlBounds.Width, rowHeight);
         Rectangle colorModeLabelBounds = new(displayLabelBounds.X, colorModeBounds.Y, displayLabelBounds.Width, rowHeight);
-        Rectangle volumeBounds = new(audioControlBounds.X, rowStartY, audioControlBounds.Width, rowHeight);
+        Rectangle volumeBounds = new(audioControlBounds.X, rowStartY, audioControlBounds.Width, audioRowHeight);
+        Rectangle continueMenuMusicBounds = new(
+            audioControlBounds.X,
+            rowStartY + audioRowHeight + musicToContinueGap,
+            audioControlBounds.Width,
+            audioRowHeight);
+
+        int audioSfxTitleY = continueMenuMusicBounds.Bottom + continueToSfxGap;
+        int audioSfxListY = audioSfxTitleY + sfxTitleHeight + sfxTitleGap;
+        int audioSfxRowsPerColumn = (sfxCount + audioColumns - 1) / audioColumns;
+        int audioSfxColumnGap = audioColumns > 1 ? Math.Max(12, audioSectionBounds.Width / 40) : 0;
+        int audioSfxAreaWidth = audioSectionBounds.Width - (sectionPadding * 2);
+        Rectangle audioSfxArea = new(
+            audioSectionBounds.X + sectionPadding,
+            audioSfxListY,
+            audioSfxAreaWidth,
+            Math.Max(1, audioSectionBounds.Bottom - sectionPadding - audioSfxListY));
 
         int controlRowsY = controlSectionBounds.Y + sectionPadding + sectionTitleHeight + sectionTitleSpacing;
         int controlRowsHeight = controlHeaderHeight + controlHeaderGap + actualDataHeight;
@@ -1259,7 +1482,15 @@ public sealed class OptionsScene : IScene
             resolutionBounds,
             fpsLimitBounds,
             volumeBounds,
+            continueMenuMusicBounds,
             colorModeBounds,
+            audioSfxArea,
+            audioSfxTitleY,
+            audioColumns,
+            audioSfxRowsPerColumn,
+            audioRowHeight,
+            audioRowGap,
+            audioSfxColumnGap,
             controlRowsArea,
             controlColumns,
             controlRowsPerColumn,
@@ -1278,6 +1509,174 @@ public sealed class OptionsScene : IScene
             steamConfigButtonBounds,
             backButtonBounds,
             applyButtonBounds);
+    }
+
+    private static int MeasureAudioSectionHeight(
+        int sfxCount,
+        int columns,
+        int rowHeight,
+        int rowGap,
+        int sectionPadding,
+        int sectionTitleHeight,
+        int sectionTitleSpacing,
+        int musicToContinueGap,
+        int continueToSfxGap,
+        int sfxTitleHeight,
+        int sfxTitleGap)
+    {
+        int rows = (sfxCount + columns - 1) / columns;
+        int header = sectionPadding
+            + sectionTitleHeight
+            + sectionTitleSpacing
+            + rowHeight
+            + musicToContinueGap
+            + rowHeight
+            + continueToSfxGap
+            + sfxTitleHeight
+            + sfxTitleGap;
+        int sfxBlock = (rows * rowHeight) + (Math.Max(0, rows - 1) * rowGap);
+        return header + sfxBlock + sectionPadding;
+    }
+
+    private static void FitAudioRows(
+        int sfxCount,
+        int sectionPadding,
+        int sectionTitleHeight,
+        int sectionTitleSpacing,
+        int musicToContinueGap,
+        ref int continueToSfxGap,
+        int sfxTitleHeight,
+        int sfxTitleGap,
+        int availableHeight,
+        ref int columns,
+        ref int rowHeight,
+        ref int rowGap)
+    {
+        availableHeight = Math.Max(1, availableHeight);
+
+        if (MeasureAudioSectionHeight(
+                sfxCount,
+                columns,
+                rowHeight,
+                rowGap,
+                sectionPadding,
+                sectionTitleHeight,
+                sectionTitleSpacing,
+                musicToContinueGap,
+                continueToSfxGap,
+                sfxTitleHeight,
+                sfxTitleGap) <= availableHeight)
+        {
+            return;
+        }
+
+        // Prefer 2 columns before crushing row height.
+        columns = 2;
+        if (MeasureAudioSectionHeight(
+                sfxCount,
+                columns,
+                rowHeight,
+                rowGap,
+                sectionPadding,
+                sectionTitleHeight,
+                sectionTitleSpacing,
+                musicToContinueGap,
+                continueToSfxGap,
+                sfxTitleHeight,
+                sfxTitleGap) <= availableHeight)
+        {
+            return;
+        }
+
+        while (rowHeight > MinAudioRowHeight
+            && MeasureAudioSectionHeight(
+                sfxCount,
+                columns,
+                rowHeight,
+                rowGap,
+                sectionPadding,
+                sectionTitleHeight,
+                sectionTitleSpacing,
+                musicToContinueGap,
+                continueToSfxGap,
+                sfxTitleHeight,
+                sfxTitleGap) > availableHeight)
+        {
+            rowHeight--;
+        }
+
+        while (rowGap > 2
+            && MeasureAudioSectionHeight(
+                sfxCount,
+                columns,
+                rowHeight,
+                rowGap,
+                sectionPadding,
+                sectionTitleHeight,
+                sectionTitleSpacing,
+                musicToContinueGap,
+                continueToSfxGap,
+                sfxTitleHeight,
+                sfxTitleGap) > availableHeight)
+        {
+            rowGap--;
+        }
+
+        while (continueToSfxGap > 4
+            && MeasureAudioSectionHeight(
+                sfxCount,
+                columns,
+                rowHeight,
+                rowGap,
+                sectionPadding,
+                sectionTitleHeight,
+                sectionTitleSpacing,
+                musicToContinueGap,
+                continueToSfxGap,
+                sfxTitleHeight,
+                sfxTitleGap) > availableHeight)
+        {
+            continueToSfxGap--;
+        }
+    }
+
+    private static void GetSoundEffectRowBounds(
+        LayoutMetrics layout,
+        int index,
+        out Rectangle labelBounds,
+        out Rectangle sliderBounds)
+    {
+        int rows = Math.Max(1, layout.AudioSfxRowsPerColumn);
+        int col = index / rows;
+        int row = index % rows;
+        int y = layout.AudioSfxArea.Y + (row * (layout.AudioRowHeight + layout.AudioRowGap));
+
+        if (layout.AudioSfxColumns <= 1)
+        {
+            labelBounds = new Rectangle(
+                layout.AudioLabelBounds.X,
+                y,
+                layout.AudioLabelBounds.Width,
+                layout.AudioRowHeight);
+            sliderBounds = new Rectangle(
+                layout.AudioControlBounds.X,
+                y,
+                layout.AudioControlBounds.Width,
+                layout.AudioRowHeight);
+            return;
+        }
+
+        int colWidth = (layout.AudioSfxArea.Width - ((layout.AudioSfxColumns - 1) * layout.AudioSfxColumnGap))
+            / layout.AudioSfxColumns;
+        int x = layout.AudioSfxArea.X + (col * (colWidth + layout.AudioSfxColumnGap));
+        int labelWidth = Math.Clamp((int)(colWidth * 0.40f), 72, 130);
+        int gap = 8;
+        labelBounds = new Rectangle(x, y, labelWidth, layout.AudioRowHeight);
+        sliderBounds = new Rectangle(
+            x + labelWidth + gap,
+            y,
+            Math.Max(40, colWidth - labelWidth - gap),
+            layout.AudioRowHeight);
     }
 
     private static void CreateSettingColumnLayout(Rectangle sectionBounds, int sectionPadding, out Rectangle labelBounds, out Rectangle controlBounds)
@@ -1350,6 +1749,7 @@ public sealed class OptionsScene : IScene
     private void SyncPendingSettings()
     {
         SettingsManager.PendingSettings.MusicVolume = _volumeSlider.Value;
+        SettingsManager.PendingSettings.ContinueMenuMusicInLevels = _continueMenuMusicCheckbox.IsChecked;
         SettingsManager.PendingSettings.FpsLimit = _fpsLimitSelector.CurrentOption;
         SettingsManager.PendingSettings.ColorMode = _colorModeSelector.CurrentOption;
         SettingsManager.PendingSettings.DisplayMode = _displayModeSelector.CurrentOption.ToString();
@@ -1432,9 +1832,9 @@ public sealed class OptionsScene : IScene
 
     private static string FormatKeyName(string keyName)
     {
-        if (string.IsNullOrWhiteSpace(keyName))
+        if (IsKeyboardUnbound(keyName))
         {
-            return "UNKNOWN";
+            return "—";
         }
 
         if (keyName.Length == 2 && keyName[0] == 'D' && char.IsDigit(keyName[1]))
@@ -1546,6 +1946,7 @@ public sealed class OptionsScene : IScene
         var pending = SettingsManager.PendingSettings;
         _resolutionDropdown.SelectedResolution = new Resolution(pending.ResolutionWidth, pending.ResolutionHeight);
         _volumeSlider.Value = pending.MusicVolume;
+        _continueMenuMusicCheckbox.IsChecked = pending.ContinueMenuMusicInLevels;
         _fpsLimitSelector.CurrentOption = pending.FpsLimit;
 
         foreach ((string key, string _, Slider slider, _) in _soundEffectVolumes)
@@ -1591,7 +1992,15 @@ public sealed class OptionsScene : IScene
         Rectangle ResolutionBounds,
         Rectangle FpsLimitBounds,
         Rectangle VolumeBounds,
+        Rectangle ContinueMenuMusicBounds,
         Rectangle ColorModeBounds,
+        Rectangle AudioSfxArea,
+        int AudioSfxTitleY,
+        int AudioSfxColumns,
+        int AudioSfxRowsPerColumn,
+        int AudioRowHeight,
+        int AudioRowGap,
+        int AudioSfxColumnGap,
         Rectangle ControlRowsArea,
         int ControlColumns,
         int ControlRowsPerColumn,

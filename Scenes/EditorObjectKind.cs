@@ -7,5 +7,6 @@ public enum EditorObjectKind
     Goal,
     CheckpointFlag,
     LaunchPad,
+    PowerUp,
     PlayerSpawn
 }

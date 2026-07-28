@@ -182,6 +182,11 @@ public sealed class GameSimulation
             checkpoint.IsActive = false;
         }
 
+        foreach (PowerUp powerUp in Level.PowerUps)
+        {
+            powerUp.ResetAvailability();
+        }
+
         PlayerManager.ClearCheckpoint();
         PlayerManager.ReviveAllAtStart();
 
@@ -242,6 +247,8 @@ public sealed class GameSimulation
             MultiplayerDebug.LogRopeReplicatedOnce(ropeSnapshot.NetworkId);
         }
 
+        ApplyPowerUpRuntimeFromSnapshot(snapshot.Level);
+
         ElapsedTime = snapshot.Timer.ElapsedTime;
         TimerRunning = snapshot.Timer.IsRunning;
         IsLevelComplete = snapshot.Timer.IsComplete;
@@ -250,8 +257,38 @@ public sealed class GameSimulation
         LastSnapshot = snapshot;
         SnapshotCount = Math.Max(SnapshotCount, snapshot.Sequence);
         CurrentTick = new SimulationTick(Math.Max(CurrentTick.Value, snapshot.Tick));
+        ApplyMovingPlatformVisuals(CurrentTick);
         MultiplayerDebug.RecordSnapshotApplied();
         MultiplayerDebug.LogSimulationStartedOnce(_session, this);
+    }
+
+    /// <summary>
+    /// Pose movers from deterministic time only (no rider carry).
+    /// Used by clients/replays where player positions already come from snapshots.
+    /// </summary>
+    public void ApplyMovingPlatformVisuals(SimulationTick tick)
+    {
+        float timeSeconds = tick.Value * TickRate.FixedDeltaSeconds;
+        foreach (Platform platform in Level.Platforms)
+        {
+            platform.ApplyColorAtTime(timeSeconds);
+
+            if (!platform.HasMotion)
+            {
+                if (platform.Bounds.X != platform.HomeX || platform.Bounds.Y != platform.HomeY)
+                {
+                    platform.Bounds = new Rectangle(
+                        platform.HomeX,
+                        platform.HomeY,
+                        platform.Bounds.Width,
+                        platform.Bounds.Height);
+                }
+
+                continue;
+            }
+
+            platform.ApplyMotionAtTime(timeSeconds);
+        }
     }
 
     private void StepFixedTick()
@@ -264,6 +301,7 @@ public sealed class GameSimulation
         {
             IReadOnlyDictionary<int, PlayerInputState> inputs = _inputBuffer.GetInputs(tick);
             HandleRespawnInputs(inputs);
+            UpdateMovingPlatforms(tick);
             PhysicsWorld.UpdatePhysics(TickRate.FixedDeltaSeconds, inputs);
             UpdateMotionTrails(TickRate.FixedDeltaSeconds);
             UpdateCheckpointActivation();
@@ -429,6 +467,12 @@ public sealed class GameSimulation
         LavaSurfaceY -= LavaRiseSpeed * TickRate.FixedDeltaSeconds;
     }
 
+    private void UpdateMovingPlatforms(SimulationTick tick)
+    {
+        float timeSeconds = tick.Value * TickRate.FixedDeltaSeconds;
+        PhysicsWorld.UpdateMovingPlatformsAndCarry(timeSeconds);
+    }
+
     private bool CheckLavaDeath()
     {
         if (!LavaActive || IsPlayerDead)
@@ -564,6 +608,21 @@ public sealed class GameSimulation
         return snapshot;
     }
 
+    private void ApplyPowerUpRuntimeFromSnapshot(LevelSnapshot? levelSnapshot)
+    {
+        if (levelSnapshot is null || levelSnapshot.PowerUps.Count == 0)
+        {
+            return;
+        }
+
+        int count = Math.Min(Level.PowerUps.Count, levelSnapshot.PowerUps.Count);
+        for (int i = 0; i < count; i++)
+        {
+            PowerUpSnapshot powerUpSnapshot = levelSnapshot.PowerUps[i];
+            Level.PowerUps[i].ApplyRuntimeState(powerUpSnapshot.IsAvailable, powerUpSnapshot.RespawnRemaining);
+        }
+    }
+
     private LevelSnapshot CreateLevelSnapshot()
     {
         LevelSnapshot snapshot = new()
@@ -578,11 +637,23 @@ public sealed class GameSimulation
         foreach (Platform platform in Level.Platforms)
         {
             snapshot.Platforms.Add(new PlatformSnapshot(
-                platform.Bounds.X,
-                platform.Bounds.Y,
+                platform.HomeX,
+                platform.HomeY,
                 platform.Bounds.Width,
                 platform.Bounds.Height,
-                platform.PlatformColor));
+                platform.ColorCycle.Count > 0 ? platform.ColorCycle[0] : platform.PlatformColor,
+                platform.MoveVertical,
+                platform.VerticalSpeed,
+                platform.VerticalDistanceBlocks,
+                platform.VerticalDirection,
+                platform.MoveHorizontal,
+                platform.HorizontalSpeed,
+                platform.HorizontalDistanceBlocks,
+                platform.HorizontalDirection,
+                platform.ColorChangeEnabled,
+                platform.ColorChangePeriodSeconds,
+                platform.ColorChangePhaseSeconds,
+                platform.ColorCycle.Count > 0 ? platform.ColorCycle.ToArray() : null));
         }
 
         foreach (Goal goal in Level.Goals)
@@ -606,7 +677,24 @@ public sealed class GameSimulation
                 launchPad.Bounds.Y,
                 launchPad.Bounds.Width,
                 launchPad.Bounds.Height,
-                LaunchPad.NormalizeRotation(launchPad.RotationDegrees)));
+                LaunchPad.NormalizeRotation(launchPad.RotationDegrees),
+                LaunchPad.ClampLaunchForce(launchPad.LaunchForce)));
+        }
+
+        foreach (PowerUp powerUp in Level.PowerUps)
+        {
+            snapshot.PowerUps.Add(new PowerUpSnapshot(
+                powerUp.Bounds.X,
+                powerUp.Bounds.Y,
+                powerUp.Bounds.Width,
+                powerUp.Bounds.Height,
+                powerUp.Type,
+                powerUp.DurationSeconds,
+                powerUp.Multiplier,
+                powerUp.RespawnSeconds,
+                powerUp.IsAvailable,
+                powerUp.RespawnRemaining,
+                powerUp.Consumable));
         }
 
         return snapshot;

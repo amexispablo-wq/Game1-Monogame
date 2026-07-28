@@ -11,6 +11,8 @@ public static class BestTimeStorage
 {
     public const string BestTimesFileName = "best_times.json";
     private const int MaxPlayerCounts = 4;
+    public const float MinRecordSeconds = 0.01f;
+    public const float MaxRecordSeconds = 86_400f;
 
     private sealed class PlayerCountBestTimes
     {
@@ -39,12 +41,32 @@ public static class BestTimeStorage
     public static int ClampPlayerCount(int playerCount) =>
         Math.Clamp(playerCount, 1, MaxPlayerCounts);
 
+    public static bool IsSaneRecordTime(float elapsedSeconds) =>
+        float.IsFinite(elapsedSeconds)
+        && elapsedSeconds >= MinRecordSeconds
+        && elapsedSeconds <= MaxRecordSeconds;
+
     public static bool SaveIfRecord(string levelId, float elapsedSeconds, bool official, int playerCount)
     {
+        if (!IsSaneRecordTime(elapsedSeconds))
+        {
+            DiagnosticsLog.Info(
+                "BestTimeStorage",
+                $"Reject insane time {elapsedSeconds} for {levelId}");
+            return false;
+        }
+
+        float roundedTime = RoundToCentiseconds(elapsedSeconds);
+        if (roundedTime < LeaderboardSanity.MinUploadTimeSeconds)
+        {
+            DiagnosticsLog.Info(
+                "BestTimeStorage",
+                $"Suspicious fast time {roundedTime}s for {levelId} (saved locally, Steam upload may block)");
+        }
+
         int clamped = ClampPlayerCount(playerCount);
         LevelSource source = LevelIdentity.GetSource(levelId);
         Dictionary<string, LevelBestTimesRecord> bestTimes = LoadAll(source);
-        float roundedTime = RoundToCentiseconds(elapsedSeconds);
 
         if (!bestTimes.TryGetValue(levelId, out LevelBestTimesRecord? record))
         {
@@ -324,11 +346,25 @@ public static class BestTimeStorage
 
             try
             {
+                if (SaveIntegrity.TryLoadSigned(path, out Dictionary<string, LevelBestTimesRecord>? signed)
+                    && signed is not null)
+                {
+                    return SanitizeLoadedRecords(signed);
+                }
+
                 string json = File.ReadAllText(path);
+                if (SaveIntegrity.LooksSigned(json))
+                {
+                    // Signed but HMAC failed — do not fall back to unsigned payload.
+                    DiagnosticsLog.Info("BestTimeStorage", $"Discarding tampered best-times '{path}'");
+                    continue;
+                }
+
                 Dictionary<string, LevelBestTimesRecord>? bestTimes = DeserializeRecords(json);
                 if (bestTimes is not null)
                 {
-                    return bestTimes;
+                    // Legacy unsigned → migrate to signed on next SaveAll.
+                    return SanitizeLoadedRecords(bestTimes);
                 }
             }
             catch (JsonException)
@@ -340,6 +376,43 @@ public static class BestTimeStorage
         }
 
         return new Dictionary<string, LevelBestTimesRecord>();
+    }
+
+    private static Dictionary<string, LevelBestTimesRecord> SanitizeLoadedRecords(
+        Dictionary<string, LevelBestTimesRecord> records)
+    {
+        foreach (LevelBestTimesRecord record in records.Values)
+        {
+            if (record.Official is float official && !IsSaneRecordTime(official))
+            {
+                record.Official = null;
+            }
+
+            if (record.Unofficial is float unofficial && !IsSaneRecordTime(unofficial))
+            {
+                record.Unofficial = null;
+            }
+
+            if (record.ByPlayerCount is null)
+            {
+                continue;
+            }
+
+            foreach (PlayerCountBestTimes slot in record.ByPlayerCount.Values)
+            {
+                if (slot.Official is float slotOfficial && !IsSaneRecordTime(slotOfficial))
+                {
+                    slot.Official = null;
+                }
+
+                if (slot.Unofficial is float slotUnofficial && !IsSaneRecordTime(slotUnofficial))
+                {
+                    slot.Unofficial = null;
+                }
+            }
+        }
+
+        return records;
     }
 
     private static Dictionary<string, LevelBestTimesRecord>? DeserializeRecords(string json)
@@ -381,9 +454,7 @@ public static class BestTimeStorage
     {
         string path = GetWritablePath(source);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-
-        string json = JsonSerializer.Serialize(bestTimes, JsonOptions);
-        File.WriteAllText(path, json);
+        SaveIntegrity.SaveSigned(path, bestTimes);
     }
 
     private static string GetWritablePath(LevelSource source)

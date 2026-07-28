@@ -7,7 +7,7 @@ using Microsoft.Xna.Framework.Input;
 
 namespace ColorBlocks;
 
-public sealed class EditorScene : IScene
+public sealed partial class EditorScene : IScene
 {
     private const int GridSize = 32;
     private const int ResizeMargin = 8;
@@ -33,15 +33,19 @@ public sealed class EditorScene : IScene
     private CheckpointFlag _hoveredCheckpoint;
     private LaunchPad _selectedLaunchPad;
     private LaunchPad _hoveredLaunchPad;
+    private PowerUp _selectedPowerUp;
+    private PowerUp _hoveredPowerUp;
     private ResizeHandle _activeHandle;
     private Rectangle _resizeStartBounds;
     private Point _resizeStartMouse;
     private readonly List<Platform> _selectedPlatforms = new();
     private readonly List<CheckpointFlag> _selectedCheckpoints = new();
     private readonly List<LaunchPad> _selectedLaunchPads = new();
+    private readonly List<PowerUp> _selectedPowerUps = new();
     private readonly Dictionary<Platform, Rectangle> _dragStartBounds = new();
     private readonly Dictionary<CheckpointFlag, Point> _checkpointDragStartPositions = new();
     private readonly Dictionary<LaunchPad, Rectangle> _launchPadDragStartBounds = new();
+    private readonly Dictionary<PowerUp, Rectangle> _powerUpDragStartBounds = new();
     private readonly Dictionary<Goal, Point> _goalDragStartPositions = new();
     private readonly List<EditorClipboardItem> _clipboard = new();
     private readonly List<LevelData> _undoStack = new();
@@ -58,12 +62,14 @@ public sealed class EditorScene : IScene
     private bool _isDraggingGoal;
     private bool _isDraggingCheckpoint;
     private bool _isDraggingLaunchPad;
+    private bool _isDraggingPowerUp;
     private bool _isResizing;
     private bool _isPanningCamera;
     private Point _createStart;
     private Point _goalDragStartMouse;
     private Point _checkpointDragStartMouse;
     private Point _launchPadDragStartMouse;
+    private Point _powerUpDragStartMouse;
     private Point _goalPreviewPosition;
     private Point _objectPreviewPosition;
     private Rectangle _previewBounds;
@@ -71,6 +77,7 @@ public sealed class EditorScene : IScene
     private Rectangle _goalSlotBounds;
     private Rectangle _checkpointSlotBounds;
     private Rectangle _launchPadSlotBounds;
+    private Rectangle _powerUpSlotBounds;
     private Rectangle _playerSpawnSlotBounds;
     private EditorObjectKind _toolbarDragKind = EditorObjectKind.None;
     private EditorObjectKind _hoveredToolbarKind = EditorObjectKind.None;
@@ -79,6 +86,7 @@ public sealed class EditorScene : IScene
     private bool _goalSlotHovered;
     private bool _checkpointSlotHovered;
     private bool _launchPadSlotHovered;
+    private bool _powerUpSlotHovered;
     private bool _playerSpawnSlotHovered;
     private bool _isDraggingPlayerSpawn;
     private bool _playerSpawnSelected;
@@ -94,6 +102,38 @@ public sealed class EditorScene : IScene
     private Rectangle _lavaSpeedPanelBounds;
     private Rectangle _lavaSpeedMinusBounds;
     private Rectangle _lavaSpeedPlusBounds;
+    private Rectangle _powerUpPanelBounds;
+    private Rectangle _powerUpTypeBounds;
+    private Rectangle _powerUpDurationMinusBounds;
+    private Rectangle _powerUpDurationPlusBounds;
+    private Rectangle _powerUpMultiplierMinusBounds;
+    private Rectangle _powerUpMultiplierPlusBounds;
+    private Rectangle _powerUpRespawnMinusBounds;
+    private Rectangle _powerUpRespawnPlusBounds;
+    private Rectangle _motionPanelBounds;
+    private Rectangle _motionVerticalCheckBounds;
+    private Rectangle _motionVerticalDirABounds;
+    private Rectangle _motionVerticalDirBBounds;
+    private Rectangle _motionVerticalSpeedMinusBounds;
+    private Rectangle _motionVerticalSpeedPlusBounds;
+    private Rectangle _motionVerticalDistMinusBounds;
+    private Rectangle _motionVerticalDistPlusBounds;
+    private Rectangle _motionHorizontalCheckBounds;
+    private Rectangle _motionHorizontalDirABounds;
+    private Rectangle _motionHorizontalDirBBounds;
+    private Rectangle _motionHorizontalSpeedMinusBounds;
+    private Rectangle _motionHorizontalSpeedPlusBounds;
+    private Rectangle _motionHorizontalDistMinusBounds;
+    private Rectangle _motionHorizontalDistPlusBounds;
+    private Rectangle _colorCyclePanelBounds;
+    private Rectangle _colorCycleCheckBounds;
+    private Rectangle _colorCyclePeriodMinusBounds;
+    private Rectangle _colorCyclePeriodPlusBounds;
+    private Rectangle _colorCycleAddBounds;
+    private Rectangle _colorCycleRemoveBounds;
+    private readonly List<Rectangle> _colorCycleSwatchBounds = new();
+    private int _colorCycleSelectedStep;
+    private float _editorElapsedSeconds;
     private Rectangle _colorPanelBounds;
     private Rectangle _colorRedBounds;
     private Rectangle _colorGreenBounds;
@@ -128,13 +168,20 @@ public sealed class EditorScene : IScene
     private bool HasSelection => _selectedPlatforms.Count > 0
         || _selectedGoals.Count > 0
         || _selectedCheckpoints.Count > 0
-        || _selectedLaunchPads.Count > 0;
+        || _selectedLaunchPads.Count > 0
+        || _selectedPowerUps.Count > 0;
 
     public EditorScene(ColorBlocksGame game, string levelId = "level_1")
     {
         _game = game;
         _levelId = levelId;
-        _level = LevelLibrary.LoadLevel(levelId);
+        Level? loaded = LevelLibrary.TryLoadLevel(levelId);
+        _level = loaded ?? Level.CreateDefault();
+        if (loaded is null)
+        {
+            DiagnosticsLog.Info("Editor", $"Level '{levelId}' failed integrity — opened empty default");
+        }
+
         if (_level.Lava is null)
         {
             // Every level gets a lava line so it can be positioned per level.
@@ -156,7 +203,22 @@ public sealed class EditorScene : IScene
         LayoutColorPanel();
         LayoutBackButton();
         LayoutEditorToolbar();
-        LayoutLavaSpeedPanel();
+        LayoutPropertiesPanel();
+        UpdatePropertiesPanelInput(gameTime);
+        UpdatePlatformColorPreview(gameTime);
+
+        // Typing a props number: Enter/Esc/click-away commit (or cancel). Do not fire Apply/Back/Test.
+        if (IsEditingPropsValue)
+        {
+            if (TryHandlePropertiesPanelPress())
+            {
+                _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
+                return;
+            }
+
+            _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
+            return;
+        }
 
         if (TryHandleGamepadChromePress())
         {
@@ -164,30 +226,31 @@ public sealed class EditorScene : IScene
             return;
         }
 
-        if (!IsGamepadCursorMode())
+        if (!IsGamepadCursorMode() && !_propsEditConsumedMenuKeys)
         {
             UpdateUiFocus(gameTime);
         }
 
-        if (_game.Input.KeyboardMenuCancelPressed || _game.Input.GamepadBackPressed)
+        if (!_propsEditConsumedMenuKeys
+            && (_game.Input.KeyboardMenuCancelPressed || _game.Input.GamepadBackPressed))
         {
             _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
             return;
         }
 
-        if (!IsGamepadCursorMode() && _backFocus.WasActivated)
+        if (!_propsEditConsumedMenuKeys && !IsGamepadCursorMode() && _backFocus.WasActivated)
         {
             _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.EditMode));
             return;
         }
 
-        if (!IsGamepadCursorMode() && _applyFocus.WasActivated && _isDirty)
+        if (!_propsEditConsumedMenuKeys && !IsGamepadCursorMode() && _applyFocus.WasActivated && _isDirty)
         {
             ApplyChanges();
             return;
         }
 
-        if (!IsGamepadCursorMode() && _testFocus.WasActivated)
+        if (!_propsEditConsumedMenuKeys && !IsGamepadCursorMode() && _testFocus.WasActivated)
         {
             StartEditorTest();
             return;
@@ -201,6 +264,12 @@ public sealed class EditorScene : IScene
 
         HandleKeyboard();
 
+        if (TryHandlePropertiesPanelPress())
+        {
+            _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
+            return;
+        }
+
         if (TryApplyColorFromPointer())
         {
             _gamepadPrimaryWasHeld = _virtualCursor.IsActive && _game.Input.MenuConfirmHeld;
@@ -209,6 +278,7 @@ public sealed class EditorScene : IScene
 
         bool mouseOverToolbar = IsMouseOverToolbar();
         bool cameraBlockedByUi = _colorPanelBounds.Contains(UiPointer)
+            || _propsPanelBounds.Contains(UiPointer)
             || _backButton.IsHovered
             || _applyButton.IsHovered
             || _testButton.IsHovered
@@ -300,6 +370,11 @@ public sealed class EditorScene : IScene
             }
         }
 
+        if (TryHandlePropertiesPanelPress())
+        {
+            return true;
+        }
+
         if (TryApplyColorFromPointer())
         {
             return true;
@@ -373,7 +448,7 @@ public sealed class EditorScene : IScene
         LayoutColorPanel();
         LayoutBackButton();
         LayoutEditorToolbar();
-        LayoutLavaSpeedPanel();
+        LayoutPropertiesPanel();
 
         Texture2D pixel = _game.Pixel;
         Viewport viewport = _game.Viewport;
@@ -396,8 +471,10 @@ public sealed class EditorScene : IScene
 
         _level.DrawPlatforms(spriteBatch, pixel, debugDraw: false);
         _level.DrawLaunchPads(spriteBatch, pixel, debugDraw: false, isEditorMode: true);
+        _level.DrawPowerUps(spriteBatch, pixel, debugDraw: false, isEditorMode: true);
         _level.DrawGoals(spriteBatch, pixel, debugDraw: false);
         _level.DrawCheckpointFlags(spriteBatch, pixel, debugDraw: false);
+        _level.DrawSigns(spriteBatch, pixel);
         DrawPlayerSpawnMarker(spriteBatch, pixel, _level.PlayerStart, _level.PlayerStartColor, 1f);
         if (_playerSpawnSelected || _playerSpawnHovered)
         {
@@ -453,9 +530,15 @@ public sealed class EditorScene : IScene
             DrawHelper.DrawBorder(spriteBatch, pixel, _hoveredLaunchPad.Bounds, Color.White, GetWorldLineThickness(2));
         }
 
+        if (_hoveredPowerUp is not null && !_selectedPowerUps.Contains(_hoveredPowerUp))
+        {
+            DrawHelper.DrawBorder(spriteBatch, pixel, _hoveredPowerUp.Bounds, Color.White, GetWorldLineThickness(2));
+        }
+
         foreach (Platform selectedPlatform in _selectedPlatforms)
         {
             DrawHelper.DrawBorder(spriteBatch, pixel, selectedPlatform.Bounds, new Color(255, 220, 80), GetWorldLineThickness(3));
+            DrawMotionPathPreview(spriteBatch, pixel, selectedPlatform);
         }
 
         foreach (Goal selectedGoal in _selectedGoals)
@@ -476,6 +559,11 @@ public sealed class EditorScene : IScene
             SimpleTextRenderer.DrawCentered(spriteBatch, pixel, "Q/E to rotate", new Rectangle((int)hintPosition.X - 60, (int)hintPosition.Y, 120, 20), 1, new Color(255, 220, 80));
         }
 
+        foreach (PowerUp selectedPowerUp in _selectedPowerUps)
+        {
+            DrawHelper.DrawBorder(spriteBatch, pixel, selectedPowerUp.Bounds, new Color(255, 220, 80), GetWorldLineThickness(3));
+        }
+
         if (_selectedPlatforms.Count == 1 && _selectedPlatform is not null)
         {
             DrawResizeHandles(spriteBatch, pixel, _selectedPlatform.Bounds);
@@ -484,6 +572,11 @@ public sealed class EditorScene : IScene
         if (_selectedLaunchPads.Count == 1 && _selectedLaunchPad is not null)
         {
             DrawResizeHandles(spriteBatch, pixel, _selectedLaunchPad.Bounds);
+        }
+
+        if (_selectedPowerUps.Count == 1 && _selectedPowerUp is not null)
+        {
+            DrawResizeHandles(spriteBatch, pixel, _selectedPowerUp.Bounds);
         }
 
         if (_isCreating && _previewBounds.Width > 0 && _previewBounds.Height > 0)
@@ -508,7 +601,7 @@ public sealed class EditorScene : IScene
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         DrawEditorUi(spriteBatch, pixel);
         DrawToolbar(spriteBatch, pixel);
-        DrawLavaSpeedPanel(spriteBatch, pixel);
+        DrawPropertiesPanel(spriteBatch, pixel);
         UpdateEditorChromeButtonHover();
         DrawApplyButton(spriteBatch, pixel);
         _testButton.Draw(spriteBatch, pixel);
@@ -533,6 +626,11 @@ public sealed class EditorScene : IScene
 
     private void HandleKeyboard()
     {
+        if (IsEditingPropsValue)
+        {
+            return;
+        }
+
         if (_game.Input.ControlHeld)
         {
             if (_game.Input.IsNewKeyPress(Keys.Z))
@@ -598,6 +696,7 @@ public sealed class EditorScene : IScene
             _isDraggingGoal = false;
             _isDraggingCheckpoint = false;
             _isDraggingLaunchPad = false;
+            _isDraggingPowerUp = false;
             _isResizing = false;
             _activeHandle = ResizeHandle.None;
             return;
@@ -695,6 +794,7 @@ public sealed class EditorScene : IScene
             && !_isDraggingGoal
             && !_isDraggingCheckpoint
             && !_isDraggingLaunchPad
+            && !_isDraggingPowerUp
             && !_isDraggingLavaLine
             && !_isResizing
             && !mouseOverUi;
@@ -755,6 +855,7 @@ public sealed class EditorScene : IScene
         }
 
         LaunchPad clickedLaunchPad = FindLaunchPadAt(mouse);
+        PowerUp clickedPowerUp = FindPowerUpAt(mouse);
         CheckpointFlag clickedCheckpoint = FindCheckpointAt(mouse);
         Goal clickedGoal = FindGoalAt(mouse);
         Platform clickedPlatform = FindPlatformAt(mouse);
@@ -765,6 +866,10 @@ public sealed class EditorScene : IScene
             if (clickedLaunchPad is not null)
             {
                 ToggleSelection(clickedLaunchPad);
+            }
+            else if (clickedPowerUp is not null)
+            {
+                ToggleSelection(clickedPowerUp);
             }
             else if (clickedCheckpoint is not null)
             {
@@ -792,6 +897,16 @@ public sealed class EditorScene : IScene
             if (selectedHandle != ResizeHandle.None)
             {
                 StartResize(_selectedLaunchPad, selectedHandle, mouse);
+                return;
+            }
+        }
+
+        if (_selectedPowerUps.Count == 1 && _selectedPowerUp is not null)
+        {
+            ResizeHandle selectedHandle = GetResizeHandle(_selectedPowerUp.Bounds, mouse);
+            if (selectedHandle != ResizeHandle.None)
+            {
+                StartResize(_selectedPowerUp, selectedHandle, mouse);
                 return;
             }
         }
@@ -832,6 +947,30 @@ public sealed class EditorScene : IScene
             if (clickedHandle != ResizeHandle.None)
             {
                 StartResize(clickedLaunchPad, clickedHandle, mouse);
+                return;
+            }
+
+            StartSelectionDrag(mouse);
+            return;
+        }
+
+        if (clickedPowerUp is not null)
+        {
+            if (!_selectedPowerUps.Contains(clickedPowerUp))
+            {
+                SelectSinglePowerUp(clickedPowerUp);
+            }
+            else
+            {
+                _selectedPowerUp = clickedPowerUp;
+            }
+
+            ResizeHandle clickedHandle = _selectedPowerUps.Count == 1
+                ? GetResizeHandle(clickedPowerUp.Bounds, mouse)
+                : ResizeHandle.None;
+            if (clickedHandle != ResizeHandle.None)
+            {
+                StartResize(clickedPowerUp, clickedHandle, mouse);
                 return;
             }
 
@@ -943,6 +1082,11 @@ public sealed class EditorScene : IScene
             MoveSelectedLaunchPads(mouse);
         }
 
+        if (_isDraggingPowerUp && _selectedPowerUps.Count > 0)
+        {
+            MoveSelectedPowerUps(mouse);
+        }
+
         if (_isDraggingPlayerSpawn)
         {
             MovePlayerSpawn(mouse);
@@ -964,6 +1108,12 @@ public sealed class EditorScene : IScene
         if (_isResizing && _selectedLaunchPad is not null && _activeHandle != ResizeHandle.None)
         {
             ResizeSelectedLaunchPad(mouse);
+            return;
+        }
+
+        if (_isResizing && _selectedPowerUp is not null && _activeHandle != ResizeHandle.None)
+        {
+            ResizeSelectedPowerUp(mouse);
         }
     }
 
@@ -991,6 +1141,7 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
         _isDraggingLaunchPad = false;
+        _isDraggingPowerUp = false;
         _isDraggingPlayerSpawn = false;
         _isDraggingLavaLine = false;
         _isResizing = false;
@@ -1006,6 +1157,7 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
         _isDraggingLaunchPad = false;
+        _isDraggingPowerUp = false;
         _isDraggingPlayerSpawn = false;
         _isDraggingLavaLine = false;
         _isResizing = false;
@@ -1047,6 +1199,14 @@ public sealed class EditorScene : IScene
             }
         }
 
+        foreach (PowerUp powerUp in _level.PowerUps)
+        {
+            if (_marqueeBounds.Intersects(powerUp.Bounds))
+            {
+                _selectedPowerUps.Add(powerUp);
+            }
+        }
+
         foreach (Goal goal in _level.Goals)
         {
             if (_marqueeBounds.Intersects(goal.Bounds))
@@ -1058,7 +1218,13 @@ public sealed class EditorScene : IScene
         _selectedPlatform = _selectedPlatforms.Count > 0 ? _selectedPlatforms[^1] : null;
         _selectedCheckpoint = _selectedCheckpoints.Count > 0 ? _selectedCheckpoints[^1] : null;
         _selectedLaunchPad = _selectedLaunchPads.Count > 0 ? _selectedLaunchPads[^1] : null;
+        _selectedPowerUp = _selectedPowerUps.Count > 0 ? _selectedPowerUps[^1] : null;
         _selectedGoal = _selectedGoals.Count > 0 ? _selectedGoals[^1] : null;
+        if (_selectedPlatforms.Count > 0)
+        {
+            _lavaSelected = false;
+            _playerSpawnSelected = false;
+        }
     }
 
     private void StartLavaDrag(Point mouse)
@@ -1072,6 +1238,7 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
         _isDraggingLaunchPad = false;
+        _isDraggingPowerUp = false;
         _isResizing = false;
         _activeHandle = ResizeHandle.None;
         _lavaDragStartMouse = mouse;
@@ -1112,11 +1279,13 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = _selectedGoals.Count > 0;
         _isDraggingCheckpoint = _selectedCheckpoints.Count > 0;
         _isDraggingLaunchPad = _selectedLaunchPads.Count > 0;
+        _isDraggingPowerUp = _selectedPowerUps.Count > 0;
 
         _dragStartMouse = mouse;
         _goalDragStartMouse = mouse;
         _checkpointDragStartMouse = mouse;
         _launchPadDragStartMouse = mouse;
+        _powerUpDragStartMouse = mouse;
 
         _dragStartBounds.Clear();
         foreach (Platform selectedPlatform in _selectedPlatforms)
@@ -1140,6 +1309,12 @@ public sealed class EditorScene : IScene
         foreach (LaunchPad selectedLaunchPad in _selectedLaunchPads)
         {
             _launchPadDragStartBounds[selectedLaunchPad] = selectedLaunchPad.Bounds;
+        }
+
+        _powerUpDragStartBounds.Clear();
+        foreach (PowerUp selectedPowerUp in _selectedPowerUps)
+        {
+            _powerUpDragStartBounds[selectedPowerUp] = selectedPowerUp.Bounds;
         }
     }
 
@@ -1168,6 +1343,7 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
         _isDraggingLaunchPad = false;
+        _isDraggingPowerUp = false;
         _isCreating = false;
         _resizeStartBounds = launchPad.Bounds;
         _resizeStartMouse = _snapToGrid ? Snap(mouse) : mouse;
@@ -1181,6 +1357,8 @@ public sealed class EditorScene : IScene
         _selectedCheckpoint = null;
         _selectedLaunchPads.Clear();
         _selectedLaunchPad = null;
+        _selectedPowerUps.Clear();
+        _selectedPowerUp = null;
         _selectedGoals.Clear();
         _selectedGoals.Add(goal);
         _selectedGoal = goal;
@@ -1194,6 +1372,8 @@ public sealed class EditorScene : IScene
         _selectedGoal = null;
         _selectedLaunchPads.Clear();
         _selectedLaunchPad = null;
+        _selectedPowerUps.Clear();
+        _selectedPowerUp = null;
         _selectedCheckpoints.Clear();
         _selectedCheckpoints.Add(checkpoint);
         _selectedCheckpoint = checkpoint;
@@ -1207,6 +1387,8 @@ public sealed class EditorScene : IScene
         _selectedGoal = null;
         _selectedCheckpoints.Clear();
         _selectedCheckpoint = null;
+        _selectedPowerUps.Clear();
+        _selectedPowerUp = null;
         _selectedLaunchPads.Clear();
         _selectedLaunchPads.Add(launchPad);
         _selectedLaunchPad = launchPad;
@@ -1339,6 +1521,7 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
         _isDraggingLaunchPad = false;
+        _isDraggingPowerUp = false;
         _isDragging = false;
         _isResizing = false;
         _isCreating = false;
@@ -1388,6 +1571,16 @@ public sealed class EditorScene : IScene
                         _isDirty = true;
                         break;
                     }
+                case EditorObjectKind.PowerUp:
+                    {
+                        Rectangle bounds = new(_objectPreviewPosition.X, _objectPreviewPosition.Y, PowerUp.DefaultWidth, PowerUp.DefaultHeight);
+                        bounds = SnapRectangleToGrid(bounds);
+                        PowerUp powerUp = new(bounds);
+                        _level.AddPowerUp(powerUp);
+                        SelectSinglePowerUp(powerUp);
+                        _isDirty = true;
+                        break;
+                    }
                 case EditorObjectKind.PlayerSpawn:
                     {
                         _level.PlayerStart = new Vector2(_objectPreviewPosition.X, _objectPreviewPosition.Y);
@@ -1433,7 +1626,7 @@ public sealed class EditorScene : IScene
                 continue;
             }
 
-            selectedPlatform.Bounds = nextBounds;
+            selectedPlatform.SetAuthoredBounds(nextBounds);
             movedAnyPlatform = true;
         }
 
@@ -1459,7 +1652,7 @@ public sealed class EditorScene : IScene
             return;
         }
 
-        _selectedPlatform.Bounds = nextBounds;
+        _selectedPlatform.SetAuthoredBounds(nextBounds);
         _level.RecalculateWorldSize();
         _isDirty = true;
     }
@@ -1496,6 +1689,10 @@ public sealed class EditorScene : IScene
         _selectedCheckpoint = null;
         _selectedLaunchPads.Clear();
         _selectedLaunchPad = null;
+        _selectedPowerUps.Clear();
+        _selectedPowerUp = null;
+        _lavaSelected = false;
+        _playerSpawnSelected = false;
     }
 
     private void ToggleSelection(Platform platform)
@@ -1506,6 +1703,8 @@ public sealed class EditorScene : IScene
         _selectedCheckpoint = null;
         _selectedLaunchPads.Clear();
         _selectedLaunchPad = null;
+        _lavaSelected = false;
+        _playerSpawnSelected = false;
 
         if (_selectedPlatforms.Contains(platform))
         {
@@ -1560,6 +1759,7 @@ public sealed class EditorScene : IScene
 
     private void ClearSelection()
     {
+        ClearPropsValueEdit(commit: false);
         _selectedPlatforms.Clear();
         _selectedPlatform = null;
         _selectedGoals.Clear();
@@ -1568,6 +1768,8 @@ public sealed class EditorScene : IScene
         _selectedCheckpoint = null;
         _selectedLaunchPads.Clear();
         _selectedLaunchPad = null;
+        _selectedPowerUps.Clear();
+        _selectedPowerUp = null;
         _lavaSelected = false;
         _playerSpawnSelected = false;
     }
@@ -1587,6 +1789,7 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
         _isDraggingLaunchPad = false;
+        _isDraggingPowerUp = false;
         _isResizing = false;
         _isCreating = false;
         _activeHandle = ResizeHandle.None;
@@ -1637,6 +1840,11 @@ public sealed class EditorScene : IScene
             _level.RemoveLaunchPad(_selectedLaunchPads[i]);
         }
 
+        for (int i = _selectedPowerUps.Count - 1; i >= 0; i--)
+        {
+            _level.RemovePowerUp(_selectedPowerUps[i]);
+        }
+
         for (int i = _selectedGoals.Count - 1; i >= 0; i--)
         {
             _level.RemoveGoal(_selectedGoals[i]);
@@ -1646,6 +1854,7 @@ public sealed class EditorScene : IScene
 
         _hoveredCheckpoint = null;
         _hoveredLaunchPad = null;
+        _hoveredPowerUp = null;
         ClearSelection();
         _isDirty = true;
     }
@@ -1655,12 +1864,30 @@ public sealed class EditorScene : IScene
         bool changedAny = false;
         foreach (Platform selectedPlatform in _selectedPlatforms)
         {
+            if (selectedPlatform.ColorChangeEnabled && selectedPlatform.ColorCycle.Count > 0)
+            {
+                int step = Math.Clamp(_colorCycleSelectedStep, 0, selectedPlatform.ColorCycle.Count - 1);
+                if (selectedPlatform.ColorCycle[step] == color && (step != 0 || selectedPlatform.PlatformColor == color))
+                {
+                    continue;
+                }
+
+                selectedPlatform.ColorCycle[step] = color;
+                if (step == 0)
+                {
+                    selectedPlatform.PlatformColor = color;
+                }
+
+                changedAny = true;
+                continue;
+            }
+
             if (selectedPlatform.PlatformColor == color)
             {
                 continue;
             }
 
-            selectedPlatform.PlatformColor = color;
+            selectedPlatform.SetAuthoredStartColor(color);
             changedAny = true;
         }
 
@@ -1691,14 +1918,33 @@ public sealed class EditorScene : IScene
         foreach (Platform selectedPlatform in _selectedPlatforms)
         {
             Rectangle bounds = selectedPlatform.Bounds;
-            _clipboard.Add(new EditorClipboardItem(
+            EditorClipboardItem item = new(
                 EditorObjectKind.Platform,
                 bounds.X - _clipboardOrigin.X,
                 bounds.Y - _clipboardOrigin.Y,
                 bounds.Width,
                 bounds.Height,
-                selectedPlatform.PlatformColor,
-                0f));
+                selectedPlatform.ColorCycle.Count > 0
+                    ? selectedPlatform.ColorCycle[0]
+                    : selectedPlatform.PlatformColor,
+                0f)
+            {
+                MoveVertical = selectedPlatform.MoveVertical,
+                VerticalSpeed = selectedPlatform.VerticalSpeed,
+                VerticalDistanceBlocks = selectedPlatform.VerticalDistanceBlocks,
+                VerticalDirection = selectedPlatform.VerticalDirection,
+                MoveHorizontal = selectedPlatform.MoveHorizontal,
+                HorizontalSpeed = selectedPlatform.HorizontalSpeed,
+                HorizontalDistanceBlocks = selectedPlatform.HorizontalDistanceBlocks,
+                HorizontalDirection = selectedPlatform.HorizontalDirection,
+                ColorChangeEnabled = selectedPlatform.ColorChangeEnabled,
+                ColorCycle = selectedPlatform.ColorCycle.Count > 0
+                    ? new List<GameColor>(selectedPlatform.ColorCycle)
+                    : new List<GameColor>(),
+                ColorChangePeriodSeconds = selectedPlatform.ColorChangePeriodSeconds,
+                ColorChangePhaseSeconds = selectedPlatform.ColorChangePhaseSeconds
+            };
+            _clipboard.Add(item);
         }
 
         foreach (Goal selectedGoal in _selectedGoals)
@@ -1737,7 +1983,30 @@ public sealed class EditorScene : IScene
                 bounds.Width,
                 bounds.Height,
                 GameColor.Red,
-                selectedLaunchPad.RotationDegrees));
+                selectedLaunchPad.RotationDegrees)
+            {
+                LaunchForce = selectedLaunchPad.LaunchForce
+            });
+        }
+
+        foreach (PowerUp selectedPowerUp in _selectedPowerUps)
+        {
+            Rectangle bounds = selectedPowerUp.Bounds;
+            _clipboard.Add(new EditorClipboardItem(
+                EditorObjectKind.PowerUp,
+                bounds.X - _clipboardOrigin.X,
+                bounds.Y - _clipboardOrigin.Y,
+                bounds.Width,
+                bounds.Height,
+                GameColor.Red,
+                0f)
+            {
+                PowerUpType = selectedPowerUp.Type,
+                PowerUpDurationSeconds = selectedPowerUp.DurationSeconds,
+                PowerUpMultiplier = selectedPowerUp.Multiplier,
+                PowerUpRespawnSeconds = selectedPowerUp.RespawnSeconds,
+                PowerUpConsumable = selectedPowerUp.Consumable
+            });
         }
 
         _pasteCount = 1;
@@ -1771,7 +2040,35 @@ public sealed class EditorScene : IScene
                     {
                         Rectangle platformBounds = new(position.X, position.Y, item.Width, item.Height);
                         platformBounds = SnapRectangleToGrid(platformBounds);
-                        Platform platform = new(platformBounds, item.Color);
+                        Platform platform = new(platformBounds, item.Color)
+                        {
+                            MoveVertical = item.MoveVertical,
+                            VerticalSpeed = Platform.ClampSpeed(item.VerticalSpeed),
+                            VerticalDistanceBlocks = Platform.ClampDistanceBlocks(item.VerticalDistanceBlocks),
+                            VerticalDirection = item.VerticalDirection,
+                            MoveHorizontal = item.MoveHorizontal,
+                            HorizontalSpeed = Platform.ClampSpeed(item.HorizontalSpeed),
+                            HorizontalDistanceBlocks = Platform.ClampDistanceBlocks(item.HorizontalDistanceBlocks),
+                            HorizontalDirection = item.HorizontalDirection,
+                            ColorChangeEnabled = item.ColorChangeEnabled,
+                            ColorCycle = item.ColorCycle.Count > 0
+                                ? new List<GameColor>(item.ColorCycle)
+                                : new List<GameColor>(),
+                            ColorChangePeriodSeconds = Platform.ClampColorChangePeriod(
+                                item.ColorChangePeriodSeconds <= 0f
+                                    ? Platform.DefaultColorChangePeriodSeconds
+                                    : item.ColorChangePeriodSeconds),
+                            ColorChangePhaseSeconds = item.ColorChangePhaseSeconds
+                        };
+                        if (platform.MoveVertical && platform.MoveHorizontal)
+                        {
+                            platform.MoveHorizontal = false;
+                        }
+
+                        if (platform.ColorChangeEnabled)
+                        {
+                            platform.EnsureColorCycleSeeded();
+                        }
                         _level.AddPlatform(platform);
                         _selectedPlatforms.Add(platform);
                         _selectedPlatform = platform;
@@ -1801,10 +2098,30 @@ public sealed class EditorScene : IScene
                             launchPadBounds = SnapRectangleToGrid(launchPadBounds);
                         }
 
-                        LaunchPad launchPad = new(launchPadBounds, item.RotationDegrees);
+                        LaunchPad launchPad = new(launchPadBounds, item.RotationDegrees, item.LaunchForce);
                         _level.AddLaunchPad(launchPad);
                         _selectedLaunchPads.Add(launchPad);
                         _selectedLaunchPad = launchPad;
+                        break;
+                    }
+                case EditorObjectKind.PowerUp:
+                    {
+                        Rectangle powerUpBounds = new(position.X, position.Y, Math.Max(GridSize, item.Width), Math.Max(GridSize, item.Height));
+                        if (_snapToGrid)
+                        {
+                            powerUpBounds = SnapRectangleToGrid(powerUpBounds);
+                        }
+
+                        PowerUp powerUp = new(
+                            powerUpBounds,
+                            item.PowerUpType,
+                            item.PowerUpDurationSeconds,
+                            item.PowerUpMultiplier,
+                            item.PowerUpRespawnSeconds,
+                            item.PowerUpConsumable);
+                        _level.AddPowerUp(powerUp);
+                        _selectedPowerUps.Add(powerUp);
+                        _selectedPowerUp = powerUp;
                         break;
                     }
             }
@@ -1837,6 +2154,12 @@ public sealed class EditorScene : IScene
         if (_selectedLaunchPads.Count > 0)
         {
             origin = _selectedLaunchPads[0].Bounds.Location;
+            return true;
+        }
+
+        if (_selectedPowerUps.Count > 0)
+        {
+            origin = _selectedPowerUps[0].Bounds.Location;
             return true;
         }
 
@@ -1947,13 +2270,14 @@ public sealed class EditorScene : IScene
 
     private void UpdateHoverState(Point mouse)
     {
-        bool objectActionActive = _isCreating || _isMarqueeSelecting || _isDragging || _isDraggingGoal || _isDraggingCheckpoint || _isDraggingLaunchPad || _isDraggingPlayerSpawn || _isDraggingLavaLine || _isResizing || IsDraggingToolbarObject;
+        bool objectActionActive = _isCreating || _isMarqueeSelecting || _isDragging || _isDraggingGoal || _isDraggingCheckpoint || _isDraggingLaunchPad || _isDraggingPowerUp || _isDraggingPlayerSpawn || _isDraggingLavaLine || _isResizing || IsDraggingToolbarObject;
         if (objectActionActive)
         {
             _hoveredPlatform = (_isCreating || _isDragging || _isResizing) ? _selectedPlatform : null;
             _hoveredGoal = _isDraggingGoal ? _selectedGoal : null;
             _hoveredCheckpoint = _isDraggingCheckpoint && _selectedCheckpoints.Count > 0 ? _selectedCheckpoints[0] : null;
             _hoveredLaunchPad = _isDraggingLaunchPad && _selectedLaunchPads.Count > 0 ? _selectedLaunchPads[0] : null;
+            _hoveredPowerUp = _isDraggingPowerUp && _selectedPowerUps.Count > 0 ? _selectedPowerUps[0] : null;
             _playerSpawnHovered = _isDraggingPlayerSpawn;
             _lavaHovered = _isDraggingLavaLine;
             return;
@@ -1962,10 +2286,11 @@ public sealed class EditorScene : IScene
         _hoveredGoal = FindGoalAt(mouse);
         _hoveredCheckpoint = _hoveredGoal is null ? FindCheckpointAt(mouse) : null;
         _hoveredLaunchPad = _hoveredGoal is null && _hoveredCheckpoint is null ? FindLaunchPadAt(mouse) : null;
-        _hoveredPlatform = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null ? FindPlatformAt(mouse) : null;
-        _playerSpawnHovered = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null && _hoveredPlatform is null
+        _hoveredPowerUp = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null ? FindPowerUpAt(mouse) : null;
+        _hoveredPlatform = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null && _hoveredPowerUp is null ? FindPlatformAt(mouse) : null;
+        _playerSpawnHovered = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null && _hoveredPowerUp is null && _hoveredPlatform is null
             && HitTestPlayerSpawn(mouse);
-        _lavaHovered = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null && _hoveredPlatform is null && !_playerSpawnHovered
+        _lavaHovered = _hoveredGoal is null && _hoveredCheckpoint is null && _hoveredLaunchPad is null && _hoveredPowerUp is null && _hoveredPlatform is null && !_playerSpawnHovered
             && _level.Lava is not null && _level.Lava.HitTest(mouse);
     }
 
@@ -1979,7 +2304,7 @@ public sealed class EditorScene : IScene
         return _backButton.Bounds.Contains(UiPointer)
             || _applyButton.Bounds.Contains(UiPointer)
             || _testButton.Bounds.Contains(UiPointer)
-            || (_lavaSelected && _lavaSpeedPanelBounds.Contains(UiPointer));
+            || _propsPanelBounds.Contains(UiPointer);
     }
 
     private bool IsMouseOverUi()
@@ -1989,22 +2314,20 @@ public sealed class EditorScene : IScene
             || _applyButton.Bounds.Contains(UiPointer)
             || _testButton.Bounds.Contains(UiPointer)
             || IsMouseOverToolbar()
-            || (_lavaSelected && _lavaSpeedPanelBounds.Contains(UiPointer));
+            || _propsPanelBounds.Contains(UiPointer);
     }
 
     private void LayoutLavaSpeedPanel()
     {
-        const int panelWidth = 330;
-        const int panelHeight = 78;
-        const int gap = 10;
-        int margin = _colorPanelBounds.Left;
-        int top = _backButton.Bounds.Bottom + gap;
-        _lavaSpeedPanelBounds = new Rectangle(margin, top, panelWidth, panelHeight);
+        if (!ShowLavaPropsPanel || _level.Lava is null)
+        {
+            _lavaSpeedPanelBounds = Rectangle.Empty;
+            _lavaRiseFieldBounds = Rectangle.Empty;
+            return;
+        }
 
-        int button = 42;
-        int buttonY = top + panelHeight - button - 12;
-        _lavaSpeedMinusBounds = new Rectangle(margin + 12, buttonY, button, button);
-        _lavaSpeedPlusBounds = new Rectangle(margin + panelWidth - button - 12, buttonY, button, button);
+        _lavaSpeedPanelBounds = _propsPanelBounds;
+        LayoutPropsNumericRow(0, out _lavaSpeedMinusBounds, out _lavaRiseFieldBounds, out _lavaSpeedPlusBounds);
     }
 
     private void AdjustLavaRiseSpeed(float delta)
@@ -2014,54 +2337,764 @@ public sealed class EditorScene : IScene
             return;
         }
 
-        BeginHistoryGesture();
-        _level.Lava.RiseSpeed = MathHelper.Clamp(
-            _level.Lava.RiseSpeed + delta,
-            LavaLine.MinRiseSpeed,
-            LavaLine.MaxRiseSpeed);
-        _isDirty = true;
-        EndHistoryGesture();
-    }
-
-    private void DrawLavaSpeedPanel(SpriteBatch spriteBatch, Texture2D pixel)
-    {
-        if (!_lavaSelected || _level.Lava is null)
-        {
-            return;
-        }
-
-        LayoutLavaSpeedPanel();
-        Rectangle panel = _lavaSpeedPanelBounds;
-        spriteBatch.Draw(pixel, panel, new Color(28, 22, 16));
-        DrawHelper.DrawBorder(spriteBatch, pixel, panel, new Color(255, 150, 40), 2);
-
-        SimpleTextRenderer.DrawString(
-            spriteBatch,
-            pixel,
-            "LAVA RISE SPEED",
-            new Vector2(panel.X + 14, panel.Y + 10),
-            1,
-            new Color(255, 210, 150));
-
-        string value = $"{_level.Lava.RiseSpeed:0} px/s";
-        SimpleTextRenderer.DrawCentered(
-            spriteBatch,
-            pixel,
-            value,
-            new Rectangle(panel.X, _lavaSpeedMinusBounds.Y, panel.Width, _lavaSpeedMinusBounds.Height),
-            2,
-            Color.White);
-
-        DrawLavaSpeedButton(spriteBatch, pixel, _lavaSpeedMinusBounds, "-");
-        DrawLavaSpeedButton(spriteBatch, pixel, _lavaSpeedPlusBounds, "+");
+        SetLavaRiseSpeed(_level.Lava.RiseSpeed + delta);
     }
 
     private void DrawLavaSpeedButton(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, string label)
     {
+        DrawPropsStepButton(spriteBatch, pixel, bounds, label);
+    }
+
+    private void LayoutMotionPanel()
+    {
+        const int button = 26;
+        const int dirButton = 26;
+        const int check = 20;
+        const int fieldW = 84;
+        Rectangle panel = _propsPanelBounds;
+        int left = panel.X + 14;
+        int contentTop = panel.Y + 40;
+        _motionPanelBounds = new Rectangle(panel.X, contentTop, panel.Width, 220);
+
+        int y = contentTop + 20;
+        _motionVerticalCheckBounds = new Rectangle(left, y, check, check);
+        _motionVerticalDirABounds = new Rectangle(left + 118, y - 3, dirButton, button);
+        _motionVerticalDirBBounds = new Rectangle(left + 148, y - 3, dirButton, button);
+
+        y += 34;
+        int plusX = panel.Right - 14 - button;
+        int fieldX = plusX - 6 - fieldW;
+        int minusX = fieldX - 6 - button;
+        _motionVerticalSpeedMinusBounds = new Rectangle(minusX, y, button, button);
+        _vSpeedFieldBounds = new Rectangle(fieldX, y, fieldW, button);
+        _motionVerticalSpeedPlusBounds = new Rectangle(plusX, y, button, button);
+
+        y += 34;
+        _motionVerticalDistMinusBounds = new Rectangle(minusX, y, button, button);
+        _vDistFieldBounds = new Rectangle(fieldX, y, fieldW, button);
+        _motionVerticalDistPlusBounds = new Rectangle(plusX, y, button, button);
+
+        y += 42;
+        _motionHorizontalCheckBounds = new Rectangle(left, y, check, check);
+        _motionHorizontalDirABounds = new Rectangle(left + 118, y - 3, dirButton, button);
+        _motionHorizontalDirBBounds = new Rectangle(left + 148, y - 3, dirButton, button);
+
+        y += 34;
+        _motionHorizontalSpeedMinusBounds = new Rectangle(minusX, y, button, button);
+        _hSpeedFieldBounds = new Rectangle(fieldX, y, fieldW, button);
+        _motionHorizontalSpeedPlusBounds = new Rectangle(plusX, y, button, button);
+
+        y += 34;
+        _motionHorizontalDistMinusBounds = new Rectangle(minusX, y, button, button);
+        _hDistFieldBounds = new Rectangle(fieldX, y, fieldW, button);
+        _motionHorizontalDistPlusBounds = new Rectangle(plusX, y, button, button);
+    }
+
+    private bool TryHandleMotionPanelPress()
+    {
+        if (!ShowMotionPanel || !IsPrimaryPressed())
+        {
+            return false;
+        }
+
+        if (_motionVerticalCheckBounds.Contains(UiPointer)
+            || _motionHorizontalCheckBounds.Contains(UiPointer)
+            || _motionVerticalDirABounds.Contains(UiPointer)
+            || _motionVerticalDirBBounds.Contains(UiPointer)
+            || _motionHorizontalDirABounds.Contains(UiPointer)
+            || _motionHorizontalDirBBounds.Contains(UiPointer)
+            || _motionVerticalSpeedMinusBounds.Contains(UiPointer)
+            || _motionVerticalSpeedPlusBounds.Contains(UiPointer)
+            || _motionVerticalDistMinusBounds.Contains(UiPointer)
+            || _motionVerticalDistPlusBounds.Contains(UiPointer)
+            || _motionHorizontalSpeedMinusBounds.Contains(UiPointer)
+            || _motionHorizontalSpeedPlusBounds.Contains(UiPointer)
+            || _motionHorizontalDistMinusBounds.Contains(UiPointer)
+            || _motionHorizontalDistPlusBounds.Contains(UiPointer))
+        {
+            ClearPropsValueEdit(commit: true);
+        }
+
+        if (_motionVerticalCheckBounds.Contains(UiPointer))
+        {
+            ToggleSelectedMotionVertical();
+            return true;
+        }
+
+        if (_motionHorizontalCheckBounds.Contains(UiPointer))
+        {
+            ToggleSelectedMotionHorizontal();
+            return true;
+        }
+
+        if (_motionVerticalDirABounds.Contains(UiPointer))
+        {
+            SetSelectedVerticalDirection(PlatformVerticalDirection.Up);
+            return true;
+        }
+
+        if (_motionVerticalDirBBounds.Contains(UiPointer))
+        {
+            SetSelectedVerticalDirection(PlatformVerticalDirection.Down);
+            return true;
+        }
+
+        if (_motionHorizontalDirABounds.Contains(UiPointer))
+        {
+            SetSelectedHorizontalDirection(PlatformHorizontalDirection.Left);
+            return true;
+        }
+
+        if (_motionHorizontalDirBBounds.Contains(UiPointer))
+        {
+            SetSelectedHorizontalDirection(PlatformHorizontalDirection.Right);
+            return true;
+        }
+
+        if (_motionVerticalSpeedMinusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedVerticalSpeed(-Platform.SpeedStep);
+            return true;
+        }
+
+        if (_motionVerticalSpeedPlusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedVerticalSpeed(Platform.SpeedStep);
+            return true;
+        }
+
+        if (_motionVerticalDistMinusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedVerticalDistance(-1);
+            return true;
+        }
+
+        if (_motionVerticalDistPlusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedVerticalDistance(1);
+            return true;
+        }
+
+        if (_motionHorizontalSpeedMinusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedHorizontalSpeed(-Platform.SpeedStep);
+            return true;
+        }
+
+        if (_motionHorizontalSpeedPlusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedHorizontalSpeed(Platform.SpeedStep);
+            return true;
+        }
+
+        if (_motionHorizontalDistMinusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedHorizontalDistance(-1);
+            return true;
+        }
+
+        if (_motionHorizontalDistPlusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedHorizontalDistance(1);
+            return true;
+        }
+
+        return _motionPanelBounds.Contains(UiPointer);
+    }
+
+    private void LayoutColorCyclePanel()
+    {
+        const int button = 26;
+        const int check = 20;
+        const int swatch = 24;
+        const int fieldW = 84;
+        Rectangle panel = _propsPanelBounds;
+        int top = _motionHorizontalDistPlusBounds.Bottom + 18;
+        int left = panel.X + 14;
+        _colorCyclePanelBounds = new Rectangle(panel.X, top, panel.Width, Math.Max(80, panel.Bottom - top));
+
+        int rowY = top + 22;
+        _colorCycleCheckBounds = new Rectangle(left, rowY, check, check);
+        _colorCycleAddBounds = new Rectangle(panel.Right - 14 - button - 32, rowY - 3, button, button);
+        _colorCycleRemoveBounds = new Rectangle(panel.Right - 14 - button, rowY - 3, button, button);
+
+        int plusX = panel.Right - 14 - button;
+        int fieldX = plusX - 6 - fieldW;
+        int minusX = fieldX - 6 - button;
+        rowY += 34;
+        _colorCyclePeriodMinusBounds = new Rectangle(minusX, rowY, button, button);
+        _colorPeriodFieldBounds = new Rectangle(fieldX, rowY, fieldW, button);
+        _colorCyclePeriodPlusBounds = new Rectangle(plusX, rowY, button, button);
+
+        _colorCycleSwatchBounds.Clear();
+        int swatchY = rowY + 36;
+        int swatchX = left;
+        int swatchCount = Platform.MaxColorCycleLength;
+        if (_selectedPlatforms.Count > 0)
+        {
+            swatchCount = Math.Max(Platform.MinColorCycleLength, _selectedPlatforms[0].ColorCycle.Count);
+            swatchCount = Math.Min(swatchCount, Platform.MaxColorCycleLength);
+        }
+
+        for (int i = 0; i < swatchCount; i++)
+        {
+            _colorCycleSwatchBounds.Add(new Rectangle(swatchX + i * (swatch + 6), swatchY, swatch, swatch));
+        }
+    }
+
+    private void UpdatePlatformColorPreview(GameTime gameTime)
+    {
+        _editorElapsedSeconds += (float)gameTime.ElapsedGameTime.TotalSeconds;
+        foreach (Platform platform in _level.Platforms)
+        {
+            if (platform.HasColorChange)
+            {
+                platform.ApplyColorAtTime(_editorElapsedSeconds);
+            }
+            else if (platform.ColorCycle.Count > 0)
+            {
+                platform.PlatformColor = platform.ColorCycle[0];
+            }
+        }
+    }
+
+    private bool TryHandleColorCyclePanelPress()
+    {
+        if (!ShowColorCyclePanel || !IsPrimaryPressed())
+        {
+            return false;
+        }
+
+        if (_colorCycleCheckBounds.Contains(UiPointer))
+        {
+            ToggleSelectedColorChange();
+            return true;
+        }
+
+        if (_colorCyclePeriodMinusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedColorChangePeriod(-Platform.ColorChangePeriodStep);
+            return true;
+        }
+
+        if (_colorCyclePeriodPlusBounds.Contains(UiPointer))
+        {
+            AdjustSelectedColorChangePeriod(Platform.ColorChangePeriodStep);
+            return true;
+        }
+
+        if (_colorCycleAddBounds.Contains(UiPointer))
+        {
+            AddSelectedColorCycleStep();
+            return true;
+        }
+
+        if (_colorCycleRemoveBounds.Contains(UiPointer))
+        {
+            RemoveSelectedColorCycleStep();
+            return true;
+        }
+
+        for (int i = 0; i < _colorCycleSwatchBounds.Count; i++)
+        {
+            if (_colorCycleSwatchBounds[i].Contains(UiPointer))
+            {
+                _colorCycleSelectedStep = i;
+                return true;
+            }
+        }
+
+        return _colorCyclePanelBounds.Contains(UiPointer);
+    }
+
+    private void ToggleSelectedColorChange()
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        bool next = !_selectedPlatforms[0].ColorChangeEnabled;
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.SetColorChangeEnabled(next);
+        }
+
+        _colorCycleSelectedStep = 0;
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void AdjustSelectedColorChangePeriod(float delta)
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        float next = Platform.ClampColorChangePeriod(_selectedPlatforms[0].ColorChangePeriodSeconds + delta);
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.ColorChangePeriodSeconds = next;
+            if (!platform.ColorChangeEnabled)
+            {
+                platform.SetColorChangeEnabled(true);
+            }
+        }
+
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void AddSelectedColorCycleStep()
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            if (!platform.ColorChangeEnabled)
+            {
+                platform.SetColorChangeEnabled(true);
+            }
+
+            platform.EnsureColorCycleSeeded();
+            if (platform.ColorCycle.Count >= Platform.MaxColorCycleLength)
+            {
+                continue;
+            }
+
+            platform.ColorCycle.Add(Platform.NextDistinctCycleColor(platform.ColorCycle[^1]));
+        }
+
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void RemoveSelectedColorCycleStep()
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            if (platform.ColorCycle.Count <= Platform.MinColorCycleLength)
+            {
+                continue;
+            }
+
+            int removeIndex = Math.Clamp(_colorCycleSelectedStep, 0, platform.ColorCycle.Count - 1);
+            // Never remove authored start (index 0) via this control — drop last step instead when start selected.
+            if (removeIndex == 0)
+            {
+                platform.ColorCycle.RemoveAt(platform.ColorCycle.Count - 1);
+            }
+            else
+            {
+                platform.ColorCycle.RemoveAt(removeIndex);
+            }
+
+            platform.SetAuthoredStartColor(platform.ColorCycle[0]);
+        }
+
+        if (_selectedPlatforms[0].ColorCycle.Count > 0)
+        {
+            _colorCycleSelectedStep = Math.Clamp(_colorCycleSelectedStep, 0, _selectedPlatforms[0].ColorCycle.Count - 1);
+        }
+
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void DrawColorCyclePanelContent(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        if (!ShowColorCyclePanel)
+        {
+            return;
+        }
+
+        Platform sample = _selectedPlatforms[0];
+        DrawPropsSectionHeader(spriteBatch, pixel, "COLOR CYCLE", _colorCyclePanelBounds.Y);
+
+        DrawMotionCheckbox(spriteBatch, pixel, _colorCycleCheckBounds, sample.ColorChangeEnabled);
+        SimpleTextRenderer.DrawString(
+            spriteBatch,
+            pixel,
+            "ENABLED",
+            new Vector2(_colorCycleCheckBounds.Right + 8, _colorCycleCheckBounds.Y + 2),
+            1,
+            Color.White);
+        DrawPropsStepButton(spriteBatch, pixel, _colorCycleAddBounds, "+");
+        DrawPropsStepButton(spriteBatch, pixel, _colorCycleRemoveBounds, "-");
+
+        SimpleTextRenderer.DrawString(
+            spriteBatch,
+            pixel,
+            "STEP",
+            new Vector2(_propsPanelBounds.X + 14, _colorCyclePeriodMinusBounds.Y + 6),
+            1,
+            new Color(160, 180, 200));
+        DrawPropsStepButton(spriteBatch, pixel, _colorCyclePeriodMinusBounds, "-");
+        if (_activePropsField != PropsNumericField.ColorPeriod)
+        {
+            DrawPropsValueField(
+                spriteBatch,
+                pixel,
+                _colorPeriodFieldBounds,
+                $"{sample.ColorChangePeriodSeconds:0.##}",
+                _colorPeriodFieldBounds.Contains(UiPointer));
+        }
+
+        DrawPropsStepButton(spriteBatch, pixel, _colorCyclePeriodPlusBounds, "+");
+
+        for (int i = 0; i < _colorCycleSwatchBounds.Count; i++)
+        {
+            Rectangle swatch = _colorCycleSwatchBounds[i];
+            GameColor color = i < sample.ColorCycle.Count ? sample.ColorCycle[i] : GameColor.Red;
+            spriteBatch.Draw(pixel, swatch, color.ToXnaColor());
+            bool selected = i == _colorCycleSelectedStep;
+            DrawHelper.DrawBorder(
+                spriteBatch,
+                pixel,
+                swatch,
+                selected ? Color.White : new Color(90, 110, 140),
+                selected ? 2 : 1);
+            if (i == 0)
+            {
+                SimpleTextRenderer.DrawString(
+                    spriteBatch,
+                    pixel,
+                    "0",
+                    new Vector2(swatch.X + 6, swatch.Y + 6),
+                    1,
+                    Color.Black);
+            }
+        }
+    }
+
+    private void ToggleSelectedMotionVertical()
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        bool next = !_selectedPlatforms[0].MoveVertical;
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.SetMoveVertical(next);
+        }
+
+        _level.RecalculateWorldSize();
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void ToggleSelectedMotionHorizontal()
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        bool next = !_selectedPlatforms[0].MoveHorizontal;
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.SetMoveHorizontal(next);
+        }
+
+        _level.RecalculateWorldSize();
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void SetSelectedVerticalDirection(PlatformVerticalDirection direction)
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.VerticalDirection = direction;
+            if (!platform.MoveVertical)
+            {
+                platform.SetMoveVertical(true);
+            }
+        }
+
+        _level.RecalculateWorldSize();
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void SetSelectedHorizontalDirection(PlatformHorizontalDirection direction)
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.HorizontalDirection = direction;
+            if (!platform.MoveHorizontal)
+            {
+                platform.SetMoveHorizontal(true);
+            }
+        }
+
+        _level.RecalculateWorldSize();
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void AdjustSelectedVerticalSpeed(float delta)
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        float next = Platform.ClampSpeed(_selectedPlatforms[0].VerticalSpeed + delta);
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.VerticalSpeed = next;
+        }
+
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void AdjustSelectedHorizontalSpeed(float delta)
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        float next = Platform.ClampSpeed(_selectedPlatforms[0].HorizontalSpeed + delta);
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.HorizontalSpeed = next;
+        }
+
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void AdjustSelectedVerticalDistance(int delta)
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        int next = Platform.ClampDistanceBlocks(_selectedPlatforms[0].VerticalDistanceBlocks + delta);
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.VerticalDistanceBlocks = next;
+        }
+
+        _level.RecalculateWorldSize();
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void AdjustSelectedHorizontalDistance(int delta)
+    {
+        if (_selectedPlatforms.Count == 0)
+        {
+            return;
+        }
+
+        BeginHistoryGesture();
+        int next = Platform.ClampDistanceBlocks(_selectedPlatforms[0].HorizontalDistanceBlocks + delta);
+        foreach (Platform platform in _selectedPlatforms)
+        {
+            platform.HorizontalDistanceBlocks = next;
+        }
+
+        _level.RecalculateWorldSize();
+        _isDirty = true;
+        EndHistoryGesture();
+    }
+
+    private void DrawMotionPanelContent(SpriteBatch spriteBatch, Texture2D pixel)
+    {
+        if (!ShowMotionPanel)
+        {
+            return;
+        }
+
+        Platform sample = _selectedPlatforms[0];
+        DrawPropsSectionHeader(spriteBatch, pixel, "MOTION", _propsPanelBounds.Y + 40);
+
+        DrawMotionAxisBlock(
+            spriteBatch,
+            pixel,
+            "VERTICAL",
+            sample.MoveVertical,
+            sample.VerticalDirection == PlatformVerticalDirection.Up,
+            sample.VerticalDirection == PlatformVerticalDirection.Down,
+            "U",
+            "D",
+            $"{sample.VerticalSpeed:0}",
+            $"{sample.VerticalDistanceBlocks}",
+            _motionVerticalCheckBounds,
+            _motionVerticalDirABounds,
+            _motionVerticalDirBBounds,
+            _motionVerticalSpeedMinusBounds,
+            _vSpeedFieldBounds,
+            _motionVerticalSpeedPlusBounds,
+            _motionVerticalDistMinusBounds,
+            _vDistFieldBounds,
+            _motionVerticalDistPlusBounds,
+            PropsNumericField.VerticalSpeed,
+            PropsNumericField.VerticalDistance);
+
+        DrawMotionAxisBlock(
+            spriteBatch,
+            pixel,
+            "HORIZONTAL",
+            sample.MoveHorizontal,
+            sample.HorizontalDirection == PlatformHorizontalDirection.Left,
+            sample.HorizontalDirection == PlatformHorizontalDirection.Right,
+            "L",
+            "R",
+            $"{sample.HorizontalSpeed:0}",
+            $"{sample.HorizontalDistanceBlocks}",
+            _motionHorizontalCheckBounds,
+            _motionHorizontalDirABounds,
+            _motionHorizontalDirBBounds,
+            _motionHorizontalSpeedMinusBounds,
+            _hSpeedFieldBounds,
+            _motionHorizontalSpeedPlusBounds,
+            _motionHorizontalDistMinusBounds,
+            _hDistFieldBounds,
+            _motionHorizontalDistPlusBounds,
+            PropsNumericField.HorizontalSpeed,
+            PropsNumericField.HorizontalDistance);
+    }
+
+    private void DrawMotionAxisBlock(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        string label,
+        bool enabled,
+        bool dirASelected,
+        bool dirBSelected,
+        string dirALabel,
+        string dirBLabel,
+        string speedText,
+        string distanceText,
+        Rectangle checkBounds,
+        Rectangle dirABounds,
+        Rectangle dirBBounds,
+        Rectangle speedMinus,
+        Rectangle speedField,
+        Rectangle speedPlus,
+        Rectangle distMinus,
+        Rectangle distField,
+        Rectangle distPlus,
+        PropsNumericField speedFieldId,
+        PropsNumericField distFieldId)
+    {
+        DrawMotionCheckbox(spriteBatch, pixel, checkBounds, enabled);
+        SimpleTextRenderer.DrawString(
+            spriteBatch,
+            pixel,
+            label,
+            new Vector2(checkBounds.Right + 8, checkBounds.Y + 2),
+            1,
+            Color.White);
+        DrawMotionDirButton(spriteBatch, pixel, dirABounds, dirALabel, dirASelected);
+        DrawMotionDirButton(spriteBatch, pixel, dirBBounds, dirBLabel, dirBSelected);
+
+        SimpleTextRenderer.DrawString(
+            spriteBatch,
+            pixel,
+            "SPD",
+            new Vector2(_propsPanelBounds.X + 14, speedMinus.Y + 6),
+            1,
+            new Color(160, 180, 200));
+        DrawPropsStepButton(spriteBatch, pixel, speedMinus, "-");
+        if (_activePropsField != speedFieldId)
+        {
+            DrawPropsValueField(spriteBatch, pixel, speedField, speedText, speedField.Contains(UiPointer));
+        }
+
+        DrawPropsStepButton(spriteBatch, pixel, speedPlus, "+");
+
+        SimpleTextRenderer.DrawString(
+            spriteBatch,
+            pixel,
+            "DIST",
+            new Vector2(_propsPanelBounds.X + 14, distMinus.Y + 6),
+            1,
+            new Color(160, 180, 200));
+        DrawPropsStepButton(spriteBatch, pixel, distMinus, "-");
+        if (_activePropsField != distFieldId)
+        {
+            DrawPropsValueField(spriteBatch, pixel, distField, distanceText, distField.Contains(UiPointer));
+        }
+
+        DrawPropsStepButton(spriteBatch, pixel, distPlus, "+");
+    }
+
+    private void DrawMotionDirButton(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, string label, bool selected)
+    {
         bool hovered = bounds.Contains(UiPointer);
-        spriteBatch.Draw(pixel, bounds, hovered ? new Color(72, 40, 22) : new Color(48, 28, 18));
-        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, hovered ? new Color(255, 180, 70) : new Color(210, 120, 50), 2);
-        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, label, bounds, 3, Color.White);
+        Color fill = selected
+            ? new Color(40, 90, 130)
+            : hovered ? new Color(50, 70, 100) : new Color(30, 40, 55);
+        Color border = selected
+            ? new Color(160, 220, 255)
+            : hovered ? new Color(160, 210, 255) : new Color(100, 140, 190);
+        spriteBatch.Draw(pixel, bounds, fill);
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, border, 2);
+        SimpleTextRenderer.DrawCentered(spriteBatch, pixel, label, bounds, 2, Color.White);
+    }
+
+    private void DrawMotionCheckbox(SpriteBatch spriteBatch, Texture2D pixel, Rectangle bounds, bool checkedState)
+    {
+        bool hovered = bounds.Contains(UiPointer);
+        spriteBatch.Draw(pixel, bounds, hovered ? new Color(50, 70, 100) : new Color(30, 40, 55));
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, hovered ? new Color(160, 210, 255) : new Color(100, 140, 190), 2);
+        if (checkedState)
+        {
+            Rectangle fill = new(bounds.X + 5, bounds.Y + 5, bounds.Width - 10, bounds.Height - 10);
+            spriteBatch.Draw(pixel, fill, new Color(120, 200, 255));
+        }
+    }
+
+    private void DrawMotionPathPreview(SpriteBatch spriteBatch, Texture2D pixel, Platform platform)
+    {
+        if (!platform.MoveHorizontal && !platform.MoveVertical)
+        {
+            return;
+        }
+
+        Point end = platform.GetMotionEndLocation();
+        Rectangle endBounds = new(end.X, end.Y, platform.Bounds.Width, platform.Bounds.Height);
+        spriteBatch.Draw(pixel, endBounds, new Color(120, 180, 255) * 0.35f);
+        DrawHelper.DrawBorder(spriteBatch, pixel, endBounds, new Color(120, 180, 255), GetWorldLineThickness(1));
     }
 
     private static Rectangle BuildRectangle(Point start, Point end)
@@ -2317,6 +3350,14 @@ public sealed class EditorScene : IScene
                     DrawHelper.DrawBorder(spriteBatch, pixel, preview.Bounds, new Color(255, 220, 80) * 0.8f, GetWorldLineThickness(2));
                     break;
                 }
+            case EditorObjectKind.PowerUp:
+                {
+                    Rectangle previewBounds = new(position.X, position.Y, PowerUp.DefaultWidth, PowerUp.DefaultHeight);
+                    PowerUp preview = new(previewBounds);
+                    preview.Draw(spriteBatch, pixel, debugDraw: false, animationSeconds: 0.35f, alpha: 0.55f, isEditorMode: true);
+                    DrawHelper.DrawBorder(spriteBatch, pixel, preview.Bounds, new Color(255, 220, 80) * 0.8f, GetWorldLineThickness(2));
+                    break;
+                }
             case EditorObjectKind.PlayerSpawn:
                 DrawPlayerSpawnMarker(spriteBatch, pixel, new Vector2(position.X, position.Y), _level.PlayerStartColor, 0.55f);
                 break;
@@ -2382,6 +3423,9 @@ public sealed class EditorScene : IScene
         DrawToolbarSlot(spriteBatch, pixel, _launchPadSlotBounds, _launchPadSlotHovered, _toolbarDragKind == EditorObjectKind.LaunchPad, "LAUNCH",
             (sb, px, bounds) => LaunchPad.DrawIcon(sb, px, bounds));
 
+        DrawToolbarSlot(spriteBatch, pixel, _powerUpSlotBounds, _powerUpSlotHovered, _toolbarDragKind == EditorObjectKind.PowerUp, "BUFF",
+            (sb, px, bounds) => PowerUp.DrawIcon(sb, px, bounds));
+
         DrawToolbarSlot(spriteBatch, pixel, _playerSpawnSlotBounds, _playerSpawnSlotHovered, _toolbarDragKind == EditorObjectKind.PlayerSpawn, "SPAWN",
             (sb, px, bounds) => sb.Draw(pixel, bounds, Color.Red));
     }
@@ -2426,7 +3470,7 @@ public sealed class EditorScene : IScene
         int padding = Math.Clamp(slotSize / 4, 10, 18);
         int slotGap = Math.Clamp(slotSize / 8, 4, 8);
         int bottomMargin = Math.Max(8, (int)(viewport.Height * 0.025f));
-        int totalWidth = (padding * 2) + (slotSize * 4) + (slotGap * 3);
+        int totalWidth = (padding * 2) + (slotSize * 5) + (slotGap * 4);
         int panelHeight = (padding * 2) + slotSize;
 
         _toolbarPanelBounds = new Rectangle(
@@ -2453,8 +3497,14 @@ public sealed class EditorScene : IScene
             slotSize,
             slotSize);
 
-        _playerSpawnSlotBounds = new Rectangle(
+        _powerUpSlotBounds = new Rectangle(
             _launchPadSlotBounds.Right + slotGap,
+            _toolbarPanelBounds.Top + padding,
+            slotSize,
+            slotSize);
+
+        _playerSpawnSlotBounds = new Rectangle(
+            _powerUpSlotBounds.Right + slotGap,
             _toolbarPanelBounds.Top + padding,
             slotSize,
             slotSize);
@@ -2462,6 +3512,7 @@ public sealed class EditorScene : IScene
         _goalSlotHovered = _goalSlotBounds.Contains(UiPointer);
         _checkpointSlotHovered = _checkpointSlotBounds.Contains(UiPointer);
         _launchPadSlotHovered = _launchPadSlotBounds.Contains(UiPointer);
+        _powerUpSlotHovered = _powerUpSlotBounds.Contains(UiPointer);
         _playerSpawnSlotHovered = _playerSpawnSlotBounds.Contains(UiPointer);
 
         // Update hovered toolbar kind
@@ -2476,6 +3527,10 @@ public sealed class EditorScene : IScene
         else if (_launchPadSlotHovered)
         {
             _hoveredToolbarKind = EditorObjectKind.LaunchPad;
+        }
+        else if (_powerUpSlotHovered)
+        {
+            _hoveredToolbarKind = EditorObjectKind.PowerUp;
         }
         else if (_playerSpawnSlotHovered)
         {
@@ -2651,6 +3706,7 @@ public sealed class EditorScene : IScene
         _hoveredGoal = null;
         _hoveredCheckpoint = null;
         _hoveredLaunchPad = null;
+        _hoveredPowerUp = null;
         _isDirty = true;
     }
 
@@ -2664,6 +3720,7 @@ public sealed class EditorScene : IScene
         _isDraggingGoal = false;
         _isDraggingCheckpoint = false;
         _isDraggingLaunchPad = false;
+        _isDraggingPowerUp = false;
         _isDraggingPlayerSpawn = false;
         _isDraggingLavaLine = false;
         _isResizing = false;

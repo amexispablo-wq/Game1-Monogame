@@ -14,14 +14,19 @@ public sealed class Player : INetworkEntity
     private const float MotionTrailSpacing = 7f;
     private const float MotionTrailLifetimeSeconds = 0.4f;
     private const float MotionTrailMaxAlpha = 0.42f;
+    private const float AirSpinRadiansPerSecond = MathF.Tau;
+    private const float AirSpinVelocityDeadzone = 8f;
+    private const float JumpBufferSeconds = 0.1f;
 
     private bool _justLaunched;
     private float _launchControlRemaining;
+    private float _jumpBufferRemaining;
     private float _debugEscapeVectorTimeRemaining;
     private Vector2 _debugEscapeVectorStart;
     private Vector2 _debugEscapeVector;
     private Vector2 _forceAccumulator;
     private Platform _ejectionPlatform;
+    private readonly List<Platform> _ejectionPlatforms = new();
     private Player _ejectionPlayer;
     private Player _playerEjectionMustClear;
     private Vector2 _ejectionBaseDirection;
@@ -37,6 +42,7 @@ public sealed class Player : INetworkEntity
     private readonly List<MotionTrailPoint> _motionTrail = new(MaxMotionTrailPoints);
     private Vector2 _lastTrailSampleCenter;
     private bool _trailSampleInitialized;
+    private float _airSpinSign = 1f;
 
     private struct MotionTrailPoint
     {
@@ -78,6 +84,7 @@ public sealed class Player : INetworkEntity
     public Vector2 Velocity { get; set; }
     public Vector2 Acceleration { get; private set; }
     public Vector2 Size { get; } = new(40f, 40f);
+    public float VisualRotation { get; private set; }
     public GameColor CurrentColor { get; private set; }
     public GameColor PlayerColor => CurrentColor;
     private PlayerSkinData? _cosmeticSkin;
@@ -107,6 +114,12 @@ public sealed class Player : INetworkEntity
     public float MaxHorizontalVelocity { get; set; } = 760f;
     public float MaxVerticalVelocity { get; set; } = 1150f;
     public float JumpImpulse { get; set; } = 560f;
+    public float SpeedBuffRemaining { get; private set; }
+    public float SpeedBuffMultiplier { get; private set; } = 1f;
+    public float JumpBuffRemaining { get; private set; }
+    public float JumpBuffMultiplier { get; private set; } = 1f;
+    public bool HasSpeedBuff => SpeedBuffRemaining > 0f;
+    public bool HasJumpBuff => JumpBuffRemaining > 0f;
     public float LaunchControlSeconds { get; set; } = 0.24f;
     public float LaunchControlAcceleration { get; set; } = 650f;
     public float EjectionAcceleration { get; set; } = 4400f;
@@ -150,7 +163,12 @@ public sealed class Player : INetworkEntity
             IsGrounded,
             IsFrozen,
             _cosmeticSkinId,
-            PlayerSkinCodec.Pack(_cosmeticSkin));
+            PlayerSkinCodec.Pack(_cosmeticSkin),
+            VisualRotation,
+            SpeedBuffRemaining,
+            SpeedBuffMultiplier,
+            JumpBuffRemaining,
+            JumpBuffMultiplier);
     }
 
     public void ApplySnapshot(PlayerSnapshot snapshot)
@@ -168,7 +186,14 @@ public sealed class Player : INetworkEntity
         State = snapshot.State;
         IsGrounded = snapshot.IsGrounded;
         IsFrozen = snapshot.IsFrozen;
+        VisualRotation = snapshot.VisualRotation;
+        ApplyBuffState(
+            snapshot.SpeedBuffRemaining,
+            snapshot.SpeedBuffMultiplier,
+            snapshot.JumpBuffRemaining,
+            snapshot.JumpBuffMultiplier);
         _forceAccumulator = Vector2.Zero;
+        _jumpBufferRemaining = 0f;
         ApplyCosmeticSkinFromSnapshot(snapshot);
     }
 
@@ -239,6 +264,9 @@ public sealed class Player : INetworkEntity
         _debugEscapeVector = Vector2.Zero;
         ClearTransientMotionState();
         ClearMotionTrail();
+        ClearBuffs();
+        VisualRotation = 0f;
+        _airSpinSign = 1f;
     }
 
     public void LaunchFromPad(Vector2 launchVelocity)
@@ -270,6 +298,89 @@ public sealed class Player : INetworkEntity
         RespawnAt(position);
     }
 
+    public void CollectPowerUp(PowerUpType type, float durationSeconds, float multiplier)
+    {
+        float duration = PowerUp.ClampDuration(durationSeconds);
+        float mul = PowerUp.ClampMultiplier(multiplier);
+        switch (type)
+        {
+            case PowerUpType.Speed:
+                SpeedBuffRemaining = duration;
+                SpeedBuffMultiplier = mul;
+                break;
+            case PowerUpType.Jump:
+                JumpBuffRemaining = duration;
+                JumpBuffMultiplier = mul;
+                break;
+        }
+    }
+
+    public void TickBuffs(float dt)
+    {
+        if (dt <= 0f)
+        {
+            return;
+        }
+
+        if (SpeedBuffRemaining > 0f)
+        {
+            SpeedBuffRemaining = MathF.Max(0f, SpeedBuffRemaining - dt);
+            if (SpeedBuffRemaining <= 0f)
+            {
+                SpeedBuffMultiplier = 1f;
+            }
+        }
+
+        if (JumpBuffRemaining > 0f)
+        {
+            JumpBuffRemaining = MathF.Max(0f, JumpBuffRemaining - dt);
+            if (JumpBuffRemaining <= 0f)
+            {
+                JumpBuffMultiplier = 1f;
+            }
+        }
+    }
+
+    public void ApplyBuffMultipliers()
+    {
+        if (HasSpeedBuff)
+        {
+            float mul = SpeedBuffMultiplier;
+            MaxMoveSpeed *= mul;
+            GroundAcceleration *= mul;
+            AirAcceleration *= mul;
+        }
+
+        if (HasJumpBuff)
+        {
+            JumpImpulse *= JumpBuffMultiplier;
+        }
+    }
+
+    public void ClearBuffs()
+    {
+        SpeedBuffRemaining = 0f;
+        SpeedBuffMultiplier = 1f;
+        JumpBuffRemaining = 0f;
+        JumpBuffMultiplier = 1f;
+    }
+
+    public void ApplyBuffState(
+        float speedRemaining,
+        float speedMultiplier,
+        float jumpRemaining,
+        float jumpMultiplier)
+    {
+        SpeedBuffRemaining = MathF.Max(0f, speedRemaining);
+        SpeedBuffMultiplier = SpeedBuffRemaining > 0f
+            ? PowerUp.ClampMultiplier(speedMultiplier)
+            : 1f;
+        JumpBuffRemaining = MathF.Max(0f, jumpRemaining);
+        JumpBuffMultiplier = JumpBuffRemaining > 0f
+            ? PowerUp.ClampMultiplier(jumpMultiplier)
+            : 1f;
+    }
+
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, bool drawIndicator = true)
     {
         Rectangle bounds = Bounds;
@@ -277,7 +388,13 @@ public sealed class Player : INetworkEntity
         DrawEjectionFeedback(spriteBatch, pixel, bounds);
 
         Rectangle bodyBounds = GetVisualBodyBounds(bounds);
-        PlayerSkinRenderer.DrawBody(spriteBatch, pixel, bodyBounds, CurrentColor.ToXnaColor(), _cosmeticSkin);
+        PlayerSkinRenderer.DrawBody(
+            spriteBatch,
+            pixel,
+            bodyBounds,
+            CurrentColor.ToXnaColor(),
+            _cosmeticSkin,
+            VisualRotation);
 
         if (drawIndicator)
         {
@@ -297,6 +414,7 @@ public sealed class Player : INetworkEntity
     {
         LastCollisionNormal = Vector2.Zero;
         LastCollisionCorrection = Vector2.Zero;
+        _jumpBufferRemaining = MathF.Max(0f, _jumpBufferRemaining - dt);
         UpdateEjectionState(dt);
         UpdateLaunchState(dt);
         UpdateDebugEscapeVector(dt);
@@ -363,12 +481,19 @@ public sealed class Player : INetworkEntity
 
     internal void ApplyJumpImpulse(PlayerInputState input)
     {
-        if (!input.JumpPressed || !IsGrounded)
+        if (input.JumpPressed)
+        {
+            _jumpBufferRemaining = JumpBufferSeconds;
+        }
+
+        if (_jumpBufferRemaining <= 0f || !IsGrounded)
         {
             return;
         }
 
-        AddImpulse(new Vector2(0f, -JumpImpulse * Mass));
+        // Set upward speed — do not add onto fall velocity (landing-frame jump would stay downward).
+        Velocity = new Vector2(Velocity.X, -JumpImpulse);
+        _jumpBufferRemaining = 0f;
         IsGrounded = false;
         GameAudio.Play(SfxManager.Jump);
         DiagnosticsLog.Info("Sim", $"APPLY Jump netId={NetworkId}");
@@ -386,7 +511,8 @@ public sealed class Player : INetworkEntity
 
     internal void ApplyEjectionForces()
     {
-        if (State != PlayerState.Ejecting || (_ejectionPlatform == null && _ejectionPlayer == null))
+        if (State != PlayerState.Ejecting
+            || (_ejectionPlatforms.Count == 0 && _ejectionPlayer == null))
         {
             _ejectionForce = 0f;
             return;
@@ -580,6 +706,52 @@ public sealed class Player : INetworkEntity
         }
     }
 
+    internal void UpdateVisualSpin(float dt)
+    {
+        if (IsFrozen || dt <= 0f)
+        {
+            return;
+        }
+
+        if (!IsGrounded)
+        {
+            float vx = Velocity.X;
+            if (MathF.Abs(vx) > AirSpinVelocityDeadzone)
+            {
+                _airSpinSign = MathF.Sign(vx);
+            }
+
+            // Positive rotation is clockwise in MonoGame (Y-down). Right (+Vx) → clockwise.
+            VisualRotation += _airSpinSign * AirSpinRadiansPerSecond * dt;
+            return;
+        }
+
+        // Grounded: keep spinning same way until flat on a face (0/90/180/270…).
+        const float quarter = MathF.PI * 0.5f;
+        float quarters = VisualRotation / quarter;
+        float nearest = MathF.Round(quarters);
+        if (MathF.Abs(quarters - nearest) < 0.0001f)
+        {
+            VisualRotation = nearest * quarter;
+            return;
+        }
+
+        float targetQuarters = _airSpinSign >= 0f
+            ? MathF.Ceiling(quarters)
+            : MathF.Floor(quarters);
+        float target = targetQuarters * quarter;
+        float remaining = target - VisualRotation;
+        float step = AirSpinRadiansPerSecond * dt;
+        if (MathF.Abs(remaining) <= step)
+        {
+            VisualRotation = target;
+        }
+        else
+        {
+            VisualRotation += MathF.Sign(remaining) * step;
+        }
+    }
+
     private void ApplyHorizontalDrag(float drag)
     {
         if (MathF.Abs(Velocity.X) <= 0.01f)
@@ -632,7 +804,20 @@ public sealed class Player : INetworkEntity
 
     internal bool IsEjectingFrom(Platform platform)
     {
-        return State == PlayerState.Ejecting && ReferenceEquals(platform, _ejectionPlatform);
+        if (State != PlayerState.Ejecting || platform is null)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < _ejectionPlatforms.Count; i++)
+        {
+            if (ReferenceEquals(_ejectionPlatforms[i], platform))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     internal bool IsEjectingFrom(Player otherPlayer)
@@ -662,7 +847,7 @@ public sealed class Player : INetworkEntity
         if (!TryFindBestEjectionCandidate(
             level,
             allPlayers,
-            out Platform platform,
+            out List<Platform> platformCluster,
             out Player player,
             out Vector2 direction,
             out Vector2 targetCenter,
@@ -672,9 +857,9 @@ public sealed class Player : INetworkEntity
             return;
         }
 
-        if (platform != null)
+        if (platformCluster is { Count: > 0 })
         {
-            StartEjectionFromPlatform(platform, direction, targetCenter, penetrationDepth, centerInfluence);
+            StartEjectionFromPlatformCluster(platformCluster, direction, targetCenter, penetrationDepth, centerInfluence);
             return;
         }
 
@@ -684,14 +869,14 @@ public sealed class Player : INetworkEntity
     private bool TryFindBestEjectionCandidate(
         Level level,
         IReadOnlyList<Player> allPlayers,
-        out Platform bestPlatform,
+        out List<Platform> bestCluster,
         out Player bestPlayer,
         out Vector2 bestDirection,
         out Vector2 bestTargetCenter,
         out float bestPenetrationDepth,
         out float bestCenterInfluence)
     {
-        bestPlatform = null;
+        bestCluster = null;
         bestPlayer = null;
         bestDirection = Vector2.Zero;
         bestTargetCenter = Vector2.Zero;
@@ -701,13 +886,34 @@ public sealed class Player : INetworkEntity
         float bestScore = float.MinValue;
         Vector2 fallbackDirection = GetFallbackEjectionDirection();
 
+        List<Platform> collidable = new();
         foreach (Platform platform in level.GetCollidablePlatforms(CurrentColor))
         {
+            collidable.Add(platform);
+        }
+
+        HashSet<Platform> claimed = new();
+        foreach (Platform seed in collidable)
+        {
+            if (claimed.Contains(seed))
+            {
+                continue;
+            }
+
+            if (!CollisionHelper.Intersects(Position, Size, seed.Bounds))
+            {
+                continue;
+            }
+
+            List<Platform> cluster = BuildConnectedPlatformCluster(seed, collidable, claimed);
+            Rectangle unionBounds = UnionPlatformBounds(cluster);
+            Vector2 unionCenter = GetRectangleCenter(unionBounds);
+
             if (!TryCalculateEjectionInfo(
-                platform.Bounds,
-                GetPlatformCenter(platform),
+                unionBounds,
+                unionCenter,
                 fallbackDirection,
-                blendAxes: true,
+                blendAxes: false,
                 out Vector2 direction,
                 out Vector2 targetCenter,
                 out float penetrationDepth,
@@ -722,7 +928,7 @@ public sealed class Player : INetworkEntity
                 continue;
             }
 
-            bestPlatform = platform;
+            bestCluster = cluster;
             bestPlayer = null;
             bestDirection = direction;
             bestTargetCenter = targetCenter;
@@ -766,7 +972,7 @@ public sealed class Player : INetworkEntity
                     continue;
                 }
 
-                bestPlatform = null;
+                bestCluster = null;
                 bestPlayer = other;
                 bestDirection = direction;
                 bestTargetCenter = targetCenter;
@@ -776,7 +982,59 @@ public sealed class Player : INetworkEntity
             }
         }
 
-        return bestPlatform != null || bestPlayer != null;
+        return bestCluster is { Count: > 0 } || bestPlayer is not null;
+    }
+
+    private static List<Platform> BuildConnectedPlatformCluster(
+        Platform seed,
+        List<Platform> collidable,
+        HashSet<Platform> claimed)
+    {
+        List<Platform> cluster = new();
+        Queue<Platform> queue = new();
+        queue.Enqueue(seed);
+        claimed.Add(seed);
+
+        while (queue.Count > 0)
+        {
+            Platform current = queue.Dequeue();
+            cluster.Add(current);
+
+            for (int i = 0; i < collidable.Count; i++)
+            {
+                Platform other = collidable[i];
+                if (claimed.Contains(other))
+                {
+                    continue;
+                }
+
+                if (!current.Bounds.Intersects(other.Bounds))
+                {
+                    continue;
+                }
+
+                claimed.Add(other);
+                queue.Enqueue(other);
+            }
+        }
+
+        return cluster;
+    }
+
+    private static Rectangle UnionPlatformBounds(IReadOnlyList<Platform> cluster)
+    {
+        Rectangle union = cluster[0].Bounds;
+        for (int i = 1; i < cluster.Count; i++)
+        {
+            union = Rectangle.Union(union, cluster[i].Bounds);
+        }
+
+        return union;
+    }
+
+    private static Vector2 GetRectangleCenter(Rectangle bounds)
+    {
+        return new Vector2(bounds.Left + (bounds.Width * 0.5f), bounds.Top + (bounds.Height * 0.5f));
     }
 
     private Vector2 GetMutualPlayerEjectionDirection(Player other)
@@ -861,15 +1119,17 @@ public sealed class Player : INetworkEntity
         return true;
     }
 
-    private void StartEjectionFromPlatform(
-        Platform platform,
+    private void StartEjectionFromPlatformCluster(
+        List<Platform> cluster,
         Vector2 direction,
         Vector2 platformCenter,
         float penetrationDepth,
         float centerInfluence)
     {
         State = PlayerState.Ejecting;
-        _ejectionPlatform = platform;
+        _ejectionPlatforms.Clear();
+        _ejectionPlatforms.AddRange(cluster);
+        _ejectionPlatform = cluster[0];
         _ejectionPlayer = null;
         InitializeEjectionState(direction, platformCenter, penetrationDepth, centerInfluence);
     }
@@ -882,6 +1142,7 @@ public sealed class Player : INetworkEntity
         float centerInfluence)
     {
         State = PlayerState.Ejecting;
+        _ejectionPlatforms.Clear();
         _ejectionPlatform = null;
         _ejectionPlayer = player;
         InitializeEjectionState(direction, playerCenter, penetrationDepth, centerInfluence);
@@ -946,8 +1207,8 @@ public sealed class Player : INetworkEntity
         Vector2 fallbackDirection = _ejectionBaseDirection == Vector2.Zero
             ? GetFallbackEjectionDirection()
             : _ejectionBaseDirection;
-        Vector2 liveTargetCenter = _ejectionPlatform is not null
-            ? GetPlatformCenter(_ejectionPlatform)
+        Vector2 liveTargetCenter = _ejectionPlatforms.Count > 0
+            ? GetRectangleCenter(GetEjectionTargetBounds())
             : _ejectionPlayer is not null
                 ? GetPlayerCenter(_ejectionPlayer)
                 : _ejectionPlatformCenter;
@@ -956,7 +1217,7 @@ public sealed class Player : INetworkEntity
             GetEjectionTargetBounds(),
             liveTargetCenter,
             fallbackDirection,
-            blendAxes: _ejectionPlatform is not null,
+            blendAxes: false,
             out Vector2 direction,
             out Vector2 targetCenter,
             out float penetrationDepth,
@@ -965,14 +1226,13 @@ public sealed class Player : INetworkEntity
             return false;
         }
 
-        // Player-vs-player: keep initial nearest escape so mid-overlap center cross cannot reverse both.
-        if (_ejectionPlayer is not null && _ejectionBaseDirection != Vector2.Zero)
+        // Lock initial nearest escape so mid-overlap path cannot reverse (platforms + players).
+        if (_ejectionBaseDirection != Vector2.Zero)
         {
             direction = _ejectionBaseDirection;
         }
         else
         {
-            // Platforms: track nearest exits live (top→bottom flip, side swap, corner blend).
             _ejectionBaseDirection = direction;
         }
 
@@ -1021,21 +1281,53 @@ public sealed class Player : INetworkEntity
 
     private Rectangle GetEjectionTargetBounds()
     {
-        if (_ejectionPlatform != null)
+        if (_ejectionPlatforms.Count > 0)
         {
-            return _ejectionPlatform.Bounds;
+            Rectangle? union = null;
+            for (int i = 0; i < _ejectionPlatforms.Count; i++)
+            {
+                Platform platform = _ejectionPlatforms[i];
+                if (!IsEjectionPlatformStillCollidable(platform))
+                {
+                    continue;
+                }
+
+                union = union is null
+                    ? platform.Bounds
+                    : Rectangle.Union(union.Value, platform.Bounds);
+            }
+
+            return union ?? Rectangle.Empty;
         }
 
         return _ejectionPlayer?.Bounds ?? Rectangle.Empty;
     }
 
+    private bool IsEjectionPlatformStillCollidable(Platform platform)
+    {
+        return platform.PlatformColor == CurrentColor
+            || platform.PlatformColor == GameColor.White;
+    }
+
     private bool IsEjectionTargetStillSolidAndOverlapping()
     {
-        if (_ejectionPlatform != null)
+        if (_ejectionPlatforms.Count > 0)
         {
-            return (_ejectionPlatform.PlatformColor == CurrentColor
-                    || _ejectionPlatform.PlatformColor == GameColor.White)
-                && CollisionHelper.Intersects(Position, Size, _ejectionPlatform.Bounds);
+            for (int i = 0; i < _ejectionPlatforms.Count; i++)
+            {
+                Platform platform = _ejectionPlatforms[i];
+                if (!IsEjectionPlatformStillCollidable(platform))
+                {
+                    continue;
+                }
+
+                if (CollisionHelper.Intersects(Position, Size, platform.Bounds))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         if (_ejectionPlayer != null)
@@ -1058,6 +1350,7 @@ public sealed class Player : INetworkEntity
         Player clearedPlayer = _ejectionPlayer;
         State = PlayerState.Normal;
         _ejectionPlatform = null;
+        _ejectionPlatforms.Clear();
         _ejectionPlayer = null;
         if (clearedPlayer is not null)
         {
@@ -1094,6 +1387,7 @@ public sealed class Player : INetworkEntity
         bool wasEjecting = State == PlayerState.Ejecting;
         State = PlayerState.Normal;
         _ejectionPlatform = null;
+        _ejectionPlatforms.Clear();
         _ejectionPlayer = null;
         _playerEjectionMustClear = null;
         _ejectionBaseDirection = Vector2.Zero;
@@ -1107,6 +1401,7 @@ public sealed class Player : INetworkEntity
         _ejectionPeakRaised = false;
         _justLaunched = false;
         _launchControlRemaining = 0f;
+        _jumpBufferRemaining = 0f;
         if (wasEjecting)
         {
             GameAudio.EndPhysicsExpulsion();
