@@ -30,3 +30,7 @@ developer_settings.json
 
 # Generated on every build by GenerateBuildInfo target
 Content/version.json
+
+# Local ffmpeg conversion backups (source music must be real Ogg Vorbis)
+Content/Audio/**/_mp3_backup/
+Content/Audio/_mp3_backup/

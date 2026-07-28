@@ -88,14 +88,39 @@ internal static class ContentResolver
         {
             // Unique name per relative path — same filename in folder vs root must not collide.
             string name = StripExtension(relativePath).Replace('/', '_').Replace(' ', '_');
-            var uri = new Uri(Path.GetFullPath(fullPath), UriKind.Absolute);
+            string absolute = Path.GetFullPath(fullPath);
+
+            // Song.FromUri passes uri.OriginalString into OggStream/NVorbis.
+            // Absolute System.Uri becomes "file:///C:/..." which NVorbis cannot open.
+            // Always use a path relative to BaseDirectory (cwd pinned in Program.cs).
+            Uri uri = BuildSongUri(absolute);
             return Song.FromUri(name, uri);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Song file unavailable '{fullPath}': {ex.Message}");
+            DiagnosticsLog.Info("Music", $"Song.FromUri failed '{fullPath}': {ex.Message}");
             return null;
         }
+    }
+
+    private static Uri BuildSongUri(string absolutePath)
+    {
+        string baseDir = Path.GetFullPath(AppContext.BaseDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string full = Path.GetFullPath(absolutePath);
+
+        string relative = Path.GetRelativePath(baseDir, full).Replace('\\', '/');
+        if (relative.StartsWith("..", StringComparison.Ordinal)
+            || Path.IsPathRooted(relative))
+        {
+            // Last resort: 8.3 path still becomes file:// via Absolute Uri — prefer copying
+            // is out of scope; content must live under the install folder.
+            throw new InvalidOperationException(
+                $"Song path outside BaseDirectory: '{full}' (base='{baseDir}')");
+        }
+
+        return new Uri(relative, UriKind.Relative);
     }
 
     private static SoundEffect? TryLoadSoundEffectFromFile(string relativePath)

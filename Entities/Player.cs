@@ -913,7 +913,7 @@ public sealed class Player : INetworkEntity
                 unionBounds,
                 unionCenter,
                 fallbackDirection,
-                blendAxes: false,
+                usePlatformRadial: true,
                 out Vector2 direction,
                 out Vector2 targetCenter,
                 out float penetrationDepth,
@@ -955,7 +955,7 @@ public sealed class Player : INetworkEntity
                     other.Bounds,
                     GetPlayerCenter(other),
                     fallbackDirection,
-                    blendAxes: false,
+                    usePlatformRadial: false,
                     out Vector2 direction,
                     out Vector2 targetCenter,
                     out float penetrationDepth,
@@ -1052,7 +1052,7 @@ public sealed class Player : INetworkEntity
         }
 
         // Nearest escape = MTV (cardinal). Keep single-axis for stable player split.
-        if (TryGetNearestEscapeDirection(other.Bounds, selfCenter, otherCenter, blendAxes: false, out Vector2 nearest))
+        if (TryGetNearestEscapeDirection(other.Bounds, selfCenter, otherCenter, out Vector2 nearest))
         {
             return nearest;
         }
@@ -1060,11 +1060,34 @@ public sealed class Player : INetworkEntity
         return NormalizeOrFallback(delta, GetFallbackEjectionDirection());
     }
 
+    /// <summary>
+    /// Platform eject: radial from obstacle center so small offsets become diagonal force.
+    /// Exact center falls back to MTV cardinal.
+    /// </summary>
+    private Vector2 GetPlatformEjectionDirection(
+        Rectangle obstacle,
+        Vector2 playerCenter,
+        Vector2 obstacleCenter,
+        Vector2 fallbackDirection)
+    {
+        Vector2 centerDelta = playerCenter - obstacleCenter;
+        if (centerDelta.LengthSquared() > MinimumEjectionFallbackLengthSquared)
+        {
+            return Vector2.Normalize(centerDelta);
+        }
+
+        if (TryGetNearestEscapeDirection(obstacle, playerCenter, obstacleCenter, out Vector2 nearest))
+        {
+            return nearest;
+        }
+
+        return NormalizeOrFallback(centerDelta, fallbackDirection);
+    }
+
     private bool TryGetNearestEscapeDirection(
         Rectangle obstacle,
         Vector2 selfCenter,
         Vector2 obstacleCenter,
-        bool blendAxes,
         out Vector2 direction)
     {
         direction = Vector2.Zero;
@@ -1082,17 +1105,6 @@ public sealed class Player : INetworkEntity
         float signY = exitTop <= exitBottom ? -1f : 1f;
         float penX = MathF.Min(exitLeft, exitRight);
         float penY = MathF.Min(exitTop, exitBottom);
-
-        if (blendAxes)
-        {
-            // Inverse penetration: closer exits weigh more. Corner (similar pens) → diagonal.
-            const float epsilon = 0.0001f;
-            Vector2 raw = new(
-                signX / MathF.Max(penX, epsilon),
-                signY / MathF.Max(penY, epsilon));
-            direction = NormalizeOrFallback(raw, GetFallbackEjectionDirection());
-            return true;
-        }
 
         // Cardinal MTV (shallowest axis only).
         if (penX < penY)
@@ -1213,11 +1225,12 @@ public sealed class Player : INetworkEntity
                 ? GetPlayerCenter(_ejectionPlayer)
                 : _ejectionPlatformCenter;
 
+        bool usePlatformRadial = _ejectionPlatforms.Count > 0;
         if (!TryCalculateEjectionInfo(
             GetEjectionTargetBounds(),
             liveTargetCenter,
             fallbackDirection,
-            blendAxes: false,
+            usePlatformRadial,
             out Vector2 direction,
             out Vector2 targetCenter,
             out float penetrationDepth,
@@ -1226,13 +1239,14 @@ public sealed class Player : INetworkEntity
             return false;
         }
 
-        // Lock initial nearest escape so mid-overlap path cannot reverse (platforms + players).
-        if (_ejectionBaseDirection != Vector2.Zero)
+        // Player-vs-player: keep initial nearest escape so mid-overlap cannot reverse both.
+        if (_ejectionPlayer is not null && _ejectionBaseDirection != Vector2.Zero)
         {
             direction = _ejectionBaseDirection;
         }
         else
         {
+            // Platforms: live radial retarget (top↔bottom / left↔right as player moves).
             _ejectionBaseDirection = direction;
         }
 
@@ -1247,7 +1261,7 @@ public sealed class Player : INetworkEntity
         Rectangle targetBounds,
         Vector2 targetCenter,
         Vector2 fallbackDirection,
-        bool blendAxes,
+        bool usePlatformRadial,
         out Vector2 direction,
         out Vector2 resolvedTargetCenter,
         out float penetrationDepth,
@@ -1266,7 +1280,11 @@ public sealed class Player : INetworkEntity
         Vector2 playerCenter = Position + (Size * 0.5f);
         Vector2 centerDelta = playerCenter - targetCenter;
 
-        if (TryGetNearestEscapeDirection(targetBounds, playerCenter, targetCenter, blendAxes, out Vector2 nearest))
+        if (usePlatformRadial)
+        {
+            direction = GetPlatformEjectionDirection(targetBounds, playerCenter, targetCenter, fallbackDirection);
+        }
+        else if (TryGetNearestEscapeDirection(targetBounds, playerCenter, targetCenter, out Vector2 nearest))
         {
             direction = nearest;
         }

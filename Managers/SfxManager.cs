@@ -22,6 +22,7 @@ public sealed class SfxManager : IDisposable
 
     private const float LavaMaxHearDistance = 450f;
     private const float MenuHoverDebounceSeconds = 0.12f;
+    private const int MenuHoverPoolSize = 4;
 
     private readonly Dictionary<string, SoundEffect> _effects = new(StringComparer.Ordinal);
     private SoundEffect? _hover1;
@@ -35,10 +36,14 @@ public sealed class SfxManager : IDisposable
     private SoundEffectInstance? _pullRopeLoop;
     private SoundEffectInstance? _lavaLoop;
     private SoundEffectInstance? _physicsExpulsionLoop;
+    private readonly SoundEffectInstance?[] _hoverPool = new SoundEffectInstance?[MenuHoverPoolSize];
+    private SoundEffectInstance? _buttonPressInstance;
     private int _physicsExpulsionActiveCount;
     private int _hoverCycleIndex;
+    private int _hoverPoolIndex;
     private float _menuHoverCooldown;
     private bool _loaded;
+    private bool _loggedPlayLimit;
 
     public void Load()
     {
@@ -130,7 +135,9 @@ public sealed class SfxManager : IDisposable
 
         _hoverCycleIndex = (_hoverCycleIndex + 1) % 3;
         _menuHoverCooldown = MenuHoverDebounceSeconds;
-        effect?.Play(volume, 0f, 0f);
+        // Pooled instances — fire-and-forget SoundEffect.Play leaks OpenAL sources under DesktopGL
+        // until InstancePlayLimitException (Steam crash after ~40s menu navigation).
+        PlayPooled(effect, volume, _hoverPool, ref _hoverPoolIndex);
     }
 
     public void PlayMenuPress()
@@ -141,7 +148,7 @@ public sealed class SfxManager : IDisposable
             return;
         }
 
-        _buttonPress?.Play(volume, 0f, 0f);
+        PlayOneShotInstance(ref _buttonPressInstance, _buttonPress, volume);
     }
 
     public void BeginPhysicsExpulsion()
@@ -220,6 +227,12 @@ public sealed class SfxManager : IDisposable
     public void Dispose()
     {
         StopAllLoops();
+        for (int i = 0; i < _hoverPool.Length; i++)
+        {
+            StopInstance(ref _hoverPool[i]);
+        }
+
+        StopInstance(ref _buttonPressInstance);
         foreach (SoundEffect effect in _effects.Values)
         {
             effect.Dispose();
@@ -252,30 +265,125 @@ public sealed class SfxManager : IDisposable
     {
         if (_effects.TryGetValue(key, out SoundEffect? effect) && effect is not null)
         {
-            effect.Play(Math.Clamp(volume, 0f, 1f), 0f, 0f);
+            SafeFireAndForget(effect, Math.Clamp(volume, 0f, 1f));
         }
     }
 
-    private static void EnsureLoop(ref SoundEffectInstance? instance, SoundEffect? source, float volume)
+    private void PlayPooled(
+        SoundEffect? effect,
+        float volume,
+        SoundEffectInstance?[] pool,
+        ref int poolIndex)
+    {
+        if (effect is null)
+        {
+            return;
+        }
+
+        int index = poolIndex % pool.Length;
+        poolIndex = (index + 1) % pool.Length;
+        PlayOneShotInstance(ref pool[index], effect, volume);
+    }
+
+    private void PlayOneShotInstance(ref SoundEffectInstance? instance, SoundEffect? source, float volume)
     {
         if (source is null)
         {
             return;
         }
 
-        if (instance is null || instance.IsDisposed)
+        try
         {
+            // Recreate each play: hover cycles 3 different SoundEffects, and DesktopGL
+            // orphans OpenAL sources if Play() is called without a prior Stop().
+            if (instance is not null && !instance.IsDisposed)
+            {
+                instance.Stop();
+                instance.Dispose();
+            }
+
             instance = source.CreateInstance();
-            instance.IsLooped = true;
-            instance.Volume = volume;
+            instance.Volume = Math.Clamp(volume, 0f, 1f);
             instance.Play();
+        }
+        catch (InstancePlayLimitException)
+        {
+            LogPlayLimitOnce("menu one-shot");
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("Audio", $"SFX play failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private void SafeFireAndForget(SoundEffect effect, float volume)
+    {
+        try
+        {
+            effect.Play(volume, 0f, 0f);
+        }
+        catch (InstancePlayLimitException)
+        {
+            LogPlayLimitOnce("fire-and-forget");
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("Audio", $"SFX Play failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private void LogPlayLimitOnce(string context)
+    {
+        if (_loggedPlayLimit)
+        {
             return;
         }
 
-        instance.Volume = volume;
-        if (instance.State != SoundState.Playing)
+        _loggedPlayLimit = true;
+        DiagnosticsLog.Info(
+            "Audio",
+            $"InstancePlayLimitException ({context}) — OpenAL sources exhausted; dropping cues to avoid crash");
+    }
+
+    private void EnsureLoop(ref SoundEffectInstance? instance, SoundEffect? source, float volume)
+    {
+        if (source is null)
         {
+            return;
+        }
+
+        try
+        {
+            if (instance is null || instance.IsDisposed)
+            {
+                instance = source.CreateInstance();
+                instance.IsLooped = true;
+                instance.Volume = volume;
+                instance.Play();
+                return;
+            }
+
+            instance.Volume = volume;
+            if (instance.State == SoundState.Playing)
+            {
+                return;
+            }
+
+            // Stopped/Paused → Stop first so DesktopGL recycles the OpenAL source.
+            if (instance.State != SoundState.Stopped)
+            {
+                instance.Stop();
+            }
+
             instance.Play();
+        }
+        catch (InstancePlayLimitException)
+        {
+            LogPlayLimitOnce("loop");
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("Audio", $"SFX loop failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 

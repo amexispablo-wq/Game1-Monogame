@@ -54,7 +54,7 @@ Constante global: `PhysicsWorld.Gravity = 1600`, `FixedTimeStep = 1/60`.
 Cuando el jugador se solapa con una plataforma sólida (por cambio de color o por moverse dentro), entra en `Ejecting` y es empujado hacia afuera:
 
 - `Player.TryStartEjectionFromOverlaps` agrupa plataformas colisionables conectadas (overlap transitivo, incl. anidadas) en un cluster; scorea por influencia al centro + penetración sobre el **AABB unión**.
-- Dirección = MTV cardinal (cara más cercana) desde la unión; se **bloquea** al inicio (sin flip live top/bottom).
+- Dirección plataformas = radial desde el centro de la unión (`normalize(playerCenter - unionCenter)`); se **recalcula cada tick** (offset L/R y cruzar centro vertical cambian la fuerza). Centro exacto → MTV cardinal. Player–player: MTV cardinal **lockeado** al inicio.
 - Colisión ignora **todas** las plataformas del cluster hasta salir de la entidad falsa.
 - Fuerza con rampa suave (`GetEjectionRampAmount`) y multiplicador por cercanía al centro (`EjectionCenterForceMultiplier`).
 - Al salir, hay una ventana de "launch control" (`LaunchControlSeconds = 0.24`) con control aéreo reducido.

@@ -199,6 +199,13 @@ function Sync-ShippedContent {
                 Remove-Item -LiteralPath $dst -Recurse -Force
             }
             Copy-Item -LiteralPath $src -Destination $dst -Recurse -Force
+            # Never ship ffmpeg conversion leftovers / MP3 backups (may nest under Music/).
+            Get-ChildItem -LiteralPath $dst -Directory -Recurse -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -eq "_mp3_backup" } |
+                ForEach-Object {
+                    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+                    Write-Host "Removed $($_.FullName.Substring($PublishDir.Length).TrimStart('\','/'))"
+                }
         } else {
             $dstParent = Split-Path -Parent $dst
             if (-not (Test-Path -LiteralPath $dstParent)) {
@@ -208,15 +215,12 @@ function Sync-ShippedContent {
         }
     }
 
-    # Overlay pipeline-built songs (.xnb + processed .ogg). Raw source ogg alone is not enough
-    # for Content.Load<Song> / MediaPlayer on DesktopGL.
+    # Optional MGCB leftovers (legacy .xnb). Runtime music uses raw .ogg via Song.FromUri.
     $mgcbAudio = Join-Path $SourceContent "bin\DesktopGL\Content\Audio"
     $audioDest = Join-Path $contentDest "Audio"
     if (Test-Path -LiteralPath $mgcbAudio) {
-        Write-Host "Overlaying MGCB Audio from Content\bin\DesktopGL\Content\Audio"
+        Write-Host "Overlaying MGCB Audio from Content\bin\DesktopGL\Content\Audio (optional)"
         Copy-Item -Path (Join-Path $mgcbAudio "*") -Destination $audioDest -Recurse -Force
-    } else {
-        $MissingAssets.Add("MGCB Audio output missing: Content\bin\DesktopGL\Content\Audio (run a build first)")
     }
 }
 
@@ -327,7 +331,10 @@ function Test-ContentAssets {
         $srcDir = Join-Path $SourceContent $sub
         if (Test-Path -LiteralPath $srcDir) {
             Get-ChildItem -LiteralPath $srcDir -Recurse -File -Force |
-                Where-Object { $_.Extension -notin @(".user", ".tmp", ".mgstats") } |
+                Where-Object {
+                    $_.Extension -notin @(".user", ".tmp", ".mgstats") -and
+                    $_.FullName -notmatch '[\\/]_mp3_backup[\\/]'
+                } |
                 ForEach-Object {
                     $rel = $_.FullName.Substring($SourceContent.Length).TrimStart("\", "/")
                     $requiredRelPaths.Add(("Content\" + $rel))
@@ -335,16 +342,69 @@ function Test-ContentAssets {
         }
     }
 
-    # Song assets require pipeline .xnb next to companion .ogg (MediaPlayer).
+    # Music ships as raw .ogg (ContentResolver / MusicManager). Must be real Ogg Vorbis (OggS),
+    # not MP3 renamed to .ogg — NVorbis rejects ID3/MP3 with containerReader errors.
     foreach ($music in @(
-        "Content\Audio\Music\MainMenu.xnb",
-        "Content\Audio\Music\MainMenu.ogg",
-        "Content\Audio\Music\levelEditor.xnb",
-        "Content\Audio\Music\levelEditor.ogg"
+        "Content\Audio\Music\MainMenu.ogg"
     )) {
         if (-not $requiredRelPaths.Contains($music)) {
             $requiredRelPaths.Add($music)
         }
+    }
+
+    $levelEditorCandidates = @(
+        "Content\Audio\Music\level editor\levelEditor.ogg",
+        "Content\Audio\Music\levelEditor.ogg"
+    )
+    $hasLevelEditor = $false
+    foreach ($cand in $levelEditorCandidates) {
+        if (Test-Path -LiteralPath (Join-Path $PublishDir $cand)) {
+            $hasLevelEditor = $true
+            break
+        }
+    }
+    if (-not $hasLevelEditor) {
+        $MissingAssets.Add("Content\Audio\Music\levelEditor.ogg (or level editor\levelEditor.ogg)")
+    }
+
+    $musicDir = Join-Path $PublishDir "Content\Audio\Music"
+    if (Test-Path -LiteralPath $musicDir) {
+        Get-ChildItem -LiteralPath $musicDir -Recurse -Filter *.ogg -File -Force |
+            ForEach-Object {
+                $header = [byte[]]::new(4)
+                try {
+                    $fs = [System.IO.File]::OpenRead($_.FullName)
+                    try { [void]$fs.Read($header, 0, 4) } finally { $fs.Dispose() }
+                } catch {
+                    $MissingAssets.Add("Unreadable music file: $($_.FullName.Substring($PublishDir.Length).TrimStart('\','/'))")
+                    return
+                }
+
+                $magic = [System.Text.Encoding]::ASCII.GetString($header)
+                if ($magic -ne "OggS") {
+                    $rel = $_.FullName.Substring($PublishDir.Length).TrimStart('\', '/')
+                    $MissingAssets.Add("$rel is not Ogg Vorbis (magic='$magic' - likely MP3 renamed .ogg)")
+                    return
+                }
+
+                # Album-art MP3->Ogg can embed Theora video; NVorbis then throws "Found Theora bitsream".
+                $ffprobeCmd = Get-Command ffprobe -ErrorAction SilentlyContinue
+                if ($null -ne $ffprobeCmd) {
+                    $probeArgs = @(
+                        "-hide_banner",
+                        "-loglevel", "error",
+                        "-show_entries", "stream=codec_name",
+                        "-of", "csv=p=0",
+                        $_.FullName
+                    )
+                    # cmd redirects native stderr so PS Stop mode does not treat banner as terminating error.
+                    $codecs = & cmd.exe /c "`"$($ffprobeCmd.Source)`" $($probeArgs -join ' ') 2>nul"
+                    if ($codecs -match 'theora|vp8|vp9|mjpeg') {
+                        $rel = $_.FullName.Substring($PublishDir.Length).TrimStart('\', '/')
+                        $MissingAssets.Add("$rel has video stream ($(($codecs | Where-Object { $_ }) -join ',')) - reconvert with ffmpeg -vn -map a:0")
+                    }
+                }
+            }
     }
 
     foreach ($rel in $requiredRelPaths) {

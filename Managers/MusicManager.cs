@@ -7,41 +7,49 @@ using Microsoft.Xna.Framework.Media;
 namespace ColorBlocks;
 
 /// <summary>
-/// Menu/game and level-editor BGM playlists (folder-scanned, shuffled).
-/// DesktopGL MediaPlayer breaks after Stop/Pause then Play (scratched restart).
-/// Level silence = Volume 0 on the same stream. Track changes = Play(next) only, never Stop/Pause.
-/// Playlist tracks: IsRepeating=false; advance on Stopped or estimated end (never both auto-repeat + Play).
-/// Level tracks: IsRepeating=true (single looped song, no playlist timer).
+/// Simple BGM:
+/// - Menu shuffle playlist runs in menus (and in gameplay if "continue menu music" is on).
+/// - Gameplay with option off = same playlist, volume 0 (never Stop — DesktopGL scratches).
+/// - Level editor is the ONLY place that leaves the menu playlist; leaving editor restarts it.
+/// Fresh Song every Play — reusing an EOF Song scratches the first seconds.
 /// </summary>
 public sealed class MusicManager
 {
     public const string MenuMusicId = "MainMenu";
     public const string EditorMusicId = "levelEditor";
 
-    private const float MinTrustedDurationSeconds = 90f;
+    private const float MinAdvanceElapsedSeconds = 2f;
+    private const float EndAdvanceLeadSeconds = 0.75f;
+    private const float AdvanceCooldownSeconds = 0.3f;
     private const string MusicRootRelative = "Audio/Music";
     private const string EditorFolderName = "level editor";
 
+    private enum Mode
+    {
+        Menu,
+        Editor
+    }
+
     private readonly List<string> _menuTrackIds = new();
-    private readonly List<string> _editorTrackIds = new();
     private readonly List<string> _menuBag = new();
-    private readonly List<string> _editorBag = new();
-    private readonly Dictionary<string, Song> _songCache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _trackAssetPaths = new(StringComparer.Ordinal);
     private readonly Random _random = new();
+
+    private Mode _mode = Mode.Menu;
+    private Song? _currentSong;
     private string? _currentMusicId;
-    private bool _menuPlaylistActive;
-    private bool _editorPlaylistActive;
-    private bool _menuAudibleSuppressed;
-    private float _playlistTrackPlayingSeconds;
-    private float _playlistTrackDurationSeconds;
-    private bool _loggedBadDuration;
+    private string? _editorAssetPath;
+    private bool _audible = true;
+    private float _trackElapsed;
+    private float _trackDuration;
+    private float _advanceCooldown;
     private bool _catalogLoaded;
 
     public float Volume { get; private set; } = 0.75f;
     public bool IsPlaying => MediaPlayer.State == MediaState.Playing;
     public string? CurrentMusicId => _currentMusicId;
-    public bool IsMenuPlaylistActive => _menuPlaylistActive;
+    /// <summary>True while menu shuffle owns the stream (even if muted in gameplay).</summary>
+    public bool IsMenuPlaylistActive => _mode == Mode.Menu;
 
     public void ApplyVolume(float volume)
     {
@@ -51,157 +59,121 @@ public sealed class MusicManager
 
     public void Update(float dt)
     {
-        if ((!_menuPlaylistActive && !_editorPlaylistActive) || _currentMusicId is null || dt <= 0f)
+        if (dt <= 0f)
         {
             return;
         }
 
-        // Count Playing time only (incl. muted-in-level). Never use PlayPosition.
+        if (_advanceCooldown > 0f)
+        {
+            _advanceCooldown = Math.Max(0f, _advanceCooldown - dt);
+        }
+
+        if (_currentMusicId is null)
+        {
+            return;
+        }
+
         if (MediaPlayer.State == MediaState.Playing)
         {
-            _playlistTrackPlayingSeconds += dt;
+            _trackElapsed += dt;
         }
 
-        // Playlist tracks use IsRepeating=false. Advance on natural Stopped or near estimated end.
-        // IsRepeating=true + Play(next) raced: song ended → auto-restart → timer Play → cut,
-        // and DesktopGL MediaPlayer then scratched on menu return.
-        bool trustedPlayback = _playlistTrackDurationSeconds >= MinTrustedDurationSeconds
-            && _playlistTrackPlayingSeconds >= MinTrustedDurationSeconds;
-        bool nearEstimatedEnd = trustedPlayback
-            && _playlistTrackPlayingSeconds >= _playlistTrackDurationSeconds - 0.35f;
-        bool naturallyEnded = MediaPlayer.State == MediaState.Stopped
-            && _playlistTrackPlayingSeconds >= MinTrustedDurationSeconds;
+        bool nearEnd = _trackDuration > MinAdvanceElapsedSeconds
+            && MediaPlayer.State == MediaState.Playing
+            && _trackElapsed >= MinAdvanceElapsedSeconds
+            && _trackElapsed >= _trackDuration - EndAdvanceLeadSeconds;
+        bool stopped = MediaPlayer.State == MediaState.Stopped
+            && _trackElapsed >= MinAdvanceElapsedSeconds;
 
-        if (!nearEstimatedEnd && !naturallyEnded)
+        if ((!nearEnd && !stopped) || _advanceCooldown > 0f)
         {
             return;
         }
 
-        // Switch with Play(next) only — no Stop/Pause.
-        if (_menuPlaylistActive)
+        _advanceCooldown = AdvanceCooldownSeconds;
+
+        if (_mode == Mode.Menu)
         {
             PlayNextMenuTrack();
         }
-        else if (_editorPlaylistActive)
+        else
         {
-            PlayNextEditorTrack();
+            // Single editor loop via fresh Play (IsRepeating is unreliable after EOF on DesktopGL).
+            PlayEditorTrack();
         }
     }
 
+    /// <summary>Menus: audible menu shuffle. Restarts only if not already playing a menu track.</summary>
     public void PlayMenuMusic()
     {
-        EnsureCatalog();
-        bool leavingEditor = _editorPlaylistActive;
-        _menuAudibleSuppressed = false;
-        _editorPlaylistActive = false;
+        _audible = true;
         ApplyEffectiveVolume();
 
-        // Same unbroken stream only when already on a real menu track.
-        // Editor theme id can collide with stale root copies — never keep that as "menu".
-        bool alreadyOnMenuStream = !leavingEditor
-            && _menuPlaylistActive
+        if (_mode == Mode.Menu
             && _currentMusicId is not null
             && MediaPlayer.State == MediaState.Playing
-            && _menuTrackIds.Contains(_currentMusicId);
-
-        if (alreadyOnMenuStream)
+            && IsMenuTrack(_currentMusicId))
         {
             return;
         }
 
-        _menuPlaylistActive = true;
+        _mode = Mode.Menu;
         PlayNextMenuTrack();
     }
 
+    /// <summary>Gameplay with continue-menu-music: keep shuffle, volume on.</summary>
+    public void KeepMenuMusicThroughGameplay()
+    {
+        _audible = true;
+        _mode = Mode.Menu;
+        ApplyEffectiveVolume();
+
+        if (_currentMusicId is null || MediaPlayer.State != MediaState.Playing || !IsMenuTrack(_currentMusicId))
+        {
+            PlayNextMenuTrack();
+        }
+    }
+
+    /// <summary>
+    /// Gameplay without continue-menu-music (and sandbox/replay): mute only.
+    /// Playlist keeps running so return to menu never restarts a dead/EOF Song.
+    /// </summary>
+    public void MuteMenuMusic()
+    {
+        _audible = false;
+        _mode = Mode.Menu;
+        ApplyEffectiveVolume();
+
+        if (_currentMusicId is null || MediaPlayer.State != MediaState.Playing || !IsMenuTrack(_currentMusicId))
+        {
+            PlayNextMenuTrack();
+        }
+    }
+
+    /// <summary>Legacy name — level BGM is menu shuffle (muted or not), not per-level tracks.</summary>
+    public void PlayLevelMusic(string musicId) => MuteMenuMusic();
+
+    /// <summary>Only interruption of the menu playlist.</summary>
     public void PlayEditorMusic()
     {
         EnsureCatalog();
-        _menuAudibleSuppressed = false;
+        _audible = true;
+        _mode = Mode.Editor;
         ApplyEffectiveVolume();
-
-        // EditorScene re-entry (e.g. after test play): keep stream.
-        if (_editorPlaylistActive
-            && _currentMusicId is not null
-            && MediaPlayer.State == MediaState.Playing
-            && _editorTrackIds.Contains(_currentMusicId))
-        {
-            _menuPlaylistActive = false;
-            return;
-        }
-
-        _menuPlaylistActive = false;
-        _editorPlaylistActive = true;
-        _playlistTrackPlayingSeconds = 0f;
-        _playlistTrackDurationSeconds = 0f;
-        PlayNextEditorTrack();
+        PlayEditorTrack();
     }
 
-    public void PlayLevelMusic(string musicId)
-    {
-        if (string.IsNullOrWhiteSpace(musicId))
-        {
-            musicId = LevelMusicLibrary.DefaultMusicId;
-        }
-
-        if (_menuPlaylistActive && _currentMusicId is not null && MediaPlayer.State == MediaState.Playing)
-        {
-            if (TryLoadSongOnly(musicId, $"Music/{musicId}", out Song? levelSong) && levelSong is not null)
-            {
-                _menuPlaylistActive = false;
-                _editorPlaylistActive = false;
-                _menuAudibleSuppressed = false;
-                _playlistTrackPlayingSeconds = 0f;
-                _playlistTrackDurationSeconds = 0f;
-                StartSong(musicId, levelSong, $"Music/{musicId}", repeating: true, trackPlaylistDuration: false);
-                return;
-            }
-
-            _menuAudibleSuppressed = true;
-            ApplyEffectiveVolume();
-            return;
-        }
-
-        _menuPlaylistActive = false;
-        _editorPlaylistActive = false;
-        _menuAudibleSuppressed = false;
-        _playlistTrackPlayingSeconds = 0f;
-        _playlistTrackDurationSeconds = 0f;
-        if (!PlayTrack(musicId, $"Music/{musicId}", repeating: true, trackPlaylistDuration: false))
-        {
-            MuteOnly();
-        }
-    }
-
-    public void KeepMenuMusicThroughGameplay()
-    {
-        _menuAudibleSuppressed = false;
-        ApplyEffectiveVolume();
-
-        if (!_menuPlaylistActive)
-        {
-            PlayMenuMusic();
-        }
-    }
-
-    public void Stop()
-    {
-        _menuPlaylistActive = false;
-        _editorPlaylistActive = false;
-        _menuAudibleSuppressed = true;
-        ApplyEffectiveVolume();
-    }
-
-    private void MuteOnly()
-    {
-        _menuAudibleSuppressed = true;
-        _currentMusicId = null;
-        ApplyEffectiveVolume();
-    }
+    /// <summary>Mute helper used by sandbox/replay — same as MuteMenuMusic.</summary>
+    public void Stop() => MuteMenuMusic();
 
     private void ApplyEffectiveVolume()
     {
-        MediaPlayer.Volume = _menuAudibleSuppressed ? 0f : Volume;
+        MediaPlayer.IsMuted = false;
+        MediaPlayer.Volume = _audible ? Volume : 0f;
     }
+
+    private bool IsMenuTrack(string musicId) => _menuTrackIds.Contains(musicId);
 
     private void EnsureCatalog()
     {
@@ -212,69 +184,202 @@ public sealed class MusicManager
 
         _catalogLoaded = true;
         _menuTrackIds.Clear();
-        _editorTrackIds.Clear();
         _trackAssetPaths.Clear();
+        _editorAssetPath = null;
 
         string? musicRoot = ResolveMusicRootDirectory();
         if (musicRoot is null)
         {
-            Console.WriteLine("Music catalog: Audio/Music folder not found.");
+            DiagnosticsLog.Info("Music", "Audio/Music folder not found - BGM silent");
             return;
         }
 
         foreach (string filePath in Directory.EnumerateFiles(musicRoot, "*.ogg", SearchOption.TopDirectoryOnly))
         {
-            RegisterTrack(filePath, MusicRootRelative, _menuTrackIds);
+            string id = Path.GetFileNameWithoutExtension(filePath);
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                continue;
+            }
+
+            // Root levelEditor.ogg is a stale publish leftover — editor track lives in subfolder.
+            if (string.Equals(id, EditorMusicId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            _trackAssetPaths[id] = $"{MusicRootRelative}/{id}";
+            _menuTrackIds.Add(id);
         }
 
         string? editorDir = FindEditorMusicDirectory(musicRoot);
         if (editorDir is not null)
         {
-            string editorRelative = MusicRootRelative + "/" + Path.GetFileName(editorDir);
             foreach (string filePath in Directory.EnumerateFiles(editorDir, "*.ogg", SearchOption.TopDirectoryOnly))
             {
-                // Editor folder owns the id → path map (overwrite stale root copies).
-                RegisterTrack(filePath, editorRelative, _editorTrackIds, overwritePath: true);
+                string id = Path.GetFileNameWithoutExtension(filePath);
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    continue;
+                }
+
+                _editorAssetPath = $"{MusicRootRelative}/{EditorFolderName}/{id}";
+                break;
             }
         }
 
-        // Stale root copies (e.g. bin/.../levelEditor.ogg) must not sit in menu bag.
-        for (int i = _menuTrackIds.Count - 1; i >= 0; i--)
-        {
-            if (_editorTrackIds.Contains(_menuTrackIds[i]))
-            {
-                _menuTrackIds.RemoveAt(i);
-            }
-        }
+        _editorAssetPath ??= $"{MusicRootRelative}/{EditorFolderName}/{EditorMusicId}";
 
-        Console.WriteLine(
-            $"Music catalog: {_menuTrackIds.Count} menu track(s), {_editorTrackIds.Count} editor track(s).");
+        DiagnosticsLog.Info(
+            "Music",
+            $"Catalog menu={_menuTrackIds.Count} editor='{_editorAssetPath}' root='{musicRoot}'");
     }
 
-    private void RegisterTrack(string filePath, string relativeFolder, List<string> trackIds, bool overwritePath = false)
+    private void PlayNextMenuTrack()
     {
-        string id = Path.GetFileNameWithoutExtension(filePath);
-        if (string.IsNullOrWhiteSpace(id))
+        EnsureCatalog();
+        const int maxAttempts = 16;
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            if (_menuBag.Count == 0)
+            {
+                RefillBag(_menuBag, _menuTrackIds);
+            }
+
+            if (_menuBag.Count == 0)
+            {
+                _currentMusicId = null;
+                return;
+            }
+
+            string musicId = _menuBag[^1];
+            _menuBag.RemoveAt(_menuBag.Count - 1);
+            string assetPath = _trackAssetPaths.TryGetValue(musicId, out string? mapped)
+                ? mapped
+                : $"{MusicRootRelative}/{musicId}";
+
+            if (PlayFresh(musicId, assetPath, trackDuration: true))
+            {
+                return;
+            }
+        }
+
+        _currentMusicId = null;
+    }
+
+    private void PlayEditorTrack()
+    {
+        EnsureCatalog();
+        string assetPath = _editorAssetPath ?? $"{MusicRootRelative}/{EditorFolderName}/{EditorMusicId}";
+        if (!PlayFresh(EditorMusicId, assetPath, trackDuration: true))
+        {
+            // Fallback root copy from old publishes.
+            PlayFresh(EditorMusicId, $"{MusicRootRelative}/{EditorMusicId}", trackDuration: true);
+        }
+    }
+
+    private void RefillBag(List<string> bag, List<string> sourceIds)
+    {
+        bag.Clear();
+        bag.AddRange(sourceIds);
+        for (int i = bag.Count - 1; i > 0; i--)
+        {
+            int j = _random.Next(i + 1);
+            (bag[i], bag[j]) = (bag[j], bag[i]);
+        }
+    }
+
+    private bool PlayFresh(string musicId, string assetPath, bool trackDuration)
+    {
+        Song? song;
+        try
+        {
+            song = ContentResolver.TryLoadSong(assetPath);
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("Music", $"Load throw '{assetPath}': {ex.Message}");
+            return false;
+        }
+
+        if (song is null)
+        {
+            DiagnosticsLog.Info("Music", $"Load null '{assetPath}'");
+            return false;
+        }
+
+        try
+        {
+            MediaPlayer.IsRepeating = false;
+            ApplyEffectiveVolume();
+            MediaPlayer.Play(song);
+
+            DisposeCurrentSong();
+            _currentSong = song;
+            _currentMusicId = musicId;
+            _trackElapsed = 0f;
+            _trackDuration = trackDuration ? ResolveDuration(song, assetPath) : 0f;
+
+            DiagnosticsLog.Info(
+                "Music",
+                $"Play id='{musicId}' mode={_mode} audible={_audible} state={MediaPlayer.State} vol={MediaPlayer.Volume:0.##} dur={_trackDuration:0.#}s");
+
+            return MediaPlayer.State == MediaState.Playing;
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("Music", $"Play failed '{musicId}': {ex.Message}");
+            try { song.Dispose(); } catch { /* ignore */ }
+            return false;
+        }
+    }
+
+    private void DisposeCurrentSong()
+    {
+        if (_currentSong is null)
         {
             return;
         }
 
-        string assetPath = relativeFolder.Replace('\\', '/') + "/" + id;
-        if (overwritePath || !_trackAssetPaths.ContainsKey(id))
+        Song old = _currentSong;
+        _currentSong = null;
+        try { old.Dispose(); }
+        catch { /* DesktopGL teardown race */ }
+    }
+
+    private static float ResolveDuration(Song song, string assetPath)
+    {
+        float reported = (float)song.Duration.TotalSeconds;
+        if (reported >= MinAdvanceElapsedSeconds)
         {
-            _trackAssetPaths[id] = assetPath;
+            return reported;
         }
 
-        if (!trackIds.Contains(id))
+        string relative = assetPath.Replace('\\', '/');
+        if (!relative.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase))
         {
-            trackIds.Add(id);
+            relative += ".ogg";
+        }
+
+        string? fullPath = ContentResolver.TryResolveContentFilePath(relative);
+        if (fullPath is null)
+        {
+            return 180f;
+        }
+
+        try
+        {
+            long bytes = new FileInfo(fullPath).Length;
+            return Math.Clamp(bytes * 8f / 160_000f, MinAdvanceElapsedSeconds, 20f * 60f);
+        }
+        catch
+        {
+            return 180f;
         }
     }
 
     private static string? ResolveMusicRootDirectory()
     {
-        string? fileHint = ContentResolver.TryResolveContentFilePath(MusicRootRelative + "/.keep");
-        // Prefer resolving any known ogg, else probe directories.
         string[] candidates =
         {
             Path.Combine(AppContext.BaseDirectory, "Content", MusicRootRelative),
@@ -291,7 +396,6 @@ public sealed class MusicManager
             }
         }
 
-        _ = fileHint;
         return null;
     }
 
@@ -306,210 +410,5 @@ public sealed class MusicManager
         }
 
         return null;
-    }
-
-    private string ResolveAssetPath(string musicId, string fallbackPath)
-    {
-        if (_trackAssetPaths.TryGetValue(musicId, out string? mapped))
-        {
-            return mapped;
-        }
-
-        return fallbackPath;
-    }
-
-    private void PlayNextMenuTrack()
-    {
-        EnsureCatalog();
-        const int maxAttempts = 16;
-        for (int attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            if (_menuBag.Count == 0)
-            {
-                RefillBag(_menuBag, _menuTrackIds);
-            }
-
-            if (_menuBag.Count == 0)
-            {
-                MuteOnly();
-                return;
-            }
-
-            string musicId = _menuBag[^1];
-            _menuBag.RemoveAt(_menuBag.Count - 1);
-            string assetPath = ResolveAssetPath(musicId, $"{MusicRootRelative}/{musicId}");
-            // Playlist: never IsRepeating — manual Play(next) owns the loop.
-            if (PlayTrack(musicId, assetPath, repeating: false, trackPlaylistDuration: true))
-            {
-                return;
-            }
-        }
-
-        MuteOnly();
-    }
-
-    private void PlayNextEditorTrack()
-    {
-        EnsureCatalog();
-        const int maxAttempts = 16;
-        for (int attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            if (_editorBag.Count == 0)
-            {
-                RefillBag(_editorBag, _editorTrackIds);
-            }
-
-            if (_editorBag.Count == 0)
-            {
-                MuteOnly();
-                return;
-            }
-
-            string musicId = _editorBag[^1];
-            _editorBag.RemoveAt(_editorBag.Count - 1);
-
-            // Folder path first; root fallback for publish/bin layouts + Content.Load space issues.
-            string folderPath = $"{MusicRootRelative}/{EditorFolderName}/{musicId}";
-            string rootPath = $"{MusicRootRelative}/{musicId}";
-            if (PlayTrack(musicId, folderPath, repeating: false, trackPlaylistDuration: true)
-                || PlayTrack(musicId, rootPath, repeating: false, trackPlaylistDuration: true))
-            {
-                return;
-            }
-        }
-
-        MuteOnly();
-    }
-
-    private void RefillBag(List<string> bag, List<string> sourceIds)
-    {
-        bag.Clear();
-        bag.AddRange(sourceIds);
-
-        for (int i = bag.Count - 1; i > 0; i--)
-        {
-            int j = _random.Next(i + 1);
-            (bag[i], bag[j]) = (bag[j], bag[i]);
-        }
-    }
-
-    private bool TryLoadSongOnly(string musicId, string assetPath, out Song? song)
-    {
-        song = null;
-        // Cache by asset path — same filename in menu root vs editor folder must not share Song.
-        string cacheKey = assetPath.Replace('\\', '/');
-        if (_songCache.TryGetValue(cacheKey, out song))
-        {
-            return true;
-        }
-
-        try
-        {
-            song = ContentResolver.TryLoadSong(assetPath);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Music unavailable for '{assetPath}': {ex.Message}");
-            return false;
-        }
-
-        if (song is null)
-        {
-            return false;
-        }
-
-        _songCache[cacheKey] = song;
-        return true;
-    }
-
-    private bool PlayTrack(string musicId, string assetPath, bool repeating, bool trackPlaylistDuration = true)
-    {
-        if (!TryLoadSongOnly(musicId, assetPath, out Song? song) || song is null)
-        {
-            return false;
-        }
-
-        return StartSong(musicId, song, assetPath, repeating, trackPlaylistDuration);
-    }
-
-    private bool StartSong(string musicId, Song song, string assetPath, bool repeating, bool trackPlaylistDuration)
-    {
-        try
-        {
-            // Never Stop/Pause — Play replaces current stream.
-            MediaPlayer.IsRepeating = repeating;
-            ApplyEffectiveVolume();
-            MediaPlayer.Play(song);
-            _currentMusicId = musicId;
-            _playlistTrackPlayingSeconds = 0f;
-            _playlistTrackDurationSeconds = trackPlaylistDuration
-                ? ResolveTrackDurationSeconds(song, assetPath)
-                : 0f;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Music play failed for '{musicId}': {ex.Message}");
-            _currentMusicId = null;
-            _playlistTrackDurationSeconds = 0f;
-            return false;
-        }
-    }
-
-    private float ResolveTrackDurationSeconds(Song song, string assetPath)
-    {
-        float reported = (float)song.Duration.TotalSeconds;
-        if (reported >= MinTrustedDurationSeconds)
-        {
-            return reported;
-        }
-
-        float estimated = EstimateDurationFromOggFile(assetPath);
-        if (estimated >= MinTrustedDurationSeconds)
-        {
-            if (!_loggedBadDuration)
-            {
-                _loggedBadDuration = true;
-                Console.WriteLine(
-                    $"Music Song.Duration unreliable ({reported:0.##}s); using file estimate {estimated:0.#}s");
-            }
-
-            return estimated;
-        }
-
-        if (!_loggedBadDuration)
-        {
-            _loggedBadDuration = true;
-            Console.WriteLine(
-                $"Music duration unknown ({reported:0.##}s); using 3min fallback for playlist advance");
-        }
-
-        return 180f;
-    }
-
-    private static float EstimateDurationFromOggFile(string assetPath)
-    {
-        string relative = assetPath.Replace('\\', '/');
-        if (!relative.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase))
-        {
-            relative += ".ogg";
-        }
-
-        string? fullPath = ContentResolver.TryResolveContentFilePath(relative);
-        if (fullPath is null)
-        {
-            return 0f;
-        }
-
-        try
-        {
-            long bytes = new FileInfo(fullPath).Length;
-            float seconds = bytes * 8f / 128_000f;
-            return Math.Clamp(seconds, MinTrustedDurationSeconds, 20f * 60f);
-        }
-        catch
-        {
-            return 0f;
-        }
     }
 }

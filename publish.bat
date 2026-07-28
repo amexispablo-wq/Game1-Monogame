@@ -17,7 +17,9 @@ set "EXITCODE=%ERRORLEVEL%"
 
 if not "%EXITCODE%"=="0" (
   echo.
-  echo PUBLISH FAILED — see messages above.
+  echo PUBLISH FAILED - see messages above.
+  echo.
+  pause
   exit /b %EXITCODE%
 )
 

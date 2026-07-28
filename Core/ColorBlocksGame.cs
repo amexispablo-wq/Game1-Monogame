@@ -319,26 +319,29 @@ public class ColorBlocksGame : Game
     {
         switch (scene)
         {
-            case GameScene gameScene:
-                if (SettingsManager.CurrentSettings.ContinueMenuMusicInLevels
-                    && _music.IsMenuPlaylistActive)
+            case GameScene:
+                // Same menu shuffle: audible if option on, muted (still running) if off.
+                // Never Stop — DesktopGL MediaPlayer scratches after Stop/EOF reuse.
+                if (SettingsManager.CurrentSettings.ContinueMenuMusicInLevels)
                 {
                     _music.KeepMenuMusicThroughGameplay();
                 }
                 else
                 {
-                    _music.PlayLevelMusic(gameScene.LevelMusicId);
+                    _music.MuteMenuMusic();
                 }
 
                 break;
             case EditorScene:
+                // Only place that leaves the menu playlist.
                 _music.PlayEditorMusic();
                 break;
             case RopeSandboxScene:
             case ReplayViewerScene:
-                _music.Stop();
+                _music.MuteMenuMusic();
                 break;
             default:
+                // Leaving editor / any menu → audible menu shuffle (restarts only if needed).
                 _music.PlayMenuMusic();
                 break;
         }
