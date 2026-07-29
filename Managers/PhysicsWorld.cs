@@ -168,6 +168,7 @@ public sealed class PhysicsWorld
                 continue;
             }
 
+            HashSet<Player> carriedThisMove = null;
             foreach (Player player in Players)
             {
                 if (!CanPlayerRidePlatform(player, platform, oldBounds, rideFeetSlop, delta))
@@ -178,6 +179,8 @@ public sealed class PhysicsWorld
                 player.Position += delta;
                 // Glue feet to the new top so float/int error cannot seed ejection overlaps.
                 StickPlayerToPlatformTop(player, platform);
+                carriedThisMove ??= new HashSet<Player>();
+                carriedThisMove.Add(player);
             }
 
             foreach (Rope rope in Ropes)
@@ -200,6 +203,10 @@ public sealed class PhysicsWorld
 
             // Platform rose into a non-carried player (or residual clip): snap standing contacts, never eject.
             RescueStandingPenetration(platform, standingRescueMaxPen);
+
+            // Push non-carried players out of overlap caused by this platform's motion,
+            // so the ejection system does not misinterpret a side hit as an interior embed.
+            ResolveMotionPenetration(platform, oldBounds, carriedThisMove, standingRescueMaxPen);
         }
     }
 
@@ -223,6 +230,73 @@ public sealed class PhysicsWorld
             }
 
             StickPlayerToPlatformTop(player, platform);
+        }
+    }
+
+    private void ResolveMotionPenetration(
+        Platform platform,
+        Rectangle oldBounds,
+        HashSet<Player> carriedPlayers,
+        float standingRescueMaxPen)
+    {
+        foreach (Player player in Players)
+        {
+            if (player.IsFrozen || player.IsEjecting)
+            {
+                continue;
+            }
+
+            if (carriedPlayers != null && carriedPlayers.Contains(player))
+            {
+                continue;
+            }
+
+            if (!IsPlatformCollidableFor(player, platform))
+            {
+                continue;
+            }
+
+            // Already handled by standing rescue — don't double-correct.
+            if (TryGetStandingTopPenetration(player, platform.Bounds, standingRescueMaxPen, out _))
+            {
+                continue;
+            }
+
+            if (!CollisionHelper.Intersects(player.Position, player.Size, platform.Bounds))
+            {
+                continue;
+            }
+
+            // Only push if the platform's motion created or deepened this overlap.
+            bool wasOverlapping = CollisionHelper.Intersects(player.Position, player.Size, oldBounds);
+            if (wasOverlapping)
+            {
+                continue;
+            }
+
+            if (!CollisionHelper.TryGetMinimumTranslationVector(
+                    player.Position,
+                    player.Size,
+                    platform.Bounds,
+                    out Vector2 escape,
+                    out Vector2 escapeDirection,
+                    out _))
+            {
+                continue;
+            }
+
+            player.Position += escape;
+
+            // Zero velocity component that pushes into the platform (same feel as solid wall).
+            if (escapeDirection.X != 0f && MathF.Sign(player.Velocity.X) != MathF.Sign(escapeDirection.X))
+            {
+                player.Velocity = new Vector2(0f, player.Velocity.Y);
+            }
+
+            if (escapeDirection.Y != 0f && MathF.Sign(player.Velocity.Y) != MathF.Sign(escapeDirection.Y))
+            {
+                player.Velocity = new Vector2(player.Velocity.X, 0f);
+            }
         }
     }
 

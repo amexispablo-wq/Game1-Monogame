@@ -150,26 +150,6 @@ function Copy-RequiredSteamAssets {
         Copy-Item -LiteralPath $SteamNativeDll -Destination $destDll -Force
         Write-Host "Copied steam_api64.dll"
     }
-
-    $vdfSources = @(
-        @{ Src = "Steam\steam_input_manifest.vdf"; Dest = "Steam\steam_input_manifest.vdf" },
-        @{ Src = "Steam\controller_gamepad.vdf"; Dest = "Steam\controller_gamepad.vdf" }
-    )
-    foreach ($v in $vdfSources) {
-        $src = Join-Path $ScriptRoot $v.Src
-        $dst = Join-Path $PublishDir $v.Dest
-        if (-not (Test-Path -LiteralPath $src)) {
-            Fail "Steam VDF source missing: $($v.Src)"
-        }
-
-        $dstDir = Split-Path -Parent $dst
-        if (-not (Test-Path -LiteralPath $dstDir)) {
-            New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
-        }
-
-        Copy-Item -LiteralPath $src -Destination $dst -Force
-        Write-Host "Copied $($v.Dest)"
-    }
 }
 
 function Sync-ShippedContent {
@@ -449,14 +429,6 @@ function Test-PublishOutput {
         Fail "Steamworks.NET.dll missing from Publish"
     }
     Write-Host "OK Steamworks.NET.dll"
-
-    foreach ($vdfRel in @("Steam\steam_input_manifest.vdf", "Steam\controller_gamepad.vdf")) {
-        $vdfPath = Join-Path $PublishDir $vdfRel
-        if (-not (Test-Path -LiteralPath $vdfPath)) {
-            Fail "$vdfRel missing from Publish (Steam Input official configs)"
-        }
-        Write-Host "OK $vdfRel"
-    }
 
     $sdl = Join-Path $PublishDir "SDL2.dll"
     if (-not (Test-Path -LiteralPath $sdl)) {

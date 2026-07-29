@@ -61,12 +61,12 @@ public static class LeaderboardSanity
             return false;
         }
 
-        float roundedScore = BestTimeStorage.RoundToCentiseconds(timeSeconds);
+        float roundedScore = BestTimeStorage.RoundToTenThousandths(timeSeconds);
         float durationDelta = MathF.Abs(replay.Metadata.DurationSeconds - roundedScore);
         if (durationDelta > ReplayDurationToleranceSeconds)
         {
             reason =
-                $"Replay duration {replay.Metadata.DurationSeconds:F2}s diverges from score {roundedScore:F2}s";
+                $"Replay duration {replay.Metadata.DurationSeconds:F4}s diverges from score {roundedScore:F4}s";
             return false;
         }
 

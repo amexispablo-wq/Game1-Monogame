@@ -9,6 +9,7 @@ public sealed class GameSnapshot
     public LevelSnapshot Level { get; init; }
     public TimerSnapshot Timer { get; init; }
     public RopeGameplayMode RopeMode { get; init; }
+    public float LavaSurfaceY { get; init; }
     public List<PlayerSnapshot> Players { get; init; } = new();
     public List<RopeSnapshot> Ropes { get; init; } = new();
 }

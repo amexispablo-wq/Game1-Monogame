@@ -382,7 +382,8 @@ public sealed class LeaderboardScene : IScene
         int inner = Math.Max(1, rowWidth - (edgePad * 2));
 
         int rankW = 56;
-        int timeW = 100;
+        // MM:SS:FFFF (+ optional "!" suspicious) at text scale 2.
+        int timeW = 148;
         int dateW = 120;
         int verW = 56;
         int modeW = 56;
@@ -402,7 +403,7 @@ public sealed class LeaderboardScene : IScene
                     dateW--;
                     need--;
                 }
-                else if (timeW > 72)
+                else if (timeW > 120)
                 {
                     timeW--;
                     need--;

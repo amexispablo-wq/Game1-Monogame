@@ -31,6 +31,8 @@ public sealed class MenuPartyDanceStage
 
     private Rectangle _bounds;
     private Rectangle _boomboxHitBounds;
+    private Rectangle _prevHitBounds;
+    private Rectangle _nextHitBounds;
     private float _danceTime;
 
     public void SetBounds(Rectangle bounds) => _bounds = bounds;
@@ -46,8 +48,27 @@ public sealed class MenuPartyDanceStage
 
         game.Party.EnsureMenuDanceStyles();
 
-        if (game.Input.LeftMousePressed && _boomboxHitBounds.Width > 0
-            && _boomboxHitBounds.Contains(game.Input.UiPointerPosition))
+        if (!game.Input.LeftMousePressed)
+        {
+            return;
+        }
+
+        Point pointer = game.Input.UiPointerPosition;
+        if (_prevHitBounds.Width > 0 && _prevHitBounds.Contains(pointer))
+        {
+            GameAudio.PlayMenuPress();
+            game.Music.SkipPreviousMenuTrack();
+            return;
+        }
+
+        if (_nextHitBounds.Width > 0 && _nextHitBounds.Contains(pointer))
+        {
+            GameAudio.PlayMenuPress();
+            game.Music.SkipNextMenuTrack();
+            return;
+        }
+
+        if (_boomboxHitBounds.Width > 0 && _boomboxHitBounds.Contains(pointer))
         {
             ToggleMusicMute(game);
         }
@@ -56,6 +77,8 @@ public sealed class MenuPartyDanceStage
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel, ColorBlocksGame game)
     {
         _boomboxHitBounds = Rectangle.Empty;
+        _prevHitBounds = Rectangle.Empty;
+        _nextHitBounds = Rectangle.Empty;
 
         if (_bounds.Width <= 0 || _bounds.Height <= 0)
         {
@@ -82,7 +105,9 @@ public sealed class MenuPartyDanceStage
         int bodyToBoomGap = count <= 1
             ? Math.Max(40, bodySize / 2)
             : Math.Max(12, bodySize / 5);
-        int stackHeight = bodySize + bodyToBoomGap + boomboxHeight;
+        int skipBtnSize = Math.Max(18, boomboxHeight / 2);
+        int boomToSkipGap = Math.Max(8, boomboxHeight / 5);
+        int stackHeight = bodySize + bodyToBoomGap + boomboxHeight + boomToSkipGap + skipBtnSize;
         int originX = _bounds.X + Math.Max(0, (_bounds.Width - rowWidth) / 2);
         int originY = _bounds.Y + Math.Max(0, (_bounds.Height - stackHeight) / 2);
 
@@ -102,6 +127,19 @@ public sealed class MenuPartyDanceStage
         int drawBoomX = _bounds.X + (_bounds.Width - pulsedW) / 2;
         int drawBoomY = boomY + (int)MathF.Round(boomBob);
         DrawBoombox(spriteBatch, pixel, new Rectangle(drawBoomX, drawBoomY, pulsedW, pulsedH), musicOn);
+
+        int skipY = Math.Max(boomY + boomboxHeight, drawBoomY + pulsedH) + boomToSkipGap;
+        int skipGap = Math.Max(10, skipBtnSize / 2);
+        int skipRowW = (skipBtnSize * 2) + skipGap;
+        int skipLeft = _bounds.X + (_bounds.Width - skipRowW) / 2;
+        _prevHitBounds = new Rectangle(skipLeft, skipY, skipBtnSize, skipBtnSize);
+        _nextHitBounds = new Rectangle(skipLeft + skipBtnSize + skipGap, skipY, skipBtnSize, skipBtnSize);
+
+        Point pointer = game.Input.UiPointerPosition;
+        bool prevHover = _prevHitBounds.Contains(pointer);
+        bool nextHover = _nextHitBounds.Contains(pointer);
+        DrawSkipButton(spriteBatch, pixel, _prevHitBounds, previous: true, musicOn, prevHover);
+        DrawSkipButton(spriteBatch, pixel, _nextHitBounds, previous: false, musicOn, nextHover);
 
         for (int i = 0; i < count; i++)
         {
@@ -345,6 +383,68 @@ public sealed class MenuPartyDanceStage
             badgeW,
             badgeH);
         spriteBatch.Draw(pixel, badge, accent);
+    }
+
+    private static void DrawSkipButton(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        Rectangle bounds,
+        bool previous,
+        bool musicOn,
+        bool hover)
+    {
+        Color casing = hover ? new Color(72, 78, 92) : new Color(48, 52, 62);
+        Color accent = musicOn
+            ? (hover ? new Color(255, 120, 95) : new Color(220, 90, 70))
+            : (hover ? new Color(150, 158, 172) : new Color(110, 118, 132));
+
+        spriteBatch.Draw(pixel, bounds, casing);
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, Color.Black, 2);
+
+        int pad = Math.Max(4, bounds.Width / 5);
+        int innerW = Math.Max(4, bounds.Width - (pad * 2));
+        int innerH = Math.Max(4, bounds.Height - (pad * 2));
+        int cx = bounds.X + (bounds.Width / 2);
+        int cy = bounds.Y + (bounds.Height / 2);
+        int bar = Math.Max(2, bounds.Width / 8);
+
+        if (previous)
+        {
+            // |◀
+            spriteBatch.Draw(pixel, new Rectangle(bounds.X + pad, cy - (innerH / 2), bar, innerH), accent);
+            DrawChevron(spriteBatch, pixel, cx + 1, cy, innerW / 2, innerH, accent, pointLeft: true);
+        }
+        else
+        {
+            // ▶|
+            DrawChevron(spriteBatch, pixel, cx - 1, cy, innerW / 2, innerH, accent, pointLeft: false);
+            spriteBatch.Draw(
+                pixel,
+                new Rectangle(bounds.Right - pad - bar, cy - (innerH / 2), bar, innerH),
+                accent);
+        }
+    }
+
+    private static void DrawChevron(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        int tipX,
+        int tipY,
+        int halfW,
+        int halfH,
+        Color color,
+        bool pointLeft)
+    {
+        int steps = Math.Max(3, halfH / 2);
+        for (int i = 0; i < steps; i++)
+        {
+            float t = steps <= 1 ? 1f : i / (float)(steps - 1);
+            int rowHalf = Math.Max(1, (int)MathF.Round(halfH * 0.5f * (1f - t)));
+            int x = pointLeft
+                ? tipX - (int)MathF.Round(halfW * t)
+                : tipX + (int)MathF.Round(halfW * t) - 1;
+            spriteBatch.Draw(pixel, new Rectangle(x, tipY - rowHalf, 2, (rowHalf * 2) + 1), color);
+        }
     }
 
     private static void DrawSpeaker(

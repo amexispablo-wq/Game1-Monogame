@@ -13,13 +13,6 @@ public sealed class InputManager : ILocalPlayerInputSource
     private const float GamepadMoveDeadZone = GamepadDefaults.MoveDeadZone;
     /// <summary>Blocks confirm edges after scene change so A cannot double-fire into next menu.</summary>
     private const float MenuConfirmSceneSuppressSeconds = 0.15f;
-    /// <summary>
-    /// After Live→Soft Claim, ignore XInput Jump/Color/Respawn edges for this many frames.
-    /// Extra kick on transition; unstable Soft Claim also suppresses via SoftClaimUnstableSeconds.
-    /// </summary>
-    private const int SoftClaimXInputEdgeSuppressFrames = 12;
-    /// <summary>While Soft Claim younger than this, strip XInput digitals (thrash window).</summary>
-    private const float SoftClaimUnstableSeconds = 1.5f;
     /// <summary>Ignore Keyboard Respawn rising edges closer than this (phantom R clusters).</summary>
     private const float KeyboardRespawnDebounceSeconds = 0.4f;
 
@@ -27,9 +20,7 @@ public sealed class InputManager : ILocalPlayerInputSource
     private readonly Dictionary<int, PartyMember> _gameplayBindings = new();
     private readonly KeyboardBackend _keyboardBackend = new();
     private readonly GamepadBackend _gamepadBackend = new();
-    private SteamInputManager? _steamInput;
-    private SteamInputBackend? _steamBackend;
-    private IHaptics _haptics = DummyHaptics.Instance;
+    private readonly IHaptics _haptics = new GamepadHaptics();
     private KeyboardInputBindings _keyboardBindings;
     private GamepadButtonBindings _gamepadBindings;
     private KeyboardState _currentKeyboard;
@@ -38,8 +29,6 @@ public sealed class InputManager : ILocalPlayerInputSource
     private MouseState _previousMouse;
     private readonly GamePadState[] _currentGamepads = new GamePadState[MaxLocalPlayers];
     private readonly GamePadState[] _previousGamepads = new GamePadState[MaxLocalPlayers];
-    private readonly bool[] _prevSteamOwnedSlot = new bool[MaxLocalPlayers];
-    private readonly int[] _softClaimXInputEdgeSuppressRemaining = new int[MaxLocalPlayers];
     private bool _suppressMenuConfirmUntilRelease;
     private float _menuConfirmSuppressSeconds;
     private DateTime _lastKeyboardRespawnAcceptedUtc = DateTime.MinValue;
@@ -50,42 +39,10 @@ public sealed class InputManager : ILocalPlayerInputSource
         _gamepadBindings = GamepadButtonBindings.FromSettings(SettingsManager.CurrentSettings);
     }
 
-    /// <summary>
-    /// Optional Steam Input backend. Safe to skip when Steam unavailable.
-    /// </summary>
-    public void BindSteamInput(SteamInputManager steamInput)
-    {
-        _steamInput = steamInput;
-        _steamBackend = new SteamInputBackend(steamInput);
-        _haptics = new CompositeHaptics(steamInput);
-    }
-
-    public SteamInputManager? SteamInput => _steamInput;
     public IHaptics Haptics => _haptics;
-
-    /// <summary>Steam Input API initialized (may still have zero controllers).</summary>
-    public bool IsSteamInputEnabled => _steamInput is { IsInitialized: true };
-
-    /// <summary>
-    /// Steam Input owning at least one device with valid handles.
-    /// When false, GamepadBackend/XInput is used for pads; keyboard always works.
-    /// </summary>
-    public bool IsSteamControllerAvailable =>
-        _steamBackend is { IsActive: true } && _steamInput is { IsControllerAvailable: true };
-
-    /// <summary>
-    /// True only when Steam Input is actually managing a local controller.
-    /// Options rebind / glyph UI should use this — not mere init success.
-    /// </summary>
-    public bool IsSteamInputManagingControllers => IsSteamControllerAvailable;
 
     /// <summary>Backend currently driving local input (last activity + availability).</summary>
     public ActiveInputBackend ActiveInputBackend { get; private set; } = ActiveInputBackend.Keyboard;
-
-    /// <summary>Obsolete alias — prefer <see cref="IsSteamInputEnabled"/>.</summary>
-    public bool IsSteamInputActive => IsSteamInputEnabled;
-
-    public bool SteamInputOriginDumpPressed { get; private set; }
 
     public bool ExitPressed { get; private set; }
     public bool EnterPressed { get; private set; }
@@ -169,14 +126,14 @@ public sealed class InputManager : ILocalPlayerInputSource
     public bool GameplayInputBlocked { get; set; }
 
     /// <summary>
-    /// Central routing for Steam Move analog. Gameplay vs menu — set by ColorBlocksGame each frame.
+    /// Analog routing context — gameplay vs menu. Set by ColorBlocksGame each frame.
     /// </summary>
     public AnalogInputContext AnalogContext { get; set; } = AnalogInputContext.Menu;
 
-    /// <summary>Routed Move vector this frame (Steam Move when active; else aggregated from backends).</summary>
+    /// <summary>Routed Move vector this frame (gamepad left stick when Gameplay context).</summary>
     public Vector2 Move { get; private set; }
 
-    /// <summary>Routed menu navigation vector this frame (Steam Move when Menu context).</summary>
+    /// <summary>Routed menu navigation vector this frame (gamepad left stick when Menu context).</summary>
     public Vector2 MenuNavigate { get; private set; }
 
     private bool _virtualLeftClickRequested;
@@ -211,16 +168,6 @@ public sealed class InputManager : ILocalPlayerInputSource
             _currentGamepads[i] = GamePad.GetState((PlayerIndex)i);
         }
 
-        if (_steamInput is not null)
-        {
-            for (int i = 0; i < MaxLocalPlayers; i++)
-            {
-                _steamInput.UpdateDeadLiveDemotion(i, HasRealXInputPadActivity(i));
-            }
-        }
-
-        _steamBackend?.BeginFrame();
-        UpdateSoftClaimXInputEdgeSuppress();
         RouteAnalogVectors();
 
         UpdateMenuNavigation();
@@ -245,43 +192,29 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     private void RouteAnalogVectors()
     {
-        Vector2 steamMove = _steamBackend is { IsActive: true }
-            ? _steamBackend.MoveVector
-            : Vector2.Zero;
+        Vector2 stick = GetMenuLeftStick();
 
         if (AnalogContext == AnalogInputContext.Gameplay)
         {
-            Move = steamMove;
+            Move = stick;
             MenuNavigate = Vector2.Zero;
         }
         else
         {
             Move = Vector2.Zero;
-            MenuNavigate = steamMove;
+            MenuNavigate = stick;
         }
     }
 
     public InputGlyph GetActionGlyph(GameplayInputAction action, int localPlayerSlot = 0)
     {
-        // Glyphs only when Steam actually owns a device — else show gamepad rebind labels.
-        if (IsSteamInputManagingControllers && _steamInput is not null)
-        {
-            InputGlyph glyph = _steamInput.Glyphs.GetGlyph(action, localPlayerSlot);
-            if (glyph.FromSteam && !string.IsNullOrWhiteSpace(glyph.Label))
-            {
-                return glyph;
-            }
-        }
-
+        _ = localPlayerSlot;
         return InputGlyph.Fallback(
             GamepadDefaults.GetGamepadDisplayName(action, SettingsManager.CurrentSettings.GamepadBindings));
     }
 
     public string GetActionGlyphLabel(GameplayInputAction action, int localPlayerSlot = 0) =>
         GetActionGlyph(action, localPlayerSlot).Label;
-
-    public bool OpenSteamControllerConfiguration(int localPlayerSlot = 0) =>
-        _steamInput?.OpenSteamControllerConfiguration(localPlayerSlot) ?? false;
 
     private void UpdateReplayViewerInput()
     {
@@ -342,17 +275,6 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public bool IsAnyGamepadConnected()
     {
-        if (_steamBackend is { IsActive: true })
-        {
-            for (int i = 0; i < MaxLocalPlayers; i++)
-            {
-                if (_steamBackend.HasController(i))
-                {
-                    return true;
-                }
-            }
-        }
-
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
             if (_currentGamepads[i].IsConnected)
@@ -366,18 +288,8 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public Vector2 GetMenuLeftStick()
     {
-        if (TryGetSteamMoveStick(out Vector2 steamMove))
-        {
-            return steamMove;
-        }
-
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
-            if (IsSteamOwnedSlot(i))
-            {
-                continue;
-            }
-
             if (_currentGamepads[i].IsConnected)
             {
                 return GamepadDefaults.ProcessLeftStick(_currentGamepads[i].ThumbSticks.Left);
@@ -391,11 +303,6 @@ public sealed class InputManager : ILocalPlayerInputSource
     {
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
-            if (IsSteamOwnedSlot(i))
-            {
-                continue;
-            }
-
             if (_currentGamepads[i].IsConnected)
             {
                 return GamepadDefaults.ProcessRightStick(_currentGamepads[i].ThumbSticks.Right);
@@ -407,19 +314,8 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public Vector2 GetEditorLeftStick()
     {
-        // Prefer Steam Move — GamePad stick often broken/zero when Steam Input owns device.
-        if (TryGetSteamMoveStickRaw(out Vector2 raw))
-        {
-            return GamepadDefaults.ProcessEditorStick(raw);
-        }
-
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
-            if (IsSteamOwnedSlot(i))
-            {
-                continue;
-            }
-
             if (_currentGamepads[i].IsConnected)
             {
                 return GamepadDefaults.ProcessEditorStick(_currentGamepads[i].ThumbSticks.Left);
@@ -433,11 +329,6 @@ public sealed class InputManager : ILocalPlayerInputSource
     {
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
-            if (IsSteamOwnedSlot(i))
-            {
-                continue;
-            }
-
             if (_currentGamepads[i].IsConnected)
             {
                 return GamepadDefaults.ProcessEditorStick(_currentGamepads[i].ThumbSticks.Right);
@@ -445,66 +336,6 @@ public sealed class InputManager : ILocalPlayerInputSource
         }
 
         return Vector2.Zero;
-    }
-
-    private bool IsSteamOwnedSlot(int slot) =>
-        _steamBackend is not null && _steamBackend.HasController(slot);
-
-    private bool TryGetSteamMoveStick(out Vector2 processed)
-    {
-        processed = Vector2.Zero;
-        if (_steamBackend is null || !_steamBackend.IsActive)
-        {
-            return false;
-        }
-
-        for (int i = 0; i < MaxLocalPlayers; i++)
-        {
-            if (!_steamBackend.HasController(i))
-            {
-                continue;
-            }
-
-            Vector2 move = _steamBackend.GetMoveVector(i);
-            if (move != Vector2.Zero)
-            {
-                processed = move;
-                return true;
-            }
-        }
-
-        if (_steamBackend.MoveVector != Vector2.Zero)
-        {
-            processed = _steamBackend.MoveVector;
-            return true;
-        }
-
-        return false;
-    }
-
-    private bool TryGetSteamMoveStickRaw(out Vector2 raw)
-    {
-        raw = Vector2.Zero;
-        if (_steamInput is null || !_steamInput.IsInitialized || _steamBackend is null)
-        {
-            return false;
-        }
-
-        for (int i = 0; i < MaxLocalPlayers; i++)
-        {
-            if (!_steamBackend.HasController(i))
-            {
-                continue;
-            }
-
-            if (_steamInput.TryGetAnalog(i, SteamInputActionNames.Move, out float x, out float y))
-            {
-                raw = new Vector2(x, y);
-                return true;
-            }
-        }
-
-        return false;
     }
 
     public void ReloadKeyboardBindings()
@@ -544,21 +375,11 @@ public sealed class InputManager : ILocalPlayerInputSource
     }
 
     /// <summary>
-    /// True when a pad can be assigned in party UI: MonoGame XInput connected and/or Steam Input live.
+    /// True when a pad can be assigned in party UI (MonoGame GamePad connected).
     /// </summary>
     public bool IsGamepadAvailableForAssign(int deviceIndex)
     {
-        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers)
-        {
-            return false;
-        }
-
-        if (_currentGamepads[deviceIndex].IsConnected)
-        {
-            return true;
-        }
-
-        return _steamBackend is not null && _steamBackend.HasController(deviceIndex);
+        return IsGamepadConnected(deviceIndex);
     }
 
     public bool WasGamepadPressed(int deviceIndex, Buttons button)
@@ -569,6 +390,28 @@ public sealed class InputManager : ILocalPlayerInputSource
         }
 
         return IsGamepadPressed(_currentGamepads[deviceIndex], _previousGamepads[deviceIndex], button);
+    }
+
+    /// <summary>Party Start-to-join edge.</summary>
+    public bool WasGamepadJoinPressed(int deviceIndex)
+    {
+        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers)
+        {
+            return false;
+        }
+
+        return IsGamepadPressed(_currentGamepads[deviceIndex], _previousGamepads[deviceIndex], Buttons.Start);
+    }
+
+    /// <summary>Party Back-to-leave edge.</summary>
+    public bool WasGamepadLeavePressed(int deviceIndex)
+    {
+        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers)
+        {
+            return false;
+        }
+
+        return IsGamepadPressed(_currentGamepads[deviceIndex], _previousGamepads[deviceIndex], Buttons.Back);
     }
 
     public bool TryCaptureGamepadBinding(int deviceIndex, GameplayInputAction action, out string bindingToken)
@@ -652,15 +495,6 @@ public sealed class InputManager : ILocalPlayerInputSource
         if (member.InputSource == PartyInputSource.Gamepad)
         {
             int slot = member.ControllerId;
-            if (_steamBackend is not null && _steamBackend.HasController(slot))
-            {
-                string steamAction = SteamActionFor(action);
-                bindToken = "Steam:" + steamAction;
-                currDown = _steamBackend.IsHeld(slot, steamAction);
-                prevDown = _steamBackend.WasPressed(slot, steamAction) ? false : currDown;
-                return;
-            }
-
             if (slot >= 0 && slot < MaxLocalPlayers)
             {
                 GamepadActionBinding binding = PadBindForAction(action);
@@ -717,19 +551,6 @@ public sealed class InputManager : ILocalPlayerInputSource
         return GamepadDefaults.GetDisplayName(action);
     }
 
-    private static string SteamActionFor(GameplayInputAction action) => action switch
-    {
-        GameplayInputAction.Jump => SteamInputActionNames.Jump,
-        GameplayInputAction.Respawn => SteamInputActionNames.Respawn,
-        GameplayInputAction.RestartLevel => SteamInputActionNames.RestartLevel,
-        GameplayInputAction.Red => SteamInputActionNames.ColorRed,
-        GameplayInputAction.Blue => SteamInputActionNames.ColorBlue,
-        GameplayInputAction.Green => SteamInputActionNames.ColorGreen,
-        GameplayInputAction.FastFall => SteamInputActionNames.Jump,
-        GameplayInputAction.PullRope => SteamInputActionNames.PullRope,
-        _ => SteamInputActionNames.Jump
-    };
-
     private void UpdateGameplayInputs()
     {
         _gameplayInputByNetworkId.Clear();
@@ -746,35 +567,12 @@ public sealed class InputManager : ILocalPlayerInputSource
         }
     }
 
-    private void UpdateSoftClaimXInputEdgeSuppress()
-    {
-        for (int i = 0; i < MaxLocalPlayers; i++)
-        {
-            bool steamOwned = _steamBackend is not null && _steamBackend.HasController(i);
-            bool soft = _steamInput?.HasSoftClaim(i) == true;
-
-            if (_prevSteamOwnedSlot[i] && !steamOwned && soft)
-            {
-                _softClaimXInputEdgeSuppressRemaining[i] = SoftClaimXInputEdgeSuppressFrames;
-                InputDiagnostics.NoteXInputSoftClaimSuppress(i, SoftClaimXInputEdgeSuppressFrames);
-                DiagnosticsLog.Info("Input", $"SteamSlot[{i}] XInput edge suppress Soft Claim unstable");
-            }
-
-            if (!soft && !steamOwned)
-            {
-                _softClaimXInputEdgeSuppressRemaining[i] = 0;
-            }
-
-            _prevSteamOwnedSlot[i] = steamOwned;
-        }
-    }
-
     private PlayerInputState ReadMemberInput(PartyMember member)
     {
         return member.InputSource switch
         {
             PartyInputSource.Keyboard => ApplyKeyboardRespawnDebounce(ReadKeyboardInputState()),
-            PartyInputSource.Gamepad => ReadGamepadOrSteamInputState(member.ControllerId),
+            PartyInputSource.Gamepad => ReadGamepadInputState(member.ControllerId),
             PartyInputSource.SteamRemote => PlayerInputState.Empty,
             _ => PlayerInputState.Empty
         };
@@ -800,114 +598,6 @@ public sealed class InputManager : ILocalPlayerInputSource
         return state;
     }
 
-    private PlayerInputState ReadGamepadOrSteamInputState(int deviceIndex)
-    {
-        // Steam has priority only when the slot is live (actions bActive).
-        // Soft-claimed / dead-live-demoted handles fall through to MonoGame GamePad/XInput.
-        if (_steamBackend is not null && _steamBackend.HasController(deviceIndex))
-        {
-            return _steamBackend.ReadGameplay(deviceIndex);
-        }
-
-        PlayerInputState pad = ReadGamepadInputState(deviceIndex);
-        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers)
-        {
-            return pad;
-        }
-
-        bool soft = _steamInput?.HasSoftClaim(deviceIndex) == true;
-        float softSeconds = _steamInput?.SoftClaimSeconds ?? 0f;
-        bool unstableSoft = soft && softSeconds < SoftClaimUnstableSeconds;
-        bool hollow = soft
-            && GamepadDefaults.IsHollowCornerStick(_currentGamepads[deviceIndex].ThumbSticks.Left);
-        bool suppressEdges = _softClaimXInputEdgeSuppressRemaining[deviceIndex] > 0 || unstableSoft;
-        if (_softClaimXInputEdgeSuppressRemaining[deviceIndex] > 0)
-        {
-            _softClaimXInputEdgeSuppressRemaining[deviceIndex]--;
-        }
-
-        if (hollow || suppressEdges)
-        {
-            if (pad.JumpPressed || pad.RespawnPressed || pad.RequestedColor is not null)
-            {
-                string reason = hollow
-                    ? "hollow"
-                    : unstableSoft
-                        ? $"unstable softSec={softSeconds:0.00}"
-                        : "liveSoftKick";
-                InputDiagnostics.NoteSuppressedPadEdges(deviceIndex, pad, reason, softSeconds);
-            }
-
-            // Hollow Soft Claim: XInput stick/digitals untrusted.
-            // Unstable Soft Claim (<1.5s) or Live→Soft kick: strip rising edges.
-            return new PlayerInputState(
-                hollow ? 0f : pad.HorizontalMovement,
-                JumpPressed: false,
-                RespawnPressed: false,
-                FastFallHeld: hollow ? false : pad.FastFallHeld,
-                pad.PullRopeHeld,
-                RequestedColor: null,
-                Move: hollow ? Vector2.Zero : pad.Move,
-                pad.MenuNavigate);
-        }
-
-        return pad;
-    }
-
-    /// <summary>
-    /// Non-hollow XInput/SDL activity — used to demote zombie Steam live ownership.
-    /// </summary>
-    private bool HasRealXInputPadActivity(int deviceIndex)
-    {
-        if (deviceIndex < 0 || deviceIndex >= MaxLocalPlayers)
-        {
-            return false;
-        }
-
-        GamePadState current = _currentGamepads[deviceIndex];
-        if (!current.IsConnected)
-        {
-            return false;
-        }
-
-        Vector2 rawLeft = current.ThumbSticks.Left;
-        if (GamepadDefaults.IsHollowCornerStick(rawLeft))
-        {
-            return false;
-        }
-
-        Vector2 left = GamepadDefaults.ProcessLeftStick(rawLeft);
-        if (left.LengthSquared() > 0.01f)
-        {
-            return true;
-        }
-
-        Vector2 right = GamepadDefaults.ProcessRightStick(current.ThumbSticks.Right);
-        if (right.LengthSquared() > 0.01f)
-        {
-            return true;
-        }
-
-        if (current.Triggers.Left > 0.1f || current.Triggers.Right > 0.1f)
-        {
-            return true;
-        }
-
-        // Held face/shoulder/stick/start/back or D-Pad — not only rising edges.
-        foreach (Buttons button in GamepadDefaults.CaptureButtons)
-        {
-            if (current.IsButtonDown(button))
-            {
-                return true;
-            }
-        }
-
-        return current.DPad.Up == ButtonState.Pressed
-            || current.DPad.Down == ButtonState.Pressed
-            || current.DPad.Left == ButtonState.Pressed
-            || current.DPad.Right == ButtonState.Pressed;
-    }
-
     private void ResolveActiveInputBackend()
     {
         if (LastUsedPartyInputSource == PartyInputSource.Keyboard)
@@ -918,23 +608,11 @@ public sealed class InputManager : ILocalPlayerInputSource
 
         if (LastUsedPartyInputSource == PartyInputSource.Gamepad)
         {
-            int slot = LastUsedPartyControllerId;
-            if (slot >= 0 && IsSteamOwnedSlot(slot))
-            {
-                ActiveInputBackend = ActiveInputBackend.SteamInput;
-                return;
-            }
-
             ActiveInputBackend = ActiveInputBackend.Gamepad;
             return;
         }
 
-        // Idle: report preferred available backend (no Steam API in gameplay — just flags).
-        if (IsSteamControllerAvailable)
-        {
-            ActiveInputBackend = ActiveInputBackend.SteamInput;
-        }
-        else if (HasAnyXInputPadConnected())
+        if (HasAnyXInputPadConnected())
         {
             ActiveInputBackend = ActiveInputBackend.Gamepad;
         }
@@ -966,7 +644,6 @@ public sealed class InputManager : ILocalPlayerInputSource
         TuningPanelTogglePressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F6);
         BenchmarkTogglePressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F10);
         BenchmarkDebugTogglePressed = DeveloperSettings.DeveloperMode && IsNewKeyPress(Keys.F11);
-        SteamInputOriginDumpPressed = IsNewKeyPress(Keys.F10);
         ReplayForceSavePressed = DeveloperSettings.DeveloperMode
             ? ControlHeld && IsNewKeyPress(Keys.F10)
             : IsNewKeyPress(Keys.F10);
@@ -1108,7 +785,6 @@ public sealed class InputManager : ILocalPlayerInputSource
             }
 
             gamepadPause |= IsGamepadPressed(current, previous, GamepadDefaults.PauseButton);
-            // Always poll pad RestartLevel (Steam Input off / soft-claim / live). Steam OR below.
             if (WasBindingPressed(current, previous, _gamepadBindings.RestartLevel, GameplayInputAction.RestartLevel))
             {
                 gamepadRestartLevel = true;
@@ -1214,8 +890,6 @@ public sealed class InputManager : ILocalPlayerInputSource
         MenuStickDownHeld = stickDown;
         MenuStickLeftHeld = stickLeft;
         MenuStickRightHeld = stickRight;
-
-        SynthesizeSteamMenuFromGameplayActions();
     }
 
     private void ApplyMenuConfirmSuppression(float deltaSeconds)
@@ -1238,85 +912,6 @@ public sealed class InputManager : ILocalPlayerInputSource
         if (_suppressMenuConfirmUntilRelease && !MenuConfirmHeld)
         {
             _suppressMenuConfirmUntilRelease = false;
-        }
-    }
-
-    /// <summary>
-    /// Map Steam gameplay actions → menu flags by AnalogContext (Celeste-style).
-    /// Jump→Accept, ColorBlue→Cancel/Back, Pause→Pause, Move→stick nav.
-    /// </summary>
-    private void SynthesizeSteamMenuFromGameplayActions()
-    {
-        if (_steamBackend is null || !_steamBackend.IsActive)
-        {
-            return;
-        }
-
-        // Pause always available (open/close pause / popups).
-        if (_steamBackend.WasPressedAny(SteamInputActionNames.Pause))
-        {
-            GameplayPausePressed = true;
-            GamepadActivityThisFrame = true;
-            GamepadMenuActivityThisFrame = true;
-        }
-
-        // R3 / RestartLevel: available in gameplay and pause (not menu nav).
-        if (_steamBackend.WasPressedAny(SteamInputActionNames.RestartLevel))
-        {
-            GameplayRestartLevelPressed = true;
-            GamepadActivityThisFrame = true;
-        }
-
-        if (AnalogContext != AnalogInputContext.Menu)
-        {
-            return;
-        }
-
-        if (_steamBackend.WasPressedAny(SteamInputActionNames.Jump))
-        {
-            MenuConfirmPressed = true;
-            GamepadMenuConfirmPressed = true;
-            GamepadActivityThisFrame = true;
-            GamepadMenuActivityThisFrame = true;
-        }
-
-        if (_steamBackend.IsHeldAny(SteamInputActionNames.Jump))
-        {
-            MenuConfirmHeld = true;
-        }
-
-        if (_steamBackend.WasPressedAny(SteamInputActionNames.ColorBlue))
-        {
-            MenuCancelPressed = true;
-            GamepadMenuCancelPressed = true;
-            GamepadBackPressed = true;
-            GamepadActivityThisFrame = true;
-            GamepadMenuActivityThisFrame = true;
-        }
-
-        Vector2 nav = _steamBackend.MoveVector;
-        if (nav.Y > GamepadDefaults.MenuStickDirectionThreshold)
-        {
-            MenuStickUpHeld = true;
-            GamepadActivityThisFrame = true;
-        }
-
-        if (nav.Y < -GamepadDefaults.MenuStickDirectionThreshold)
-        {
-            MenuStickDownHeld = true;
-            GamepadActivityThisFrame = true;
-        }
-
-        if (nav.X < -GamepadDefaults.MenuStickDirectionThreshold)
-        {
-            MenuStickLeftHeld = true;
-            GamepadActivityThisFrame = true;
-        }
-
-        if (nav.X > GamepadDefaults.MenuStickDirectionThreshold)
-        {
-            MenuStickRightHeld = true;
-            GamepadActivityThisFrame = true;
         }
     }
 
@@ -1381,38 +976,9 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     private void UpdateLastUsedPartyInput()
     {
-        if (_steamBackend is not null && _steamBackend.IsActive)
-        {
-            for (int i = 0; i < MaxLocalPlayers; i++)
-            {
-                if (!_steamBackend.HasController(i))
-                {
-                    continue;
-                }
-
-                if (_steamBackend.WasPressed(i, SteamInputActionNames.Jump)
-                    || _steamBackend.WasPressed(i, SteamInputActionNames.PullRope)
-                    || _steamBackend.WasPressed(i, SteamInputActionNames.Respawn)
-                    || _steamBackend.WasPressed(i, SteamInputActionNames.RestartLevel)
-                    || _steamBackend.IsHeld(i, SteamInputActionNames.PullRope)
-                    || HasSteamAnalogActivity(i))
-                {
-                    LastUsedPartyInputSource = PartyInputSource.Gamepad;
-                    LastUsedPartyControllerId = i;
-                    return;
-                }
-            }
-        }
-
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
             if (!_currentGamepads[i].IsConnected)
-            {
-                continue;
-            }
-
-            // Prefer Steam slot ownership when handle mapped — skip raw pad to avoid double claim.
-            if (_steamBackend is not null && _steamBackend.HasController(i))
             {
                 continue;
             }
@@ -1430,22 +996,6 @@ public sealed class InputManager : ILocalPlayerInputSource
             LastUsedPartyInputSource = PartyInputSource.Keyboard;
             LastUsedPartyControllerId = -1;
         }
-    }
-
-    private bool HasSteamAnalogActivity(int localPlayerSlot)
-    {
-        if (_steamInput is null)
-        {
-            return false;
-        }
-
-        if (!_steamInput.TryGetAnalog(localPlayerSlot, SteamInputActionNames.Move, out float x, out float y))
-        {
-            return false;
-        }
-
-        Vector2 processed = GamepadDefaults.ProcessLeftStick(new Vector2(x, y));
-        return processed.LengthSquared() > 0.0001f;
     }
 
     private bool HasKeyboardGameplayActivity()
@@ -1494,32 +1044,6 @@ public sealed class InputManager : ILocalPlayerInputSource
 
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
-            if (_steamBackend is not null && _steamBackend.HasController(i))
-            {
-                // Colors are gameplay-only; in menus ColorBlue is Cancel.
-                if (AnalogContext != AnalogInputContext.Gameplay)
-                {
-                    continue;
-                }
-
-                if (_steamBackend.WasPressed(i, SteamInputActionNames.ColorRed))
-                {
-                    return GameColor.Red;
-                }
-
-                if (_steamBackend.WasPressed(i, SteamInputActionNames.ColorBlue))
-                {
-                    return GameColor.Blue;
-                }
-
-                if (_steamBackend.WasPressed(i, SteamInputActionNames.ColorGreen))
-                {
-                    return GameColor.Green;
-                }
-
-                continue;
-            }
-
             GamePadState current = _currentGamepads[i];
             GamePadState previous = _previousGamepads[i];
             if (!current.IsConnected)
@@ -1579,10 +1103,10 @@ public sealed class InputManager : ILocalPlayerInputSource
                 GetSettingKey(settings, "Respawn", Keys.R),
                 GetSettingKey(settings, "FastFall", Keys.S),
                 GetSettingKey(settings, "PullRope", Keys.Space),
-                GetSettingKey(settings, "RestartLevel", Keys.F5),
+                GetSettingKey(settings, "RestartLevel", Keys.F),
                 GetSettingKey(settings, "Red", Keys.J),
-                GetSettingKey(settings, "Blue", Keys.K),
-                GetSettingKey(settings, "Green", Keys.L));
+                GetSettingKey(settings, "Blue", Keys.L),
+                GetSettingKey(settings, "Green", Keys.K));
         }
 
         private static Keys GetSettingKey(GameSettings settings, string actionName, Keys fallback)

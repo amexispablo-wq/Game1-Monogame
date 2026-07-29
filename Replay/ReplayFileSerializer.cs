@@ -28,7 +28,12 @@ public static class ReplayFileSerializer
     float officialBestTime,
     int playerCount)
   {
-    int ticksPerSecond = Math.Max(1, data.Header.TicksPerSecond);
+    // Death → restart-from-start used to leave pre-restart frames in the buffer, so
+    // DurationSeconds (frame count) could exceed the official timer. Trim to the last
+    // contiguous timer run before writing a best-replay / Steam upload payload.
+    ReplayData trimmed = TrimToLastTimerRun(data);
+    int ticksPerSecond = Math.Max(1, trimmed.Header.TicksPerSecond);
+    float roundedBest = BestTimeStorage.RoundToTenThousandths(officialBestTime);
     return new ReplayFile
     {
       Metadata = new ReplayFileMetadata
@@ -36,16 +41,129 @@ public static class ReplayFileSerializer
         FormatVersion = ReplayFileMetadata.CurrentFormatVersion,
         LevelId = levelId,
         LevelContentHash = LevelContentHash.ComputeForLevel(levelId),
-        DataChecksum = ComputeDataChecksum(data),
-        DurationSeconds = data.Frames.Length / (float)ticksPerSecond,
+        DataChecksum = ComputeDataChecksum(trimmed),
+        DurationSeconds = roundedBest,
         PlayerCount = playerCount,
-        OfficialBestTime = officialBestTime,
-        RopeMode = data.Header.RopeMode,
-        LavaRiseEnabled = data.Header.LavaRiseEnabled,
+        OfficialBestTime = roundedBest,
+        RopeMode = trimmed.Header.RopeMode,
+        LavaRiseEnabled = trimmed.Header.LavaRiseEnabled,
         TicksPerSecond = ticksPerSecond
       },
-      Data = data
+      Data = trimmed
     };
+  }
+
+  /// <summary>
+  /// Drops frames recorded before the last timer restart (ElapsedTime drop after a
+  /// non-trivial value). Keeps a clean run when the player died and restarted from start
+  /// without clearing the session buffer.
+  /// </summary>
+  public static ReplayData TrimToLastTimerRun(ReplayData data)
+  {
+    ReplayFrameSnapshot[] frames = data.Frames;
+    if (frames.Length <= 1)
+    {
+      return data;
+    }
+
+    int start = 0;
+    float previousElapsed = frames[0].Timer.ElapsedTime;
+    for (int i = 1; i < frames.Length; i++)
+    {
+      float elapsed = frames[i].Timer.ElapsedTime;
+      if (previousElapsed > 0.5f && elapsed < 0.05f)
+      {
+        start = i;
+      }
+
+      previousElapsed = elapsed;
+    }
+
+    if (start <= 0)
+    {
+      return data;
+    }
+
+    var trimmedFrames = new ReplayFrameSnapshot[frames.Length - start];
+    Array.Copy(frames, start, trimmedFrames, 0, trimmedFrames.Length);
+    DiagnosticsLog.Info(
+      "Replay",
+      $"Trimmed {start} pre-restart frames ({frames.Length} → {trimmedFrames.Length})");
+    return new ReplayData
+    {
+      Header = data.Header,
+      Frames = trimmedFrames
+    };
+  }
+
+  /// <summary>
+  /// Rewrites a best-replay whose DurationSeconds diverges from the official score
+  /// (legacy death-restart recordings). Returns false when the file cannot be made valid.
+  /// </summary>
+  public static bool TryRepairDurationMismatch(string path, float expectedScoreSeconds, out string reason)
+  {
+    reason = string.Empty;
+    if (!File.Exists(path))
+    {
+      reason = "Official PB upload requires a best-replay file.";
+      return false;
+    }
+
+    ReplayFile? file = TryLoad(path, invalidateOnHashMismatch: false);
+    if (file is null)
+    {
+      reason = "Best-replay failed integrity checks.";
+      return false;
+    }
+
+    float roundedScore = BestTimeStorage.RoundToTenThousandths(expectedScoreSeconds);
+    float durationDelta = MathF.Abs(file.Metadata.DurationSeconds - roundedScore);
+    if (durationDelta <= LeaderboardSanity.ReplayDurationToleranceSeconds)
+    {
+      return true;
+    }
+
+    ReplayData trimmed = TrimToLastTimerRun(file.Data);
+    if (trimmed.Frames.Length == 0)
+    {
+      reason = "Best-replay has no frames after trim.";
+      return false;
+    }
+
+    float lastElapsed = trimmed.Frames[^1].Timer.IsComplete
+      ? trimmed.Frames[^1].Timer.FinalTime
+      : trimmed.Frames[^1].Timer.ElapsedTime;
+    float lastDelta = MathF.Abs(BestTimeStorage.RoundToTenThousandths(lastElapsed) - roundedScore);
+    if (lastDelta > LeaderboardSanity.ReplayDurationToleranceSeconds)
+    {
+      reason =
+        $"Replay duration {file.Metadata.DurationSeconds:F2}s diverges from score {roundedScore:F2}s";
+      return false;
+    }
+
+    var repaired = new ReplayFile
+    {
+      Metadata = new ReplayFileMetadata
+      {
+        FormatVersion = file.Metadata.FormatVersion,
+        LevelId = file.Metadata.LevelId,
+        LevelContentHash = file.Metadata.LevelContentHash,
+        DataChecksum = ComputeDataChecksum(trimmed),
+        DurationSeconds = roundedScore,
+        PlayerCount = file.Metadata.PlayerCount,
+        OfficialBestTime = roundedScore,
+        RopeMode = file.Metadata.RopeMode,
+        LavaRiseEnabled = file.Metadata.LavaRiseEnabled,
+        TicksPerSecond = file.Metadata.TicksPerSecond
+      },
+      Data = trimmed
+    };
+
+    Save(path, repaired);
+    DiagnosticsLog.Info(
+      "Replay",
+      $"Repaired duration mismatch for '{path}' ({file.Metadata.DurationSeconds:F2}s → {roundedScore:F2}s)");
+    return true;
   }
 
   public static void Save(string path, ReplayFile file)

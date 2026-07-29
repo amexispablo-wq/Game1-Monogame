@@ -12,7 +12,6 @@ public class ColorBlocksGame : Game
     private readonly GraphicsDeviceManager _graphics;
     private readonly SteamManager _steam = new();
     private readonly SteamCallbackManager _steamCallbacks = new();
-    private readonly SteamInputManager _steamInput;
     private readonly SteamLobbyService _steamLobby;
     private readonly SteamPartyService _steamParty;
     private readonly SteamGameNetworkService _steamGameNetwork;
@@ -57,7 +56,6 @@ public class ColorBlocksGame : Game
             DiagnosticsLog.Info("BuildInfo", line);
         }
 
-        SessionDiagnostics.LogSteamInputFileHashes();
         UserDataMigration.RunIfNeeded();
         SettingsManager.Initialize();
         SkinLibraryStorage.Initialize();
@@ -67,7 +65,6 @@ public class ColorBlocksGame : Game
         ApplyFrameSettings(settings.FpsLimit, applyChanges: false);
         ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode, applyChanges: false);
         _steamLobby = new SteamLobbyService(_steam, _steamCallbacks);
-        _steamInput = new SteamInputManager(_steam);
         _steamParty = new SteamPartyService(_steamLobby);
         _steamGameNetwork = new SteamGameNetworkService(_steam, _steamCallbacks);
         _steamInvites = new SteamInviteManager(_steam, _steamCallbacks, _steamLobby);
@@ -85,7 +82,6 @@ public class ColorBlocksGame : Game
     public Texture2D Pixel => _pixel;
     public SteamManager Steam => _steam;
     public SteamLobbyService SteamLobby => _steamLobby;
-    public SteamInputManager SteamInput => _steamInput;
     public SteamPartyService SteamParty => _steamParty;
     public SteamInviteManager SteamInvites => _steamInvites;
     public GameNetworkCoordinator GameNetwork => _gameNetwork;
@@ -315,6 +311,18 @@ public class ColorBlocksGame : Game
         return AnalogInputContext.Menu;
     }
 
+    /// <summary>
+    /// Re-apply BGM policy for the active scene (e.g. after Options Apply toggles
+    /// ContinueMenuMusicInLevels while paused in a level).
+    /// </summary>
+    public void RefreshSceneMusic()
+    {
+        if (_currentScene is not null)
+        {
+            ApplySceneMusic(_currentScene);
+        }
+    }
+
     private void ApplySceneMusic(IScene scene)
     {
         switch (scene)
@@ -362,10 +370,6 @@ public class ColorBlocksGame : Game
         if (_steam.IsInitialized)
         {
             _steamCallbacks.Register();
-            _steamInput.Initialize();
-            DiagnosticsLog.Info(
-                "Steam",
-                $"SteamInput.Init ok={_steamInput.IsInitialized} status='{_steamInput.InitializationStatus}'");
             Party.BindSteamServices(_steamLobby, _steamParty);
             _levelStartRouter.Bind();
             _steamLobby.LobbyReady += OnSteamLobbyReadyForExternalJoin;
@@ -375,7 +379,6 @@ public class ColorBlocksGame : Game
         }
 
         _input = new InputManager();
-        _input.BindSteamInput(_steamInput);
         Party.LocalSteamUsername = _steam.Username;
         LevelAuthorProvider.ResolveLocalAuthor = () =>
             _steam.IsInitialized && !string.IsNullOrWhiteSpace(_steam.Username) && _steam.Username != "Unavailable"
@@ -392,7 +395,6 @@ public class ColorBlocksGame : Game
         _spriteBatch = new SpriteBatch(GraphicsDevice);
         _pixel = new Texture2D(GraphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
-        _steamInput.Glyphs.BindGraphicsDevice(GraphicsDevice);
 
         var settings = SettingsManager.CurrentSettings;
         ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);
@@ -407,7 +409,6 @@ public class ColorBlocksGame : Game
     protected override void Update(GameTime gameTime)
     {
         _steam.RunCallbacks();
-        _steamInput.RunFrame();
         _input.ConfigurePointerTransform(Window.ClientBounds, GraphicsDevice.Viewport, _presentation);
         _input.AnalogContext = ResolveAnalogInputContext();
         _input.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -415,11 +416,6 @@ public class ColorBlocksGame : Game
         GameAudio.Update(dt);
         _music.Update(dt);
         _audioOutputHotSwap.Update(dt);
-
-        if (_input.SteamInputOriginDumpPressed && _steamInput.IsInitialized)
-        {
-            _steamInput.DumpActionOriginsToConsole();
-        }
 
         if (_input.ReplayBackgroundTogglePressed)
         {
@@ -478,7 +474,7 @@ public class ColorBlocksGame : Game
         {
             _benchmarkOverlay.Draw(_spriteBatch, _pixel, Viewport, BenchmarkManager.Runner);
             BenchmarkDebugOverlay.Draw(_spriteBatch, _pixel, Viewport, BenchmarkManager.Runner);
-            UserDataDebugOverlay.Draw(_spriteBatch, _pixel, Viewport, _steamInput, _input);
+            UserDataDebugOverlay.Draw(_spriteBatch, _pixel, Viewport, _input);
         }
 
         ReplayDebugOverlay.Draw(_spriteBatch, _pixel, Viewport);
@@ -506,7 +502,6 @@ public class ColorBlocksGame : Game
             _levelStartRouter.Unbind();
             _presentation.Dispose();
             _steamInvites.ClearPresence();
-            _steamInput.Shutdown();
             _steamWorkshop.Dispose();
             _steamCallbacks.Dispose();
             _steam.Shutdown();

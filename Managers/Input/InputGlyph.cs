@@ -8,20 +8,18 @@ namespace ColorBlocks;
 /// </summary>
 public readonly struct InputGlyph
 {
-    public InputGlyph(string label, string? glyphPath = null, Texture2D? texture = null, bool fromSteam = false)
+    public InputGlyph(string label, string? glyphPath = null, Texture2D? texture = null)
     {
         Label = label ?? string.Empty;
         GlyphPath = glyphPath;
         Texture = texture;
-        FromSteam = fromSteam;
     }
 
     public string Label { get; }
     public string? GlyphPath { get; }
     public Texture2D? Texture { get; }
-    public bool FromSteam { get; }
 
-    public static InputGlyph Fallback(string label) => new(label, fromSteam: false);
+    public static InputGlyph Fallback(string label) => new(label);
 
     public override string ToString() => Label;
 }

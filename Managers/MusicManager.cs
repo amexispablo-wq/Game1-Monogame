@@ -2,45 +2,47 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Microsoft.Xna.Framework.Audio;
 using Microsoft.Xna.Framework.Media;
+using NVorbis;
 
 namespace ColorBlocks;
 
 /// <summary>
-/// Simple BGM:
-/// - Menu shuffle playlist runs in menus (and in gameplay if "continue menu music" is on).
-/// - Gameplay with option off = same playlist, volume 0 (never Stop — DesktopGL scratches).
-/// - Level editor is the ONLY place that leaves the menu playlist; leaving editor restarts it.
-/// Fresh Song every Play — reusing an EOF Song scratches the first seconds.
+/// Menu shuffle on MediaPlayer never Stops (DesktopGL scratches after Stop/EOF reuse).
+/// Mute = volume 0, playlist keeps advancing.
+/// Editor: mute menu playlist + loop editor cue on a SoundEffectInstance (second channel).
+/// Leaving editor: stop editor SFX + unmute menu — no MediaPlayer restart.
 /// </summary>
 public sealed class MusicManager
 {
     public const string MenuMusicId = "MainMenu";
     public const string EditorMusicId = "levelEditor";
 
-    private const float MinAdvanceElapsedSeconds = 2f;
-    private const float EndAdvanceLeadSeconds = 0.75f;
-    private const float AdvanceCooldownSeconds = 0.3f;
+    private const float MinAdvanceElapsedSeconds = 8f;
+    private const float AdvanceCooldownSeconds = 2.5f;
+    private const float StuckStoppedSeconds = 0.4f;
+    private const float StuckPastEndGraceSeconds = 3f;
+    private const int MaxPlayHistory = 32;
     private const string MusicRootRelative = "Audio/Music";
     private const string EditorFolderName = "level editor";
 
-    private enum Mode
-    {
-        Menu,
-        Editor
-    }
-
     private readonly List<string> _menuTrackIds = new();
     private readonly List<string> _menuBag = new();
+    private readonly List<string> _playHistory = new();
     private readonly Dictionary<string, string> _trackAssetPaths = new(StringComparer.Ordinal);
+    private readonly List<Song> _retiredSongs = new();
     private readonly Random _random = new();
 
-    private Mode _mode = Mode.Menu;
     private Song? _currentSong;
     private string? _currentMusicId;
     private string? _editorAssetPath;
+    private SoundEffect? _editorEffect;
+    private SoundEffectInstance? _editorInstance;
     private bool _audible = true;
+    private bool _inEditor;
     private float _trackElapsed;
+    private float _stoppedElapsed;
     private float _trackDuration;
     private float _advanceCooldown;
     private bool _catalogLoaded;
@@ -48,13 +50,14 @@ public sealed class MusicManager
     public float Volume { get; private set; } = 0.75f;
     public bool IsPlaying => MediaPlayer.State == MediaState.Playing;
     public string? CurrentMusicId => _currentMusicId;
-    /// <summary>True while menu shuffle owns the stream (even if muted in gameplay).</summary>
-    public bool IsMenuPlaylistActive => _mode == Mode.Menu;
+    /// <summary>Menu shuffle owns MediaPlayer (even when muted / under editor).</summary>
+    public bool IsMenuPlaylistActive => true;
 
     public void ApplyVolume(float volume)
     {
         Volume = Math.Clamp(volume, 0f, 1f);
         ApplyEffectiveVolume();
+        ApplyEditorVolume();
     }
 
     public void Update(float dt)
@@ -69,108 +72,292 @@ public sealed class MusicManager
             _advanceCooldown = Math.Max(0f, _advanceCooldown - dt);
         }
 
+        // Menu playlist always advances (muted under gameplay/editor is fine).
         if (_currentMusicId is null)
+        {
+            EnsureMenuPlaylistPlaying();
+            return;
+        }
+
+        MediaState state = MediaPlayer.State;
+        if (state == MediaState.Playing)
+        {
+            _trackElapsed += dt;
+            _stoppedElapsed = 0f;
+        }
+        else if (state == MediaState.Stopped)
+        {
+            _stoppedElapsed += dt;
+        }
+
+        // ONLY advance after MediaPlayer reports Stopped (and we already heard enough of
+        // this track). Early Play(next) races the old Song finished callback → new track
+        // dies after ~1-2s / intro "loop" flap.
+        // Also ignore Stopped while advance cooldown is active (post-Play race).
+        if (_advanceCooldown > 0f)
         {
             return;
         }
 
-        if (MediaPlayer.State == MediaState.Playing)
+        // Old Song finished-callback can Stop a brand-new Play. Restart SAME track instead
+        // of skipping — user hears intro once, not a stuttering intro loop across songs.
+        if (state == MediaState.Stopped
+            && _stoppedElapsed >= StuckStoppedSeconds
+            && _trackElapsed < MinAdvanceElapsedSeconds
+            && _currentMusicId is not null
+            && IsMenuTrack(_currentMusicId))
         {
-            _trackElapsed += dt;
+            string retryId = _currentMusicId;
+            string assetPath = _trackAssetPaths.TryGetValue(retryId, out string? mapped)
+                ? mapped
+                : $"{MusicRootRelative}/{retryId}";
+            DiagnosticsLog.Info(
+                "Music",
+                $"Retry same track after early Stop (elapsed={_trackElapsed:0.#}s stopped={_stoppedElapsed:0.#}s)");
+            if (!PlayFreshMenuTrack(retryId, assetPath, recordHistory: false))
+            {
+                PlayNextMenuTrack();
+            }
+
+            return;
         }
 
-        bool nearEnd = _trackDuration > MinAdvanceElapsedSeconds
-            && MediaPlayer.State == MediaState.Playing
-            && _trackElapsed >= MinAdvanceElapsedSeconds
-            && _trackElapsed >= _trackDuration - EndAdvanceLeadSeconds;
-        bool stopped = MediaPlayer.State == MediaState.Stopped
+        bool naturalEnd = state == MediaState.Stopped
+            && _stoppedElapsed >= StuckStoppedSeconds
             && _trackElapsed >= MinAdvanceElapsedSeconds;
+        // Fallback if DesktopGL never leaves Playing after EOF (silent loop / stuck).
+        bool stuckPastEnd = state == MediaState.Playing
+            && _trackDuration >= MinAdvanceElapsedSeconds
+            && _trackElapsed >= _trackDuration + StuckPastEndGraceSeconds;
 
-        if ((!nearEnd && !stopped) || _advanceCooldown > 0f)
+        if (!naturalEnd && !stuckPastEnd)
         {
             return;
         }
 
         _advanceCooldown = AdvanceCooldownSeconds;
-
-        if (_mode == Mode.Menu)
-        {
-            PlayNextMenuTrack();
-        }
-        else
-        {
-            // Single editor loop via fresh Play (IsRepeating is unreliable after EOF on DesktopGL).
-            PlayEditorTrack();
-        }
+        DiagnosticsLog.Info(
+            "Music",
+            $"Advance next (state={state} elapsed={_trackElapsed:0.#}s stopped={_stoppedElapsed:0.#}s dur={_trackDuration:0.#}s)");
+        PlayNextMenuTrack();
     }
 
-    /// <summary>Menus: audible menu shuffle. Restarts only if not already playing a menu track.</summary>
+    /// <summary>Menus: audible menu shuffle. Never restarts if already playing.</summary>
     public void PlayMenuMusic()
     {
+        LeaveEditorLayer();
         _audible = true;
         ApplyEffectiveVolume();
-
-        if (_mode == Mode.Menu
-            && _currentMusicId is not null
-            && MediaPlayer.State == MediaState.Playing
-            && IsMenuTrack(_currentMusicId))
-        {
-            return;
-        }
-
-        _mode = Mode.Menu;
-        PlayNextMenuTrack();
+        EnsureMenuPlaylistPlaying();
     }
 
     /// <summary>Gameplay with continue-menu-music: keep shuffle, volume on.</summary>
     public void KeepMenuMusicThroughGameplay()
     {
+        LeaveEditorLayer();
         _audible = true;
-        _mode = Mode.Menu;
         ApplyEffectiveVolume();
-
-        if (_currentMusicId is null || MediaPlayer.State != MediaState.Playing || !IsMenuTrack(_currentMusicId))
-        {
-            PlayNextMenuTrack();
-        }
+        EnsureMenuPlaylistPlaying();
     }
 
-    /// <summary>
-    /// Gameplay without continue-menu-music (and sandbox/replay): mute only.
-    /// Playlist keeps running so return to menu never restarts a dead/EOF Song.
-    /// </summary>
+    /// <summary>Gameplay / sandbox / replay: mute only — playlist keeps running.</summary>
     public void MuteMenuMusic()
     {
+        LeaveEditorLayer();
         _audible = false;
-        _mode = Mode.Menu;
         ApplyEffectiveVolume();
-
-        if (_currentMusicId is null || MediaPlayer.State != MediaState.Playing || !IsMenuTrack(_currentMusicId))
-        {
-            PlayNextMenuTrack();
-        }
+        EnsureMenuPlaylistPlaying();
     }
 
-    /// <summary>Legacy name — level BGM is menu shuffle (muted or not), not per-level tracks.</summary>
+    /// <summary>Legacy — level BGM is muted-or-audible menu shuffle.</summary>
     public void PlayLevelMusic(string musicId) => MuteMenuMusic();
 
-    /// <summary>Only interruption of the menu playlist.</summary>
+    /// <summary>
+    /// Editor: mute menu playlist (still running) + loop editor cue on SoundEffect.
+    /// Leaving editor only unmutes — MediaPlayer never Stop/restart.
+    /// </summary>
     public void PlayEditorMusic()
     {
         EnsureCatalog();
-        _audible = true;
-        _mode = Mode.Editor;
+        _inEditor = true;
+        _audible = false;
         ApplyEffectiveVolume();
-        PlayEditorTrack();
+        EnsureMenuPlaylistPlaying();
+        StartEditorLayer();
     }
 
-    /// <summary>Mute helper used by sandbox/replay — same as MuteMenuMusic.</summary>
     public void Stop() => MuteMenuMusic();
+
+    /// <summary>Force next shuffle track (menu boombox skip).</summary>
+    public void SkipNextMenuTrack()
+    {
+        EnsureCatalog();
+        if (_menuTrackIds.Count == 0)
+        {
+            return;
+        }
+
+        _advanceCooldown = AdvanceCooldownSeconds;
+        _stoppedElapsed = 0f;
+        DiagnosticsLog.Info("Music", "Skip next (manual)");
+        PlayNextMenuTrack();
+    }
+
+    /// <summary>Force previous track from history (menu boombox skip).</summary>
+    public void SkipPreviousMenuTrack()
+    {
+        EnsureCatalog();
+        if (_playHistory.Count == 0)
+        {
+            DiagnosticsLog.Info("Music", "Skip previous — empty history");
+            return;
+        }
+
+        string previousId = _playHistory[^1];
+        _playHistory.RemoveAt(_playHistory.Count - 1);
+
+        if (_currentMusicId is not null
+            && !string.Equals(_currentMusicId, previousId, StringComparison.Ordinal))
+        {
+            _menuBag.Add(_currentMusicId);
+        }
+
+        string assetPath = _trackAssetPaths.TryGetValue(previousId, out string? mapped)
+            ? mapped
+            : $"{MusicRootRelative}/{previousId}";
+
+        _advanceCooldown = AdvanceCooldownSeconds;
+        _stoppedElapsed = 0f;
+        DiagnosticsLog.Info("Music", $"Skip previous → '{previousId}'");
+        if (!PlayFreshMenuTrack(previousId, assetPath, recordHistory: false))
+        {
+            PlayNextMenuTrack();
+        }
+    }
+
+    private void EnsureMenuPlaylistPlaying()
+    {
+        if (_currentMusicId is null || !IsMenuTrack(_currentMusicId))
+        {
+            PlayNextMenuTrack();
+            return;
+        }
+
+        MediaState state = MediaPlayer.State;
+        if (state == MediaState.Playing)
+        {
+            return;
+        }
+
+        // Mute/volume/device hiccups can briefly Stop/Pause MediaPlayer. Do NOT treat that
+        // as "need next track" — that restarts audio from 0 and sounds like intro loop.
+        if (state == MediaState.Paused)
+        {
+            try
+            {
+                MediaPlayer.Resume();
+            }
+            catch
+            {
+                // ignore
+            }
+
+            if (MediaPlayer.State == MediaState.Playing)
+            {
+                return;
+            }
+        }
+
+        if (_currentSong is not null && (_trackElapsed > 0f || _advanceCooldown > 0f))
+        {
+            // Let Update() natural-end / stuckPastEnd advance when appropriate.
+            return;
+        }
+
+        PlayNextMenuTrack();
+    }
+
+    private void LeaveEditorLayer()
+    {
+        if (!_inEditor && _editorInstance is null)
+        {
+            return;
+        }
+
+        _inEditor = false;
+        StopEditorLayer();
+    }
+
+    private void StartEditorLayer()
+    {
+        if (!TryEnsureEditorEffect())
+        {
+            DiagnosticsLog.Info("Music", "Editor cue missing — menu playlist stays muted only");
+            return;
+        }
+
+        try
+        {
+            if (_editorInstance is null || _editorInstance.IsDisposed)
+            {
+                _editorInstance = _editorEffect!.CreateInstance();
+                _editorInstance.IsLooped = true;
+            }
+
+            ApplyEditorVolume();
+            if (_editorInstance.State != SoundState.Playing)
+            {
+                _editorInstance.Play();
+            }
+
+            DiagnosticsLog.Info("Music", "Editor cue playing (menu playlist muted, still running)");
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("Music", $"Editor cue failed: {ex.Message}");
+        }
+    }
+
+    private void StopEditorLayer()
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_editorInstance.IsDisposed)
+            {
+                _editorInstance.Stop();
+                _editorInstance.Dispose();
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        _editorInstance = null;
+    }
 
     private void ApplyEffectiveVolume()
     {
-        MediaPlayer.IsMuted = false;
-        MediaPlayer.Volume = _audible ? Volume : 0f;
+        // DesktopGL often ignores Volume=0 (still audible). Use IsMuted for real silence
+        // when gameplay mute is on or the slider is at zero.
+        bool wantAudible = _audible && Volume > 0.001f;
+        MediaPlayer.IsMuted = !wantAudible;
+        MediaPlayer.Volume = wantAudible ? Volume : 0f;
+    }
+
+    private void ApplyEditorVolume()
+    {
+        if (_editorInstance is null || _editorInstance.IsDisposed)
+        {
+            return;
+        }
+
+        _editorInstance.Volume = Math.Clamp(Volume, 0f, 1f);
     }
 
     private bool IsMenuTrack(string musicId) => _menuTrackIds.Contains(musicId);
@@ -202,7 +389,6 @@ public sealed class MusicManager
                 continue;
             }
 
-            // Root levelEditor.ogg is a stale publish leftover — editor track lives in subfolder.
             if (string.Equals(id, EditorMusicId, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -235,6 +421,78 @@ public sealed class MusicManager
             $"Catalog menu={_menuTrackIds.Count} editor='{_editorAssetPath}' root='{musicRoot}'");
     }
 
+    private bool TryEnsureEditorEffect()
+    {
+        if (_editorEffect is not null)
+        {
+            return true;
+        }
+
+        EnsureCatalog();
+        string assetPath = _editorAssetPath ?? $"{MusicRootRelative}/{EditorFolderName}/{EditorMusicId}";
+        string relative = assetPath.Replace('\\', '/');
+        if (!relative.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase))
+        {
+            relative += ".ogg";
+        }
+
+        string? fullPath = ContentResolver.TryResolveContentFilePath(relative);
+        if (fullPath is null)
+        {
+            fullPath = ContentResolver.TryResolveContentFilePath($"{MusicRootRelative}/{EditorMusicId}.ogg");
+        }
+
+        if (fullPath is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            _editorEffect = LoadOggAsSoundEffect(fullPath);
+            return _editorEffect is not null;
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("Music", $"Editor SoundEffect load failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static SoundEffect? LoadOggAsSoundEffect(string fullPath)
+    {
+        using var reader = new VorbisReader(fullPath);
+        int channels = reader.Channels;
+        int sampleRate = reader.SampleRate;
+        long totalSamples = reader.TotalSamples;
+        if (channels <= 0 || sampleRate <= 0 || totalSamples <= 0)
+        {
+            return null;
+        }
+
+        // Cap ~12 min mono/stereo 44.1k to avoid huge RAM (editor loops are short).
+        long maxSamples = sampleRate * channels * 60L * 12L;
+        int floatCount = (int)Math.Min(totalSamples * channels, maxSamples);
+        var floats = new float[floatCount];
+        int read = reader.ReadSamples(floats, 0, floatCount);
+        if (read <= 0)
+        {
+            return null;
+        }
+
+        var pcm = new byte[read * sizeof(short)];
+        for (int i = 0; i < read; i++)
+        {
+            float sample = Math.Clamp(floats[i], -1f, 1f);
+            short value = (short)(sample * short.MaxValue);
+            pcm[i * 2] = (byte)(value & 0xFF);
+            pcm[i * 2 + 1] = (byte)((value >> 8) & 0xFF);
+        }
+
+        var channel = channels == 1 ? AudioChannels.Mono : AudioChannels.Stereo;
+        return new SoundEffect(pcm, sampleRate, channel);
+    }
+
     private void PlayNextMenuTrack()
     {
         EnsureCatalog();
@@ -258,24 +516,13 @@ public sealed class MusicManager
                 ? mapped
                 : $"{MusicRootRelative}/{musicId}";
 
-            if (PlayFresh(musicId, assetPath, trackDuration: true))
+            if (PlayFreshMenuTrack(musicId, assetPath, recordHistory: true))
             {
                 return;
             }
         }
 
         _currentMusicId = null;
-    }
-
-    private void PlayEditorTrack()
-    {
-        EnsureCatalog();
-        string assetPath = _editorAssetPath ?? $"{MusicRootRelative}/{EditorFolderName}/{EditorMusicId}";
-        if (!PlayFresh(EditorMusicId, assetPath, trackDuration: true))
-        {
-            // Fallback root copy from old publishes.
-            PlayFresh(EditorMusicId, $"{MusicRootRelative}/{EditorMusicId}", trackDuration: true);
-        }
     }
 
     private void RefillBag(List<string> bag, List<string> sourceIds)
@@ -289,7 +536,7 @@ public sealed class MusicManager
         }
     }
 
-    private bool PlayFresh(string musicId, string assetPath, bool trackDuration)
+    private bool PlayFreshMenuTrack(string musicId, string assetPath, bool recordHistory = true)
     {
         Song? song;
         try
@@ -314,17 +561,33 @@ public sealed class MusicManager
             ApplyEffectiveVolume();
             MediaPlayer.Play(song);
 
-            DisposeCurrentSong();
+            // Never Dispose playlist Songs — DesktopGL MediaPlayer shares OpenAL state;
+            // Dispose(old) ~2s later was killing the new track (double-skip symptom).
+            string? previousId = _currentMusicId;
+            RetireCurrentSong();
             _currentSong = song;
             _currentMusicId = musicId;
             _trackElapsed = 0f;
-            _trackDuration = trackDuration ? ResolveDuration(song, assetPath) : 0f;
+            _stoppedElapsed = 0f;
+            _trackDuration = ResolveDuration(song, assetPath);
+            _advanceCooldown = AdvanceCooldownSeconds;
+
+            if (recordHistory
+                && previousId is not null
+                && !string.Equals(previousId, musicId, StringComparison.Ordinal))
+            {
+                _playHistory.Add(previousId);
+                while (_playHistory.Count > MaxPlayHistory)
+                {
+                    _playHistory.RemoveAt(0);
+                }
+            }
 
             DiagnosticsLog.Info(
                 "Music",
-                $"Play id='{musicId}' mode={_mode} audible={_audible} state={MediaPlayer.State} vol={MediaPlayer.Volume:0.##} dur={_trackDuration:0.#}s");
+                $"Play id='{musicId}' audible={_audible} editor={_inEditor} state={MediaPlayer.State} vol={MediaPlayer.Volume:0.##} muted={MediaPlayer.IsMuted} dur={_trackDuration:0.#}s");
 
-            return MediaPlayer.State == MediaState.Playing;
+            return MediaPlayer.State == MediaState.Playing || MediaPlayer.State == MediaState.Paused;
         }
         catch (Exception ex)
         {
@@ -334,17 +597,23 @@ public sealed class MusicManager
         }
     }
 
-    private void DisposeCurrentSong()
+    private void RetireCurrentSong()
     {
         if (_currentSong is null)
         {
             return;
         }
 
-        Song old = _currentSong;
+        // Keep alive so finalizer/Dispose cannot touch OpenAL under the active stream.
+        _retiredSongs.Add(_currentSong);
         _currentSong = null;
-        try { old.Dispose(); }
-        catch { /* DesktopGL teardown race */ }
+
+        // Soft cap — drop oldest refs only (still no Dispose).
+        const int maxRetired = 16;
+        if (_retiredSongs.Count > maxRetired)
+        {
+            _retiredSongs.RemoveAt(0);
+        }
     }
 
     private static float ResolveDuration(Song song, string assetPath)

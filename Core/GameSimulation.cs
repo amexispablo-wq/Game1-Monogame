@@ -249,11 +249,14 @@ public sealed class GameSimulation
 
         ApplyPowerUpRuntimeFromSnapshot(snapshot.Level);
 
+        LavaSurfaceY = snapshot.LavaSurfaceY;
         ElapsedTime = snapshot.Timer.ElapsedTime;
         TimerRunning = snapshot.Timer.IsRunning;
         IsLevelComplete = snapshot.Timer.IsComplete;
         FinalTime = snapshot.Timer.FinalTime;
         NewRecord = snapshot.Timer.NewRecord;
+        // Client never runs CheckLavaDeath; infer dead from timer (stopped, not complete).
+        IsPlayerDead = !snapshot.Timer.IsRunning && !snapshot.Timer.IsComplete;
         LastSnapshot = snapshot;
         SnapshotCount = Math.Max(SnapshotCount, snapshot.Sequence);
         CurrentTick = new SimulationTick(Math.Max(CurrentTick.Value, snapshot.Tick));
@@ -419,7 +422,7 @@ public sealed class GameSimulation
 
         TimerRunning = false;
         IsLevelComplete = true;
-        FinalTime = BestTimeStorage.RoundToCentiseconds(ElapsedTime);
+        FinalTime = BestTimeStorage.RoundToTenThousandths(ElapsedTime);
         ElapsedTime = FinalTime;
         if (RecordProgress)
         {
@@ -586,6 +589,7 @@ public sealed class GameSimulation
             Tick = tick.Value,
             Sequence = SnapshotCount + 1,
             RopeMode = _session.RopeGameplayMode,
+            LavaSurfaceY = LavaSurfaceY,
             Level = CreateLevelSnapshot(),
             Timer = new TimerSnapshot(
                 ElapsedTime,

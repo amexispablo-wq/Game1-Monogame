@@ -5,7 +5,7 @@ namespace ColorBlocks;
 
 public static class NetworkPacketCodec
 {
-    private const byte PacketVersion = 3;
+    private const byte PacketVersion = 4;
 
     public static byte[] EncodeInputFrame(InputFrame frame)
     {
@@ -35,6 +35,7 @@ public static class NetworkPacketCodec
         buffer.WriteInt32(snapshot.Sequence);
         buffer.WriteByte((byte)snapshot.RopeMode);
         WriteTimer(buffer, snapshot.Timer);
+        buffer.WriteSingle(snapshot.LavaSurfaceY);
 
         buffer.WriteUInt16((ushort)Math.Min(snapshot.Players.Count, ushort.MaxValue));
         foreach (PlayerSnapshot player in snapshot.Players)
@@ -130,6 +131,7 @@ public static class NetworkPacketCodec
             Sequence = reader.ReadInt32(),
             RopeMode = (RopeGameplayMode)reader.ReadByte(),
             Timer = ReadTimer(ref reader),
+            LavaSurfaceY = reader.ReadSingle(),
             Level = new LevelSnapshot()
         };
 

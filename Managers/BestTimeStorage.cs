@@ -56,7 +56,7 @@ public static class BestTimeStorage
             return false;
         }
 
-        float roundedTime = RoundToCentiseconds(elapsedSeconds);
+        float roundedTime = RoundToTenThousandths(elapsedSeconds);
         if (roundedTime < LeaderboardSanity.MinUploadTimeSeconds)
         {
             DiagnosticsLog.Info(
@@ -234,15 +234,42 @@ public static class BestTimeStorage
         }
     }
 
+    /// <summary>Local PB / HUD precision: 0.0001s (four fractional digits).</summary>
+    public static float RoundToTenThousandths(float elapsedSeconds)
+    {
+        return MathF.Floor(MathF.Max(0f, elapsedSeconds) * 10000f) / 10000f;
+    }
+
+    /// <summary>Legacy helper — prefer <see cref="RoundToTenThousandths"/> for local times.</summary>
     public static float RoundToCentiseconds(float elapsedSeconds)
     {
         return MathF.Floor(MathF.Max(0f, elapsedSeconds) * 100f) / 100f;
     }
 
+    /// <summary>
+    /// Steam KeepBest integer: seconds × 10000 (matches <see cref="FormatTime"/> FFFF).
+    /// Boards use the <c>_f4</c> name suffix so old centisecond boards stay historical.
+    /// </summary>
+    public static int ToLeaderboardScore(float seconds)
+    {
+        return (int)MathF.Floor(MathF.Max(0f, seconds) * 10000f);
+    }
+
+    /// <summary>Decode Steam leaderboard int back to seconds.</summary>
+    public static float FromLeaderboardScore(int score) => Math.Max(0, score) / 10000f;
+
+    /// <summary>Obsolete name — same as <see cref="ToLeaderboardScore"/>.</summary>
+    public static int ToCentisecondsScore(float seconds) => ToLeaderboardScore(seconds);
+
+    /// <summary>Display MM:SS:FFFF (four fractional digits).</summary>
     public static string FormatTime(float seconds)
     {
-        TimeSpan ts = TimeSpan.FromSeconds(seconds);
-        return $"{ts.Minutes:00}:{ts.Seconds:00}:{(int)(ts.Milliseconds / 10):00}";
+        int totalTenThousandths = (int)MathF.Floor(MathF.Max(0f, seconds) * 10000f);
+        int minutes = totalTenThousandths / 600_000;
+        int remaining = totalTenThousandths % 600_000;
+        int wholeSeconds = remaining / 10_000;
+        int frac = remaining % 10_000;
+        return $"{minutes:00}:{wholeSeconds:00}:{frac:0000}";
     }
 
     private static PlayerCountBestTimes GetOrCreatePlayerSlot(LevelBestTimesRecord record, int playerCount)

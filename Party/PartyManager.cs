@@ -677,19 +677,20 @@ public sealed class PartyManager
 
         for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
         {
-            if (!input.IsGamepadConnected(i))
+            // Join when MonoGame reports the pad available for assign.
+            if (!input.IsGamepadAvailableForAssign(i))
             {
                 continue;
             }
 
             if (!blockAutoJoin
-                && input.WasGamepadPressed(i, Buttons.Start)
+                && input.WasGamepadJoinPressed(i)
                 && !IsControllerAssigned(i))
             {
                 TryJoinGamepad(i);
             }
 
-            if (input.WasGamepadPressed(i, Buttons.Back) && IsControllerAssigned(i))
+            if (input.WasGamepadLeavePressed(i) && IsControllerAssigned(i))
             {
                 TryLeaveGamepad(i);
             }

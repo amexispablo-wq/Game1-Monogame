@@ -9,7 +9,7 @@ namespace ColorBlocks;
 
 /// <summary>
 /// Options > Debug > Export Diagnostics. Packs logs, build info, settings, replay metadata,
-/// Steam Input diagnostics, network diagnostics and a last-session summary into one zip.
+/// gamepad/input diagnostics, network diagnostics and a last-session summary into one zip.
 /// </summary>
 public static class DiagnosticsExporter
 {
@@ -30,7 +30,6 @@ public static class DiagnosticsExporter
             TryAddFile(zip, Path.Combine(AppContext.BaseDirectory, "Content", "version.json"), "version.json");
             TryAddFile(zip, UserDataPaths.SettingsFile, "Settings/settings.json");
             AddText(zip, "ReplayMetadata.txt", BuildReplayMetadata());
-            AddText(zip, "SteamInputDiagnostics.txt", BuildSteamInputDiagnostics(input));
             AddText(zip, "GamepadDiagnostics.txt", BuildGamepadDiagnostics(input));
             AddText(zip, "InputEdgeRing.txt", InputDiagnostics.BuildEdgeRingText());
             AddText(zip, "PhantomInputSummary.txt", InputDiagnostics.BuildPhantomInputSummary(input));
@@ -74,42 +73,6 @@ public static class DiagnosticsExporter
         }
 
         return sb.ToString();
-    }
-
-    private static string BuildSteamInputDiagnostics(InputManager? input)
-    {
-        List<string> lines = new()
-        {
-            $"steam_input_manifest.vdf SHA256: {SessionDiagnostics.SteamInputManifestHash}",
-            $"controller_gamepad.vdf SHA256  : {SessionDiagnostics.ControllerConfigHash}",
-            ""
-        };
-
-        if (input is not null)
-        {
-            lines.AddRange(input.BuildInputDiagnosticsSnapshot());
-            lines.Add("");
-        }
-        else
-        {
-            lines.Add("(InputManager not passed to Export — live snapshot unavailable)");
-            lines.Add("");
-        }
-
-        lines.Add("=== RECENT SteamInputLog RING ===");
-        if (SteamInputLog.Count == 0)
-        {
-            lines.Add("(empty)");
-        }
-        else
-        {
-            for (int i = 0; i < SteamInputLog.Count; i++)
-            {
-                lines.Add(SteamInputLog.GetLine(i));
-            }
-        }
-
-        return string.Join(Environment.NewLine, lines);
     }
 
     private static string BuildGamepadDiagnostics(InputManager? input)

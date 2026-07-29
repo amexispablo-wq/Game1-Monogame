@@ -8,6 +8,5 @@ namespace ColorBlocks;
 public enum ActiveInputBackend
 {
     Keyboard,
-    Gamepad,
-    SteamInput
+    Gamepad
 }

@@ -55,7 +55,7 @@ public sealed class OptionsScene : IScene
     // Buttons
     private Button _applyButton = new("Apply");
     private Button _backButton = new("Back");
-    private readonly Button _steamConfigButton = new("Steam Controller Configuration") { TextScale = 2 };
+    private readonly Button _resetDefaultsButton = new("Reset Defaults") { TextScale = 2 };
     private readonly UIFocusManager _focus = new();
     private readonly FocusableCycleSelector<DisplayMode> _displayModeFocus;
     private readonly FocusableCycleSelector<int> _fpsLimitFocus;
@@ -65,7 +65,7 @@ public sealed class OptionsScene : IScene
     private readonly FocusableResolutionDropdown _resolutionFocus;
     private readonly FocusableButton _applyFocus;
     private readonly FocusableButton _backFocus;
-    private FocusableButton? _steamConfigFocus;
+    private readonly FocusableButton _resetDefaultsFocus;
 
     // Control bindings
     private List<(string action, string keyName, string gamepadName)> _controlBindings = new();
@@ -187,33 +187,16 @@ public sealed class OptionsScene : IScene
         _resolutionDropdown.RefreshSupportedResolutions(_game.GraphicsDevice);
         _applyFocus = new FocusableButton(_applyButton);
         _backFocus = new FocusableButton(_backButton);
-        _steamConfigFocus = new FocusableButton(_steamConfigButton);
-        _steamConfigButton.FillColor = new Color(55, 78, 118);
-        _steamConfigButton.HoverFillColor = new Color(70, 98, 148);
-        _steamConfigButton.BorderColor = new Color(130, 160, 210);
-        _steamConfigButton.HoverBorderColor = new Color(190, 215, 255);
+        _resetDefaultsFocus = new FocusableButton(_resetDefaultsButton);
+        _resetDefaultsButton.FillColor = new Color(55, 78, 118);
+        _resetDefaultsButton.HoverFillColor = new Color(70, 98, 148);
+        _resetDefaultsButton.BorderColor = new Color(130, 160, 210);
+        _resetDefaultsButton.HoverBorderColor = new Color(190, 215, 255);
 
         _focus.ResetFocus();
         InitializeControlBindings();
         InitializeSoundEffectVolumes(pending);
     }
-
-    /// <summary>
-    /// Steam Input owns a live controller with valid actions.
-    /// Init-only is NOT enough — otherwise gamepad rebind stays locked with no pad.
-    /// </summary>
-    private bool IsSteamInputManagingControllers =>
-        _game.Input.IsSteamInputManagingControllers;
-
-    private bool HasSteamInputSoftClaim =>
-        _game.Input.SteamInput?.HasAnySoftClaim == true;
-
-    /// <summary>
-    /// Allow Steam binding panel when live OR soft-claimed (soft-claim needs Official layout fix).
-    /// </summary>
-    private bool CanOpenSteamControllerConfig =>
-        _game.Steam.IsOverlayEnabled
-        && (IsSteamInputManagingControllers || HasSteamInputSoftClaim);
 
     private void InitializeSoundEffectVolumes(GameSettings pending)
     {
@@ -259,17 +242,15 @@ public sealed class OptionsScene : IScene
         }
     }
 
-    private void RefreshSteamGlyphLabels()
+    private void RefreshControlBindingLabels()
     {
-        if (!IsSteamInputManagingControllers)
-        {
-            return;
-        }
-
         for (int i = 0; i < _controlBindings.Count; i++)
         {
             var (action, keyName, _) = _controlBindings[i];
-            _controlBindings[i] = (action, keyName, ResolveGamepadColumnText(action));
+            string pendingKey = SettingsManager.PendingSettings.Keybindings.TryGetValue(action, out string? stored)
+                ? stored
+                : keyName;
+            _controlBindings[i] = (action, pendingKey, ResolveGamepadColumnText(action));
         }
     }
 
@@ -280,19 +261,15 @@ public sealed class OptionsScene : IScene
             return "—";
         }
 
-        if (IsSteamInputManagingControllers)
-        {
-            InputGlyph glyph = _game.Input.GetActionGlyph(gameplayAction);
-            if (glyph.FromSteam && !string.IsNullOrWhiteSpace(glyph.Label))
-            {
-                return glyph.Label;
-            }
-
-            // Steam active but no origin yet — show action name (overlay remaps).
-            return FormatActionName(action);
-        }
-
         return GamepadDefaults.GetGamepadDisplayName(gameplayAction, SettingsManager.PendingSettings.GamepadBindings);
+    }
+
+    private void ResetControlDefaults()
+    {
+        GameSettings defaults = new();
+        SettingsManager.PendingSettings.Keybindings = new Dictionary<string, string>(defaults.Keybindings);
+        SettingsManager.PendingSettings.GamepadBindings.Clear();
+        InitializeControlBindings();
     }
 
     public void Update(GameTime gameTime)
@@ -379,16 +356,14 @@ public sealed class OptionsScene : IScene
         }
 
         if (_activeSection == OptionsSection.Controls
-            && CanOpenSteamControllerConfig
-            && _steamConfigFocus is not null
-            && _steamConfigFocus.WasActivated)
+            && _resetDefaultsFocus.WasActivated)
         {
-            _game.Input.OpenSteamControllerConfiguration();
+            ResetControlDefaults();
         }
 
         if (_activeSection == OptionsSection.Controls)
         {
-            RefreshSteamGlyphLabels();
+            RefreshControlBindingLabels();
         }
 
         SyncPendingSettings();
@@ -512,15 +487,7 @@ public sealed class OptionsScene : IScene
                     () => BeginRebind(captured, RebindKind.Keyboard));
                 var padFocus = new FocusableAction(
                     () => GetBindingCellBounds(layout, captured, BindingCell.Gamepad),
-                    () =>
-                    {
-                        if (IsSteamInputManagingControllers)
-                        {
-                            return false;
-                        }
-
-                        return BeginRebind(captured, RebindKind.Gamepad);
-                    });
+                    () => BeginRebind(captured, RebindKind.Gamepad));
 
                 _bindingFocusables.Add(keyFocus);
                 _bindingFocusables.Add(padFocus);
@@ -545,20 +512,17 @@ public sealed class OptionsScene : IScene
                 }
             }
 
-            if (CanOpenSteamControllerConfig && _steamConfigFocus is not null)
+            int resetIndex = _focus.Add(_resetDefaultsFocus, "ResetDefaults");
+            if (sectionExitIndex >= 0)
             {
-                int steamIndex = _focus.Add(_steamConfigFocus, "SteamControllerConfig");
-                if (sectionExitIndex >= 0)
-                {
-                    _focus.Navigation.LinkVertical(sectionExitIndex, steamIndex);
-                }
-                else
-                {
-                    _focus.Navigation.LinkVertical(controlsTabIndex, steamIndex);
-                }
-
-                sectionExitIndex = steamIndex;
+                _focus.Navigation.LinkVertical(sectionExitIndex, resetIndex);
             }
+            else
+            {
+                _focus.Navigation.LinkVertical(controlsTabIndex, resetIndex);
+            }
+
+            sectionExitIndex = resetIndex;
         }
 
         int applyIndex = _focus.Add(_applyFocus, "Apply");
@@ -588,11 +552,6 @@ public sealed class OptionsScene : IScene
     {
         if (kind == RebindKind.Gamepad)
         {
-            if (IsSteamInputManagingControllers)
-            {
-                return false;
-            }
-
             if (!Enum.TryParse(_controlBindings[index].action, out GameplayInputAction action)
                 || !GamepadDefaults.IsButtonRebindable(action))
             {
@@ -836,16 +795,9 @@ public sealed class OptionsScene : IScene
             DrawFittedLeft(spriteBatch, pixel, displayAction, labelBounds, 2, LabelColor);
         }
 
-        if ((IsSteamInputManagingControllers || HasSteamInputSoftClaim) && !layout.SteamNoteBounds.IsEmpty)
+        if (!layout.ResetDefaultsButtonBounds.IsEmpty)
         {
-            string note = HasSteamInputSoftClaim && !IsSteamInputManagingControllers
-                ? "Steam config not live — open Official layout"
-                : "Managed by Steam Input";
-            DrawFittedLeft(spriteBatch, pixel, note, layout.SteamNoteBounds, 1, MutedLabelColor);
-            if (CanOpenSteamControllerConfig)
-            {
-                _steamConfigButton.Draw(spriteBatch, pixel);
-            }
+            _resetDefaultsButton.Draw(spriteBatch, pixel);
         }
     }
 
@@ -861,13 +813,7 @@ public sealed class OptionsScene : IScene
 
         DrawFittedLeft(spriteBatch, pixel, "ACTION", actionHeader, 1, MutedLabelColor);
         DrawFittedCentered(spriteBatch, pixel, "KEYBOARD", keyboardHeader, 1, MutedLabelColor);
-        DrawFittedCentered(
-            spriteBatch,
-            pixel,
-            IsSteamInputManagingControllers ? "STEAM" : "GAMEPAD",
-            gamepadHeader,
-            1,
-            MutedLabelColor);
+        DrawFittedCentered(spriteBatch, pixel, "GAMEPAD", gamepadHeader, 1, MutedLabelColor);
 
         DrawColumnDivider(spriteBatch, pixel, layout, header.Y, header.Height);
     }
@@ -1168,12 +1114,12 @@ public sealed class OptionsScene : IScene
             "MoveRight" => "D",
             "Jump" => "W",
             "Respawn" => "R",
-            "RestartLevel" => "F5",
+            "RestartLevel" => "F",
             "PullRope" => "Space",
             "FastFall" => "S",
             "Red" => "J",
-            "Green" => "L",
-            "Blue" => "K",
+            "Green" => "K",
+            "Blue" => "L",
             _ => string.Empty
         };
     }
@@ -1219,7 +1165,7 @@ public sealed class OptionsScene : IScene
 
         _backButton.Bounds = layout.BackButtonBounds;
         _applyButton.Bounds = layout.ApplyButtonBounds;
-        _steamConfigButton.Bounds = layout.SteamConfigButtonBounds;
+        _resetDefaultsButton.Bounds = layout.ResetDefaultsButtonBounds;
     }
 
     private LayoutMetrics GetLayoutMetrics(Viewport viewport)
@@ -1257,15 +1203,13 @@ public sealed class OptionsScene : IScene
             + controlHeaderHeight + controlHeaderGap;
 
         int topBlockHeight = TitleHeight + titleToSectionsGap + 56 + sectionGap;
-        // Steam footer sits between control table and Back/Apply — reserve vertical space.
-        bool showSteamFooter = _activeSection == OptionsSection.Controls
-            && (CanOpenSteamControllerConfig || HasSteamInputSoftClaim);
-        const int steamNoteHeight = 22;
-        const int steamButtonHeight = 40;
-        int steamFooterHeight = showSteamFooter
-            ? 10 + steamNoteHeight + 8 + steamButtonHeight + 10
+        // Reset Defaults sits between control table and Back/Apply.
+        bool showControlsFooter = _activeSection == OptionsSection.Controls;
+        const int resetButtonHeight = 40;
+        int controlsFooterHeight = showControlsFooter
+            ? 10 + resetButtonHeight + 10
             : 0;
-        int buttonBlockHeight = ButtonHeight + sectionGap + steamFooterHeight;
+        int buttonBlockHeight = ButtonHeight + sectionGap + controlsFooterHeight;
 
         int displayRows = 4;
         int displayContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing
@@ -1384,28 +1328,20 @@ public sealed class OptionsScene : IScene
 
         int buttonWidth = Math.Clamp(contentBounds.Width / 5, 128, 150);
         int buttonTotalWidth = (buttonWidth * 2) + ButtonGap;
-        int steamNoteBoundsY = controlSectionBounds.Bottom + 10;
-        Rectangle steamNoteBounds = Rectangle.Empty;
-        Rectangle steamConfigButtonBounds = Rectangle.Empty;
-        if (showSteamFooter)
+        Rectangle resetDefaultsButtonBounds = Rectangle.Empty;
+        if (showControlsFooter)
         {
-            int steamInnerW = controlSectionBounds.Width - (sectionPadding * 2);
-            steamNoteBounds = new Rectangle(
+            int resetInnerW = controlSectionBounds.Width - (sectionPadding * 2);
+            int resetBtnW = Math.Min(320, resetInnerW);
+            resetDefaultsButtonBounds = new Rectangle(
                 controlSectionBounds.X + sectionPadding,
-                steamNoteBoundsY,
-                steamInnerW,
-                steamNoteHeight);
-            // Keep Steam button on its own row, left-aligned, never under Back/Apply.
-            int steamBtnW = Math.Min(480, steamInnerW);
-            steamConfigButtonBounds = new Rectangle(
-                controlSectionBounds.X + sectionPadding,
-                steamNoteBounds.Bottom + 8,
-                steamBtnW,
-                steamButtonHeight);
+                controlSectionBounds.Bottom + 10,
+                resetBtnW,
+                resetButtonHeight);
         }
 
-        int buttonY = showSteamFooter
-            ? steamConfigButtonBounds.Bottom + 12
+        int buttonY = showControlsFooter
+            ? resetDefaultsButtonBounds.Bottom + 12
             : controlSectionBounds.Bottom + sectionGap;
         int buttonX = panelBounds.Center.X - (buttonTotalWidth / 2);
         Rectangle backButtonBounds = new(buttonX, buttonY, buttonWidth, ButtonHeight);
@@ -1505,8 +1441,7 @@ public sealed class OptionsScene : IScene
             controlGamepadColumnWidth,
             controlCellPaddingH,
             controlCellPaddingV,
-            steamNoteBounds,
-            steamConfigButtonBounds,
+            resetDefaultsButtonBounds,
             backButtonBounds,
             applyButtonBounds);
     }
@@ -1868,6 +1803,9 @@ public sealed class OptionsScene : IScene
         _game.ApplyGraphicsSettings(settings.ResolutionWidth, settings.ResolutionHeight, settings.DisplayMode);
         _game.ApplyFrameSettings(settings.FpsLimit);
         _game.Music.ApplyVolume(settings.MusicVolume);
+        // ContinueMenuMusicInLevels only takes effect if we re-apply scene policy —
+        // otherwise pause→options→uncheck→Apply left gameplay music audible.
+        _game.RefreshSceneMusic();
         ColorPaletteManager.ApplySettings(settings.ColorMode);
     }
 
@@ -2015,8 +1953,7 @@ public sealed class OptionsScene : IScene
         int ControlGamepadColumnWidth,
         int ControlCellPaddingH,
         int ControlCellPaddingV,
-        Rectangle SteamNoteBounds,
-        Rectangle SteamConfigButtonBounds,
+        Rectangle ResetDefaultsButtonBounds,
         Rectangle BackButtonBounds,
         Rectangle ApplyButtonBounds);
 }

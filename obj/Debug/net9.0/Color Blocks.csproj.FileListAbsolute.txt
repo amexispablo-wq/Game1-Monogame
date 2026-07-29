@@ -45,8 +45,6 @@ C:\Users\amexi\Desktop\Game1 Monogame\bin\Debug\net9.0\steam_api64.dll
 c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\level.json
 c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Content\OfficialLevels\level_1.json
 c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\developer_settings.json
-c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Steam\controller_gamepad.vdf
-c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Steam\steam_input_manifest.vdf
 c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\steam_appid.txt
 c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\Color Blocks.exe
 c:\Users\amexi\Desktop\Color Blocks\bin\Debug\net9.0\steam_api64.dll

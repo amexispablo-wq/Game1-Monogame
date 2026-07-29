@@ -6,7 +6,7 @@ using Microsoft.Xna.Framework.Input;
 namespace ColorBlocks;
 
 /// <summary>
-/// MonoGame GamePad rumble fallback when Steam Input haptics unavailable.
+/// MonoGame GamePad rumble.
 /// </summary>
 public sealed class GamepadHaptics : IHaptics
 {

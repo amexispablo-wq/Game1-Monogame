@@ -24,7 +24,15 @@ public sealed class SteamGhostService
         public ulong UgcHandle { get; set; }
         public int LevelVersion { get; set; }
         public int PlayerCount { get; set; } = 1;
-        public int ScoreCentiseconds { get; set; }
+        /// <summary>Steam score units (seconds × 10000). Legacy JSON may use ScoreCentiseconds.</summary>
+        public int ScoreTenThousandths { get; set; }
+
+        /// <summary>Legacy field name from centisecond boards — mapped on read if needed.</summary>
+        public int ScoreCentiseconds
+        {
+            get => ScoreTenThousandths;
+            set => ScoreTenThousandths = value;
+        }
     }
 
     private readonly SteamLeaderboardService _leaderboards;
@@ -92,10 +100,12 @@ public sealed class SteamGhostService
 
             SteamLeaderboardEntry worldRecord = entries[0];
             ulong ghostHandle = ResolveGhostUgcHandle(worldRecord);
-            int scoreCentiseconds = (int)MathF.Round(
-                BestTimeStorage.RoundToCentiseconds(worldRecord.TimeSeconds) * 100f);
+            int scoreUnits = BestTimeStorage.ToLeaderboardScore(worldRecord.TimeSeconds);
             if (ghostHandle == 0)
             {
+                DiagnosticsLog.Info(
+                    "SteamGhost",
+                    $"WR has no UGC handle level={levelId} players={clamped} score={scoreUnits} — share/FileWrite never attached a replay");
                 onReady?.Invoke(HasCachedWorldRecordGhost(levelId, clamped));
                 return;
             }
@@ -105,7 +115,7 @@ public sealed class SteamGhostService
                 && cachedMeta.UgcHandle == ghostHandle
                 && cachedMeta.LevelVersion == levelVersion
                 && cachedMeta.PlayerCount == clamped
-                && cachedMeta.ScoreCentiseconds == scoreCentiseconds
+                && cachedMeta.ScoreTenThousandths == scoreUnits
                 && HasCachedWorldRecordGhost(levelId, clamped))
             {
                 onReady?.Invoke(true);
@@ -122,11 +132,11 @@ public sealed class SteamGhostService
                         UgcHandle = ghostHandle,
                         LevelVersion = levelVersion,
                         PlayerCount = clamped,
-                        ScoreCentiseconds = scoreCentiseconds
+                        ScoreTenThousandths = scoreUnits
                     });
                     DiagnosticsLog.Info(
                         "SteamGhost",
-                        $"World record ghost cached level={levelId} players={clamped} handle={ghostHandle} score={scoreCentiseconds}cs");
+                        $"World record ghost cached level={levelId} players={clamped} handle={ghostHandle} score={scoreUnits}");
                 }
 
                 onReady?.Invoke(success && HasCachedWorldRecordGhost(levelId, clamped));

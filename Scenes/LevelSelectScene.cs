@@ -63,6 +63,7 @@ public sealed class LevelSelectScene : IScene
     private bool _detailsHasWorldRecordReplay;
     private bool _detailsSupportsLeaderboards;
     private bool _wrPeekRequested;
+    private bool _localBestSteamSyncRequested;
 
     // UI
     private readonly Button _backButton = new("Back") { TextScale = 2 };
@@ -1981,6 +1982,7 @@ public sealed class LevelSelectScene : IScene
             _detailsWorkshopUpdatedText = null;
             _detailsWorkshopVisibilityText = null;
             _wrPeekRequested = false;
+            _localBestSteamSyncRequested = false;
             return;
         }
 
@@ -2012,6 +2014,7 @@ public sealed class LevelSelectScene : IScene
         _detailsWorkshopUpdatedText = null;
         _detailsWorkshopVisibilityText = null;
         _wrPeekRequested = false;
+        _localBestSteamSyncRequested = false;
 
         LevelSource source = LevelIdentity.GetSource(_selectedLevelId);
         if (source == LevelSource.Workshop
@@ -2081,7 +2084,9 @@ public sealed class LevelSelectScene : IScene
             _detailsHasWorldRecordReplay = ready;
             if (!ready)
             {
-                _alertPopup = new AlertPopup("WORLD RECORD", "World record replay is not available yet.");
+                _alertPopup = new AlertPopup(
+                    "WORLD RECORD",
+                    "World record replay not downloadable.\nWR score exists but has no attached replay UGC\n(Steam Cloud share failed on that run).");
                 return;
             }
 
@@ -2119,10 +2124,66 @@ public sealed class LevelSelectScene : IScene
                 if (entries is null || entries.Count == 0)
                 {
                     _detailsWorldRecordText = "--";
+                    TrySyncLocalBestIfAheadOfSteam(levelId, clamped, steamWorldRecord: null);
                     return;
                 }
 
                 _detailsWorldRecordText = BestTimeStorage.FormatTime(entries[0].TimeSeconds);
+                TrySyncLocalBestIfAheadOfSteam(levelId, clamped, entries[0].TimeSeconds);
+            });
+    }
+
+    /// <summary>
+    /// If local official PB beats Steam WR (or board empty), repair+upload the best replay.
+    /// Covers catch-up when a prior upload was skipped (duration mismatch, Cloud share fail).
+    /// Failed attempts clear the one-shot flag so the next peek can retry.
+    /// </summary>
+    private void TrySyncLocalBestIfAheadOfSteam(string levelId, int playerCount, float? steamWorldRecord)
+    {
+        if (_localBestSteamSyncRequested
+            || !BestTimeStorage.TryGetBestTime(levelId, playerCount, out float localBest))
+        {
+            return;
+        }
+
+        float roundedLocal = BestTimeStorage.RoundToTenThousandths(localBest);
+        if (steamWorldRecord is float wr
+            && BestTimeStorage.ToLeaderboardScore(roundedLocal)
+                >= BestTimeStorage.ToLeaderboardScore(wr))
+        {
+            return;
+        }
+
+        _localBestSteamSyncRequested = true;
+        string syncLevelId = levelId;
+        int syncPlayers = playerCount;
+        SteamBestReplayUploader.TryUpload(
+            _game,
+            syncLevelId,
+            syncPlayers,
+            roundedLocal,
+            steamWorldRecordSeconds: steamWorldRecord,
+            onComplete: success =>
+            {
+                if (_selectedLevelId != syncLevelId)
+                {
+                    return;
+                }
+
+                if (!success)
+                {
+                    // Allow another peek/sync attempt (Cloud/repair may succeed later).
+                    _localBestSteamSyncRequested = false;
+                    DiagnosticsLog.Info(
+                        "SteamLeaderboard",
+                        $"Catch-up upload failed for {syncLevelId} — will retry on next peek");
+                    return;
+                }
+
+                // Refresh WR label only after a successful catch-up upload.
+                _wrPeekRequested = false;
+                LevelMetadata? metadata = LevelLibrary.GetLevel(syncLevelId);
+                RequestWorldRecordPeek(syncLevelId, Math.Max(1, metadata?.Version ?? 1), syncPlayers);
             });
     }
 
@@ -2418,7 +2479,7 @@ public sealed class LevelSelectScene : IScene
 
         if (_watchWorldRecordButton != null && _detailsSupportsLeaderboards)
         {
-            bool wrReady = _detailsHasWorldRecordReplay || _detailsWorldRecordText is not null && _detailsWorldRecordText != "--";
+            bool wrReady = _detailsHasWorldRecordReplay;
             _watchWorldRecordButton.Bounds = new Rectangle(textX, y, textWidth, flex.ButtonH);
             _watchWorldRecordButton.FillColor = wrReady ? new Color(52, 61, 80) : new Color(40, 46, 58);
             _watchWorldRecordButton.TextColor = wrReady ? Color.White : new Color(140, 150, 165);

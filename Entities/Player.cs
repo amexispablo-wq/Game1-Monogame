@@ -502,6 +502,12 @@ public sealed class Player : INetworkEntity
 
     internal void ApplyGravity(float gravity, PlayerInputState input)
     {
+        // Platform eject owns the force vector — gravity bias made exits almost always sideways.
+        if (State == PlayerState.Ejecting && _ejectionPlatforms.Count > 0)
+        {
+            return;
+        }
+
         float gravityMultiplier = input.FastFallHeld && Velocity.Y > 0f
             ? GravityScale * FastFallGravityMultiplier
             : GravityScale;

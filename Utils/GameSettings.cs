@@ -35,10 +35,10 @@ public sealed class GameSettings
         { "Respawn", "R" },
         { "FastFall", "S" },
         { "Red", "J" },
-        { "Blue", "K" },
-        { "Green", "L" },
+        { "Blue", "L" },
+        { "Green", "K" },
         { "PullRope", "Space" },
-        { "RestartLevel", "F5" }
+        { "RestartLevel", "F" }
     };
 
     // Optional per-action gamepad button overrides. Empty = use GamepadDefaults.

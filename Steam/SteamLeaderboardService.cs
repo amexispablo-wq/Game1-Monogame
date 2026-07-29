@@ -52,7 +52,9 @@ public sealed class SteamLeaderboardEntry
 /// Steam Leaderboards for Official and Workshop levels. Local levels are never uploaded.
 /// Versioning reuses the existing level Version field. Boards are also split by player
 /// count so a 2-player run only competes on the 2-player board:
-/// "{levelId}_v{version}_p{playerCount}". Older boards stay historical.
+/// "{levelId}_v{version}_p{playerCount}_f4" (seconds×10000).
+/// Same-version legacy boards without _f4 (centiseconds) are merged on download for display —
+/// old scores pad to four fractional digits (÷100 → time with trailing 00). Uploads only go to _f4.
 /// </summary>
 public sealed class SteamLeaderboardService
 {
@@ -77,7 +79,12 @@ public sealed class SteamLeaderboardService
     public static int ClampPlayerCount(int playerCount) =>
         Math.Clamp(playerCount, 1, MaxTrackedPlayers);
 
+    /// <summary>Current board (four fractional digits / seconds×10000).</summary>
     public static string GetLeaderboardName(string levelId, int levelVersion, int playerCount) =>
+        $"{levelId.Replace(':', '_')}_v{Math.Max(1, levelVersion)}_p{ClampPlayerCount(playerCount)}_f4";
+
+    /// <summary>Pre-_f4 board for the same level version (centiseconds). Read-only merge source.</summary>
+    public static string GetLegacyLeaderboardName(string levelId, int levelVersion, int playerCount) =>
         $"{levelId.Replace(':', '_')}_v{Math.Max(1, levelVersion)}_p{ClampPlayerCount(playerCount)}";
 
     public void UploadRecord(SteamLeaderboardRecord record, Action<bool>? onComplete = null)
@@ -98,15 +105,14 @@ public sealed class SteamLeaderboardService
                 return;
             }
 
-            int scoreCentiseconds = (int)MathF.Round(
-                BestTimeStorage.RoundToCentiseconds(record.TimeSeconds) * 100f);
+            int score = BestTimeStorage.ToLeaderboardScore(record.TimeSeconds);
             int[] details = EncodeDetails(record, playerCount);
 
             SteamCallTracker.Track<LeaderboardScoreUploaded_t>(
                 SteamUserStats.UploadLeaderboardScore(
                     board,
                     ELeaderboardUploadScoreMethod.k_ELeaderboardUploadScoreMethodKeepBest,
-                    scoreCentiseconds,
+                    score,
                     details,
                     details.Length),
                 (uploaded, ioFailure) =>
@@ -114,7 +120,7 @@ public sealed class SteamLeaderboardService
                     bool success = !ioFailure && uploaded.m_bSuccess == 1;
                     DiagnosticsLog.Info(
                         "SteamLeaderboard",
-                        $"Upload board='{boardName}' score={scoreCentiseconds}cs changed={(success ? uploaded.m_bScoreChanged : 0)} ok={success}");
+                        $"Upload board='{boardName}' score={score} (x10000) changed={(success ? uploaded.m_bScoreChanged : 0)} ok={success}");
 
                     // Always re-attach UGC when we have a fresh share handle and the score was
                     // accepted as a new best. Waiting for Attach before onComplete ensures
@@ -139,7 +145,11 @@ public sealed class SteamLeaderboardService
         });
     }
 
-    /// <summary>Downloads entries asynchronously for one player-count board. Callback receives null on failure.</summary>
+    /// <summary>
+    /// Downloads entries for the current _f4 board and merges same-version legacy
+    /// centisecond board (÷100 → time with trailing 00 in FormatTime). Prefer _f4 when the
+    /// same Steam user appears on both. Callback receives null only if both fail.
+    /// </summary>
     public void DownloadEntries(
         string levelId,
         int levelVersion,
@@ -154,12 +164,44 @@ public sealed class SteamLeaderboardService
             return;
         }
 
-        string boardName = GetLeaderboardName(levelId, levelVersion, playerCount);
-        FindBoard(boardName, createIfMissing: true, board =>
+        int clamped = ClampPlayerCount(playerCount);
+        int version = Math.Max(1, levelVersion);
+        string currentName = GetLeaderboardName(levelId, version, clamped);
+        string legacyName = GetLegacyLeaderboardName(levelId, version, clamped);
+
+        DownloadBoardEntries(currentName, createIfMissing: true, scope, maxEntries, scoreDivisor: 10000f, current =>
+        {
+            DownloadBoardEntries(legacyName, createIfMissing: false, scope, maxEntries, scoreDivisor: 100f, legacy =>
+            {
+                if (current is null && legacy is null)
+                {
+                    onComplete(null);
+                    return;
+                }
+
+                IReadOnlyList<SteamLeaderboardEntry> merged = MergeSameVersionBoards(current, legacy, maxEntries);
+                DiagnosticsLog.Info(
+                    "SteamLeaderboard",
+                    $"Merge v{version} p{clamped}: f4={current?.Count ?? 0} legacy={legacy?.Count ?? 0} → {merged.Count}");
+                onComplete(merged);
+            });
+        });
+    }
+
+    private void DownloadBoardEntries(
+        string boardName,
+        bool createIfMissing,
+        LeaderboardScope scope,
+        int maxEntries,
+        float scoreDivisor,
+        Action<IReadOnlyList<SteamLeaderboardEntry>?> onComplete)
+    {
+        FindBoard(boardName, createIfMissing, board =>
         {
             if (board.m_SteamLeaderboard == 0)
             {
-                onComplete(null);
+                // Missing legacy board is empty, not a hard failure.
+                onComplete(createIfMissing ? null : Array.Empty<SteamLeaderboardEntry>());
                 return;
             }
 
@@ -176,7 +218,7 @@ public sealed class SteamLeaderboardService
                 {
                     if (ioFailure)
                     {
-                        onComplete(null);
+                        onComplete(createIfMissing ? null : Array.Empty<SteamLeaderboardEntry>());
                         return;
                     }
 
@@ -190,13 +232,73 @@ public sealed class SteamLeaderboardService
                             continue;
                         }
 
-                        entries.Add(DecodeEntry(raw, details));
+                        entries.Add(DecodeEntry(raw, details, scoreDivisor));
                     }
 
                     onComplete(entries);
                 });
         });
     }
+
+    /// <summary>
+    /// Legacy first, then _f4 overwrites same OwnerSteamId. Sort by time, re-rank 1..N.
+    /// Same level version only — callers must use matching board name helpers.
+    /// </summary>
+    private static IReadOnlyList<SteamLeaderboardEntry> MergeSameVersionBoards(
+        IReadOnlyList<SteamLeaderboardEntry>? currentF4,
+        IReadOnlyList<SteamLeaderboardEntry>? legacyCs,
+        int maxEntries)
+    {
+        var byOwner = new Dictionary<ulong, SteamLeaderboardEntry>();
+
+        if (legacyCs is not null)
+        {
+            foreach (SteamLeaderboardEntry entry in legacyCs)
+            {
+                byOwner[entry.OwnerSteamId] = entry;
+            }
+        }
+
+        if (currentF4 is not null)
+        {
+            foreach (SteamLeaderboardEntry entry in currentF4)
+            {
+                byOwner[entry.OwnerSteamId] = entry;
+            }
+        }
+
+        var sorted = new List<SteamLeaderboardEntry>(byOwner.Values);
+        sorted.Sort((a, b) => a.TimeSeconds.CompareTo(b.TimeSeconds));
+
+        int take = Math.Min(maxEntries, sorted.Count);
+        var ranked = new List<SteamLeaderboardEntry>(take);
+        for (int i = 0; i < take; i++)
+        {
+            ranked.Add(WithRank(sorted[i], i + 1));
+        }
+
+        return ranked;
+    }
+
+    private static SteamLeaderboardEntry WithRank(SteamLeaderboardEntry entry, int rank) =>
+        new()
+        {
+            Rank = rank,
+            TimeSeconds = entry.TimeSeconds,
+            OwnerSteamId = entry.OwnerSteamId,
+            SteamIds = entry.SteamIds,
+            PlayerNames = entry.PlayerNames,
+            PlayerCount = entry.PlayerCount,
+            CompletionDateUtc = entry.CompletionDateUtc,
+            GameVersion = entry.GameVersion,
+            BuildGuidPrefix = entry.BuildGuidPrefix,
+            LevelVersion = entry.LevelVersion,
+            ReplayId = entry.ReplayId,
+            GhostId = entry.GhostId,
+            IsLocalUser = entry.IsLocalUser,
+            IsFriend = entry.IsFriend,
+            IsSuspicious = entry.IsSuspicious
+        };
 
     private void FindBoard(string boardName, bool createIfMissing, Action<SteamLeaderboard_t> onFound)
     {
@@ -252,7 +354,7 @@ public sealed class SteamLeaderboardService
         return details;
     }
 
-    private static SteamLeaderboardEntry DecodeEntry(LeaderboardEntry_t raw, int[] details)
+    private static SteamLeaderboardEntry DecodeEntry(LeaderboardEntry_t raw, int[] details, float scoreDivisor)
     {
         ulong ownerId = raw.m_steamIDUser.m_SteamID;
         ulong localId = SteamUser.GetSteamID().m_SteamID;
@@ -309,10 +411,14 @@ public sealed class SteamLeaderboardService
             anyFriend |= SteamFriends.GetFriendRelationship(steamId) == EFriendRelationship.k_EFriendRelationshipFriend;
         }
 
+        float timeSeconds = scoreDivisor > 0f
+            ? Math.Max(0, raw.m_nScore) / scoreDivisor
+            : BestTimeStorage.FromLeaderboardScore(raw.m_nScore);
+
         var entry = new SteamLeaderboardEntry
         {
             Rank = raw.m_nGlobalRank,
-            TimeSeconds = raw.m_nScore / 100f,
+            TimeSeconds = timeSeconds,
             OwnerSteamId = ownerId,
             SteamIds = steamIds,
             PlayerNames = names,

@@ -53,6 +53,7 @@ public sealed class GameScene : IScene
     private readonly bool _editorTestMode;
     private bool _exited;
     private bool _savedNewRecordReplay;
+    private bool _persistedNewRecordReplay;
     private bool _photoMode;
     private bool _observedGameplayActive;
     private bool _clientReceivedSnapshot;
@@ -242,6 +243,7 @@ public sealed class GameScene : IScene
 
     private void FinalizeSessionRecording()
     {
+        PersistNewRecordIfNeeded();
         ReplayData? session = _replayRecorder.ExportReplay();
         if (session is null)
         {
@@ -249,17 +251,40 @@ public sealed class GameScene : IScene
         }
 
         HighlightManager.ProcessSession(session);
+    }
 
-        if (_savedNewRecordReplay || (_simulation.NewRecord && _simulation.IsLevelComplete))
+    /// <summary>
+    /// Saves best replay + kicks Steam upload as soon as a new official PB exists.
+    /// Must run before solo completion "REPLAY" resets the recorder — otherwise BestTimes
+    /// updates but the .replay file stays on the previous PB and Steam sync refuses.
+    /// </summary>
+    private void PersistNewRecordIfNeeded()
+    {
+        if (_editorTestMode || _persistedNewRecordReplay)
         {
-            ReplayFile replayFile = ReplayFileSerializer.CreateFromSession(
-                session,
-                _levelId,
-                _simulation.FinalTime,
-                _playerManager.Players.Count);
-            ReplayStorage.SaveBestReplay(replayFile, _playerManager.Players.Count);
-            UploadRecordToSteamLeaderboard();
+            return;
         }
+
+        if (!_savedNewRecordReplay && !(_simulation.NewRecord && _simulation.IsLevelComplete))
+        {
+            return;
+        }
+
+        ReplayData? session = _replayRecorder.ExportReplay();
+        if (session is null)
+        {
+            return;
+        }
+
+        _persistedNewRecordReplay = true;
+        _savedNewRecordReplay = true;
+        ReplayFile replayFile = ReplayFileSerializer.CreateFromSession(
+            session,
+            _levelId,
+            _simulation.FinalTime,
+            _playerManager.Players.Count);
+        ReplayStorage.SaveBestReplay(replayFile, _playerManager.Players.Count);
+        UploadRecordToSteamLeaderboard();
     }
 
     /// <summary>
@@ -270,10 +295,7 @@ public sealed class GameScene : IScene
     /// </summary>
     private void UploadRecordToSteamLeaderboard()
     {
-        if (!SteamLeaderboardService.SupportsLeaderboards(_levelId)
-            || !_game.SteamLeaderboards.IsAvailable
-            || _session.Role == GameSessionRole.Client
-            || _simulation.ForceUnofficial)
+        if (_session.Role == GameSessionRole.Client || _simulation.ForceUnofficial)
         {
             if (_simulation.ForceUnofficial)
             {
@@ -283,56 +305,11 @@ public sealed class GameScene : IScene
             return;
         }
 
-        int levelVersion = LevelLibrary.GetLevel(_levelId)?.Version ?? 1;
-        float finalTime = _simulation.FinalTime;
-        int playerCount = _playerManager.Players.Count;
-        string replayPath = ReplayStorage.GetBestReplayPath(_levelId, playerCount);
-
-        if (!LeaderboardSanity.TryValidateUpload(_levelId, finalTime, playerCount, replayPath, out string sanityReason))
-        {
-            DiagnosticsLog.Info("SteamLeaderboard", $"Skip upload — {sanityReason}");
-            MultiplayerDebug.LogSim($"Skip Steam leaderboard upload — {sanityReason}");
-            return;
-        }
-
-        var steamIds = new List<ulong>();
-        foreach (PartyMember member in _game.Party.Members)
-        {
-            if (member.OwningSteamId != 0 && !steamIds.Contains(member.OwningSteamId))
-            {
-                steamIds.Add(member.OwningSteamId);
-            }
-        }
-
-        string levelId = _levelId;
-        ColorBlocksGame game = _game;
-        int scoreCentiseconds = (int)MathF.Round(BestTimeStorage.RoundToCentiseconds(finalTime) * 100f);
-
-        game.SteamReplays.ShareReplayFile(
-            replayPath,
-            SteamReplayService.GetRemoteReplayName(levelId, playerCount, scoreCentiseconds),
-            ugcHandle =>
-            {
-                game.SteamLeaderboards.UploadRecord(
-                    new SteamLeaderboardRecord
-                    {
-                        LevelId = levelId,
-                        LevelVersion = levelVersion,
-                        TimeSeconds = finalTime,
-                        PlayerCount = playerCount,
-                        SteamIds = steamIds,
-                        ReplayUgcHandle = ugcHandle
-                    },
-                    success =>
-                    {
-                        if (success)
-                        {
-                            // Drop stale WR cache for this player-count board, then pull newest.
-                            SteamGhostService.InvalidateWorldRecordGhost(levelId, playerCount);
-                            game.SteamGhosts.EnsureWorldRecordGhost(levelId, playerCount);
-                        }
-                    });
-            });
+        SteamBestReplayUploader.TryUpload(
+            _game,
+            _levelId,
+            _playerManager.Players.Count,
+            _simulation.FinalTime);
     }
 
     private void OnLobbyMemberLeft(ulong steamId)
@@ -761,7 +738,7 @@ public sealed class GameScene : IScene
         _game.Input.GameplayInputBlocked = false;
         if (_simulation.IsPlayerDead)
         {
-            _simulation.RespawnFromStart();
+            RespawnFromStartClearingReplay();
         }
         else
         {
@@ -821,7 +798,7 @@ public sealed class GameScene : IScene
             case ConfirmActionKind.RestartLevel:
                 if (_simulation.IsPlayerDead)
                 {
-                    _simulation.RespawnFromStart();
+                    RespawnFromStartClearingReplay();
                 }
                 else
                 {
@@ -960,6 +937,11 @@ public sealed class GameScene : IScene
         _finalTime = _simulation.FinalTime;
         _newRecord = _simulation.NewRecord;
         _completionUiElapsed = 0f;
+        if (_simulation.NewRecord)
+        {
+            _savedNewRecordReplay = true;
+            PersistNewRecordIfNeeded();
+        }
     }
 
     private void UpdateCompletionUi(GameTime gameTime)
@@ -1154,6 +1136,8 @@ public sealed class GameScene : IScene
         _completionUiActive = false;
         _completionUiElapsed = 0f;
         _game.Input.GameplayInputBlocked = false;
+        // Solo REPLAY used to wipe the recorder before OnExit — PB time saved, replay not.
+        PersistNewRecordIfNeeded();
         ResetGameplaySession();
     }
 
@@ -1184,6 +1168,24 @@ public sealed class GameScene : IScene
         }
 
         _savedNewRecordReplay = false;
+        _persistedNewRecordReplay = false;
+    }
+
+    /// <summary>
+    /// Death / hot-restart from start: timer resets but historically left pre-death frames
+    /// in the session buffer, which made replay DurationSeconds diverge from FinalTime and
+    /// blocked Steam leaderboard uploads. Always clear the buffer with the timer.
+    /// </summary>
+    private void RespawnFromStartClearingReplay()
+    {
+        _simulation.RespawnFromStart();
+        if (!_editorTestMode)
+        {
+            _replayRecorder.ResetSession();
+        }
+
+        _savedNewRecordReplay = false;
+        _persistedNewRecordReplay = false;
     }
 
     private void ReturnToLevelSelect()
@@ -1252,15 +1254,7 @@ public sealed class GameScene : IScene
         }
     }
 
-    private static string FormatTime(float seconds)
-    {
-        int totalCentiseconds = (int)MathF.Floor(MathF.Max(0f, seconds) * 100f);
-        int minutes = totalCentiseconds / 6000;
-        int remainingCentiseconds = totalCentiseconds % 6000;
-        int wholeSeconds = remainingCentiseconds / 100;
-        int centiseconds = remainingCentiseconds % 100;
-        return $"{minutes:00}:{wholeSeconds:00}:{centiseconds:00}";
-    }
+    private static string FormatTime(float seconds) => BestTimeStorage.FormatTime(seconds);
 
     private static int GetResponsiveTextScale(Viewport viewport, int divisor, int min, int max)
     {
@@ -1313,7 +1307,6 @@ public sealed class GameScene : IScene
         int lineHeight = SimpleTextRenderer.MeasureString("A", scale).Y + 3;
         SteamManager steam = _game.Steam;
         SteamLobbyService lobby = _game.SteamLobby;
-        SteamInputManager steamInput = _game.SteamInput;
 
         List<string> lines = MultiplayerDebug.BuildPanelLines(
             lobby,
@@ -1328,23 +1321,19 @@ public sealed class GameScene : IScene
         lines.Add($"STEAM INIT {FormatDebugBool(steam.IsInitialized)} STATUS {steam.Status}");
         lines.Add($"STEAM USER {steam.Username} ID {steam.SteamId}");
         lines.Add($"OVERLAY {FormatDebugBool(steam.IsOverlayEnabled)}");
-        lines.Add($"STEAM INPUT {(steamInput.IsInitialized ? "Enabled" : "Disabled")} SET {steamInput.CurrentActionSetName}");
-        lines.Add($"LAYOUT {steamInput.ActiveLayoutLabel} GLYPH {steamInput.GlyphSource}");
-        lines.Add($"CONTROLLERS {steamInput.ConnectedControllerCount}");
+        lines.Add($"INPUT BACKEND {_game.Input.ActiveInputBackend}");
         lines.Add($"CHECKPOINT {FormatCheckpointDebugText()} RESPAWN {FormatVector(_playerManager.RespawnPosition)}");
         lines.Add($"SIM STEP {_simulation.PhysicsWorld.LastSimulationStepSeconds * 1000f:0.0}ms");
 
         for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
         {
-            ulong handle = steamInput.GetHandleForSlot(i).m_InputHandle;
-            if (!_game.Input.IsGamepadConnected(i) && handle == 0)
+            if (!_game.Input.IsGamepadConnected(i))
             {
                 continue;
             }
 
             string assigned = FindAssignedPlayerLabel(i);
-            lines.Add(
-                $"PAD{i + 1} type={steamInput.GetControllerType(i)} label={steamInput.GetControllerLabel(i)} handle={handle} player={assigned}");
+            lines.Add($"PAD{i + 1} connected player={assigned}");
         }
 
         int y = Math.Max(margin, viewport.Height - margin - (lines.Count * lineHeight));

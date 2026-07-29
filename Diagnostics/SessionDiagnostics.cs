@@ -8,7 +8,7 @@ namespace ColorBlocks;
 
 /// <summary>
 /// Cross-peer validation state for the current multiplayer session:
-/// build handshake results, level hash comparison and Steam Input file hashes.
+/// build handshake results and level hash comparison.
 /// Diagnostics only — never changes gameplay or networking behavior.
 /// </summary>
 public static class SessionDiagnostics
@@ -19,8 +19,6 @@ public static class SessionDiagnostics
     public static bool? LevelMatch { get; private set; }
     public static string LocalLevelHash { get; private set; } = "-";
     public static string RemoteLevelHash { get; private set; } = "-";
-    public static string SteamInputManifestHash { get; private set; } = "-";
-    public static string ControllerConfigHash { get; private set; } = "-";
 
     public static string LocalBuildLabel => BuildInfo.Current.Label;
 
@@ -75,15 +73,6 @@ public static class SessionDiagnostics
         return Convert.ToHexString(SHA256.HashData(stream));
     }
 
-    /// <summary>Startup build validation: hash the shipped Steam Input files and log them.</summary>
-    public static void LogSteamInputFileHashes()
-    {
-        SteamInputManifestHash = HashSteamFile("steam_input_manifest.vdf");
-        ControllerConfigHash = HashSteamFile("controller_gamepad.vdf");
-        DiagnosticsLog.Info("BuildValidation", $"steam_input_manifest.vdf SHA256={SteamInputManifestHash}");
-        DiagnosticsLog.Info("BuildValidation", $"controller_gamepad.vdf SHA256={ControllerConfigHash}");
-    }
-
     public static IReadOnlyList<string> BuildSummaryLines()
     {
         return new[]
@@ -95,9 +84,7 @@ public static class SessionDiagnostics
             $"Build match      : {FormatMatch(BuildMatch)}",
             $"Level match      : {FormatMatch(LevelMatch)}",
             $"Local level hash : {LocalLevelHash}",
-            $"Remote level hash: {RemoteLevelHash}",
-            $"steam_input_manifest.vdf: {SteamInputManifestHash}",
-            $"controller_gamepad.vdf  : {ControllerConfigHash}"
+            $"Remote level hash: {RemoteLevelHash}"
         };
     }
 
@@ -110,24 +97,4 @@ public static class SessionDiagnostics
 
     public static string ShortHash(string hash) =>
         string.IsNullOrEmpty(hash) ? "-" : (hash.Length > 12 ? hash[..12] : hash);
-
-    private static string HashSteamFile(string fileName)
-    {
-        try
-        {
-            string path = Path.Combine(AppContext.BaseDirectory, "Steam", fileName);
-            if (!File.Exists(path))
-            {
-                DiagnosticsLog.Warn("BuildValidation", $"Steam Input file missing: {path}");
-                return "MISSING";
-            }
-
-            return ComputeFileSha256(path);
-        }
-        catch (Exception ex)
-        {
-            DiagnosticsLog.Warn("BuildValidation", $"Hash failed for {fileName}: {ex.Message}");
-            return "ERROR";
-        }
-    }
 }
