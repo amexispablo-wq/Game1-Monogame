@@ -9,8 +9,9 @@ using NVorbis;
 namespace ColorBlocks;
 
 /// <summary>
-/// Menu shuffle on MediaPlayer never Stops (DesktopGL scratches after Stop/EOF reuse).
-/// Mute = volume 0, playlist keeps advancing.
+/// Menu shuffle on MediaPlayer. DesktopGL scratches after Stop/EOF reuse — keep
+/// IsRepeating=true and cut to next track by elapsed timer (never wait for Stopped at EOF).
+/// Mute = IsMuted, playlist keeps advancing.
 /// Editor: mute menu playlist + loop editor cue on a SoundEffectInstance (second channel).
 /// Leaving editor: stop editor SFX + unmute menu — no MediaPlayer restart.
 /// </summary>
@@ -22,7 +23,8 @@ public sealed class MusicManager
     private const float MinAdvanceElapsedSeconds = 8f;
     private const float AdvanceCooldownSeconds = 2.5f;
     private const float StuckStoppedSeconds = 0.4f;
-    private const float StuckPastEndGraceSeconds = 3f;
+    private const float EndCutSeconds = 0.25f;
+    private const int MaxSameTrackRestarts = 1;
     private const int MaxPlayHistory = 32;
     private const string MusicRootRelative = "Audio/Music";
     private const string EditorFolderName = "level editor";
@@ -45,6 +47,7 @@ public sealed class MusicManager
     private float _stoppedElapsed;
     private float _trackDuration;
     private float _advanceCooldown;
+    private int _sameTrackRestarts;
     private bool _catalogLoaded;
 
     public float Volume { get; private set; } = 0.75f;
@@ -90,56 +93,46 @@ public sealed class MusicManager
             _stoppedElapsed += dt;
         }
 
-        // ONLY advance after MediaPlayer reports Stopped (and we already heard enough of
-        // this track). Early Play(next) races the old Song finished callback → new track
-        // dies after ~1-2s / intro "loop" flap.
-        // Also ignore Stopped while advance cooldown is active (post-Play race).
+        // Ignore Stopped / advance while post-Play cooldown is active (finished-callback race).
         if (_advanceCooldown > 0f)
         {
             return;
         }
 
-        // Old Song finished-callback can Stop a brand-new Play. Restart SAME track instead
-        // of skipping — user hears intro once, not a stuttering intro loop across songs.
+        // Timer cut: IsRepeating keeps MediaPlayer out of EOF→Stopped (DesktopGL scratch).
+        // Advance slightly before true end so the repeat seam never plays.
+        float cutAt = _trackDuration >= MinAdvanceElapsedSeconds
+            ? Math.Max(_trackDuration - EndCutSeconds, MinAdvanceElapsedSeconds)
+            : float.MaxValue;
+        if (_trackElapsed >= cutAt)
+        {
+            _advanceCooldown = AdvanceCooldownSeconds;
+            DiagnosticsLog.Info(
+                "Music",
+                $"Advance next (timer elapsed={_trackElapsed:0.#}s dur={_trackDuration:0.#}s state={state})");
+            PlayNextMenuTrack();
+            return;
+        }
+
+        // Mid-track Stop (device hiccup / finished-callback killing new Play). Cap restarts
+        // so PlayFresh cannot reset intro forever ("scratched disc" loop).
         if (state == MediaState.Stopped
             && _stoppedElapsed >= StuckStoppedSeconds
-            && _trackElapsed < MinAdvanceElapsedSeconds
             && _currentMusicId is not null
             && IsMenuTrack(_currentMusicId))
         {
-            string retryId = _currentMusicId;
-            string assetPath = _trackAssetPaths.TryGetValue(retryId, out string? mapped)
-                ? mapped
-                : $"{MusicRootRelative}/{retryId}";
-            DiagnosticsLog.Info(
-                "Music",
-                $"Retry same track after early Stop (elapsed={_trackElapsed:0.#}s stopped={_stoppedElapsed:0.#}s)");
-            if (!PlayFreshMenuTrack(retryId, assetPath, recordHistory: false))
+            if (_sameTrackRestarts < MaxSameTrackRestarts
+                && TryRestartCurrentSong())
             {
-                PlayNextMenuTrack();
+                return;
             }
 
-            return;
+            DiagnosticsLog.Info(
+                "Music",
+                $"Early Stop → skip track (restarts={_sameTrackRestarts} elapsed={_trackElapsed:0.#}s)");
+            _advanceCooldown = AdvanceCooldownSeconds;
+            PlayNextMenuTrack();
         }
-
-        bool naturalEnd = state == MediaState.Stopped
-            && _stoppedElapsed >= StuckStoppedSeconds
-            && _trackElapsed >= MinAdvanceElapsedSeconds;
-        // Fallback if DesktopGL never leaves Playing after EOF (silent loop / stuck).
-        bool stuckPastEnd = state == MediaState.Playing
-            && _trackDuration >= MinAdvanceElapsedSeconds
-            && _trackElapsed >= _trackDuration + StuckPastEndGraceSeconds;
-
-        if (!naturalEnd && !stuckPastEnd)
-        {
-            return;
-        }
-
-        _advanceCooldown = AdvanceCooldownSeconds;
-        DiagnosticsLog.Info(
-            "Music",
-            $"Advance next (state={state} elapsed={_trackElapsed:0.#}s stopped={_stoppedElapsed:0.#}s dur={_trackDuration:0.#}s)");
-        PlayNextMenuTrack();
     }
 
     /// <summary>Menus: audible menu shuffle. Never restarts if already playing.</summary>
@@ -557,7 +550,9 @@ public sealed class MusicManager
 
         try
         {
-            MediaPlayer.IsRepeating = false;
+            // Repeating avoids EOF→Stopped on DesktopGL (scratch after Stop/reuse).
+            // Update() cuts to next track by elapsed before the repeat seam.
+            MediaPlayer.IsRepeating = true;
             ApplyEffectiveVolume();
             MediaPlayer.Play(song);
 
@@ -569,6 +564,7 @@ public sealed class MusicManager
             _currentMusicId = musicId;
             _trackElapsed = 0f;
             _stoppedElapsed = 0f;
+            _sameTrackRestarts = 0;
             _trackDuration = ResolveDuration(song, assetPath);
             _advanceCooldown = AdvanceCooldownSeconds;
 
@@ -593,6 +589,37 @@ public sealed class MusicManager
         {
             DiagnosticsLog.Info("Music", $"Play failed '{musicId}': {ex.Message}");
             try { song.Dispose(); } catch { /* ignore */ }
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Re-Play the already-loaded Song (no FromUri). Resets audible position but keeps
+    /// _trackElapsed so timer advance still fires and intro cannot loop forever.
+    /// </summary>
+    private bool TryRestartCurrentSong()
+    {
+        if (_currentSong is null || _currentMusicId is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            MediaPlayer.IsRepeating = true;
+            ApplyEffectiveVolume();
+            MediaPlayer.Play(_currentSong);
+            _sameTrackRestarts++;
+            _stoppedElapsed = 0f;
+            _advanceCooldown = AdvanceCooldownSeconds;
+            DiagnosticsLog.Info(
+                "Music",
+                $"Restart same Song (restarts={_sameTrackRestarts} wallElapsed={_trackElapsed:0.#}s id='{_currentMusicId}')");
+            return MediaPlayer.State == MediaState.Playing || MediaPlayer.State == MediaState.Paused;
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("Music", $"Restart failed: {ex.Message}");
             return false;
         }
     }

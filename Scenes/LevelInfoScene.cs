@@ -13,7 +13,6 @@ public sealed class LevelInfoScene : IScene
     private readonly Button _backButton = new("Back") { TextScale = 2 };
     private readonly Button _applyButton = new("Apply") { TextScale = 2 };
     private readonly TextInputComponent _nameInput;
-    private readonly Dropdown<string> _musicDropdown = new();
     private readonly Checkbox _allPlayersCheckbox = new() { Label = "All Players" };
     private readonly Checkbox _player1Checkbox = new() { Label = "1 Player" };
     private readonly Checkbox _player2Checkbox = new() { Label = "2 Players" };
@@ -28,7 +27,6 @@ public sealed class LevelInfoScene : IScene
     private readonly UIFocusManager _focus = new();
     private readonly UIFocusManager _promptFocus = new();
     private readonly FocusableTextInput _nameFocus;
-    private readonly FocusableDropdown<string> _musicFocus;
     private readonly FocusableCheckbox _allPlayersFocus;
     private readonly FocusableCheckbox _player1Focus;
     private readonly FocusableCheckbox _player2Focus;
@@ -65,10 +63,6 @@ public sealed class LevelInfoScene : IScene
         _level = loaded;
         _nameInput = new TextInputComponent(_level.Name);
 
-        _musicDropdown.Label = string.Empty;
-        _musicDropdown.Options.AddRange(LevelMusicLibrary.AvailableMusicIds);
-        _musicDropdown.SelectedOption = _level.MusicId;
-
         _allPlayersCheckbox.IsChecked = _level.AllPlayers;
         _player1Checkbox.IsChecked = _level.Player1;
         _player2Checkbox.IsChecked = _level.Player2;
@@ -82,7 +76,6 @@ public sealed class LevelInfoScene : IScene
         _playerCollisionCheckbox.IsChecked = _level.PlayerCollision;
 
         _nameFocus = new FocusableTextInput(_nameInput);
-        _musicFocus = new FocusableDropdown<string>(_musicDropdown);
         _allPlayersFocus = new FocusableCheckbox(_allPlayersCheckbox);
         _player1Focus = new FocusableCheckbox(_player1Checkbox);
         _player2Focus = new FocusableCheckbox(_player2Checkbox);
@@ -117,7 +110,6 @@ public sealed class LevelInfoScene : IScene
 
         _focus.Clear();
         int nameIdx = _focus.Add(_nameFocus, "LevelName");
-        int musicIdx = _focus.Add(_musicFocus, "Music");
         int allPlayersIdx = _focus.Add(_allPlayersFocus, "AllPlayers");
         int anyRopeIdx = _focus.Add(_anyRopeFocus, "AnyRope");
         int coloredIdx = _focus.Add(_coloredRopeFocus, "ColoredRope");
@@ -128,8 +120,7 @@ public sealed class LevelInfoScene : IScene
         int applyIdx = _focus.Add(_applyFocus, "Apply");
 
         NavigationGraph nav = _focus.Navigation;
-        nav.LinkVertical(nameIdx, musicIdx);
-        nav.LinkVertical(musicIdx, allPlayersIdx);
+        nav.LinkVertical(nameIdx, allPlayersIdx);
         nav.LinkVertical(anyRopeIdx, coloredIdx);
         nav.LinkVertical(coloredIdx, regularIdx);
         nav.LinkVertical(regularIdx, lavaIdx);
@@ -221,12 +212,6 @@ public sealed class LevelInfoScene : IScene
         _nameInput.Draw(spriteBatch, pixel);
         y += fieldHeight + sectionSpacing;
 
-        DrawSectionLabel(spriteBatch, pixel, "Level Music", new Vector2(contentArea.X + 18, y));
-        y += 32;
-        _musicDropdown.Bounds = new Rectangle(contentArea.X + 18, y, 360, 42);
-        _musicDropdown.Draw(spriteBatch, pixel);
-        y += 42 + sectionSpacing;
-
         DrawSectionLabel(spriteBatch, pixel, "Player Compatibility", new Vector2(contentArea.X + 18, y));
         y += 32;
         _allPlayersCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
@@ -301,10 +286,6 @@ public sealed class LevelInfoScene : IScene
         y += 32;
         _nameInput.Bounds = new Rectangle(contentArea.X + 18, y, contentArea.Width - 36, fieldHeight);
         y += fieldHeight + sectionSpacing;
-
-        y += 32;
-        _musicDropdown.Bounds = new Rectangle(contentArea.X + 18, y, 360, 42);
-        y += 42 + sectionSpacing;
 
         y += 32;
         _allPlayersCheckbox.Bounds = new Rectangle(contentArea.X + 18, y, 260, 30);
@@ -406,7 +387,6 @@ public sealed class LevelInfoScene : IScene
         return new LevelInfoState
         {
             Name = _nameInput.Text,
-            MusicId = _musicDropdown.SelectedOption ?? string.Empty,
             AllPlayers = _allPlayersCheckbox.IsChecked,
             Player1 = _player1Checkbox.IsChecked,
             Player2 = _player2Checkbox.IsChecked,
@@ -423,7 +403,6 @@ public sealed class LevelInfoScene : IScene
     private void ApplyChanges()
     {
         _level.Name = _nameInput.Text;
-        _level.MusicId = _musicDropdown.SelectedOption ?? string.Empty;
         _level.AllPlayers = _allPlayersCheckbox.IsChecked;
         _level.Player1 = _player1Checkbox.IsChecked;
         _level.Player2 = _player2Checkbox.IsChecked;
@@ -555,7 +534,6 @@ public sealed class LevelInfoScene : IScene
     private struct LevelInfoState : IEquatable<LevelInfoState>
     {
         public string Name;
-        public string MusicId;
         public bool AllPlayers;
         public bool Player1;
         public bool Player2;
@@ -570,7 +548,6 @@ public sealed class LevelInfoScene : IScene
         public bool Equals(LevelInfoState other)
         {
             return Name == other.Name
-                && MusicId == other.MusicId
                 && AllPlayers == other.AllPlayers
                 && Player1 == other.Player1
                 && Player2 == other.Player2
@@ -588,7 +565,6 @@ public sealed class LevelInfoScene : IScene
         {
             var hash = new HashCode();
             hash.Add(Name);
-            hash.Add(MusicId);
             hash.Add(AllPlayers);
             hash.Add(Player1);
             hash.Add(Player2);

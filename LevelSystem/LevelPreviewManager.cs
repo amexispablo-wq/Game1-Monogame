@@ -12,7 +12,7 @@ public static class LevelPreviewManager
 {
     private const int PreviewWidth = 340;
     private const int PreviewHeight = 190;
-    private const string PreviewDirectoryName = "LevelPreviews";
+    private const int WorkshopPreviewSize = 512;
     private static readonly Dictionary<string, Texture2D> PreviewCache = new();
 
     public static void InvalidateCache()
@@ -52,13 +52,125 @@ public static class LevelPreviewManager
             using FileStream writeStream = File.Create(previewPath);
             preview.SaveAsPng(writeStream, preview.Width, preview.Height);
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore save failures; preview is still available in memory.
+            DiagnosticsLog.Info("LevelPreview", $"Save UI preview failed level={levelId} path='{previewPath}': {ex.Message}");
         }
 
         PreviewCache[levelId] = preview;
         return preview;
+    }
+
+    /// <summary>
+    /// Ensures a fresh UI preview exists, then writes a 512x512 letterboxed PNG for Steam SetItemPreview.
+    /// Returns the absolute workshop PNG path, or null on failure.
+    /// </summary>
+    public static string? EnsureWorkshopPreviewFile(
+        GraphicsDevice graphicsDevice,
+        Texture2D pixel,
+        Level level,
+        string levelId)
+    {
+        Texture2D preview = GenerateAndSavePreview(graphicsDevice, pixel, level, levelId);
+        string workshopPath = GetWorkshopPreviewPath(levelId, level.Name);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(workshopPath)!);
+            SaveLetterboxedWorkshopPng(graphicsDevice, pixel, preview, workshopPath);
+            if (!File.Exists(workshopPath))
+            {
+                DiagnosticsLog.Info("LevelPreview", $"Workshop preview missing after save level={levelId}");
+                return null;
+            }
+
+            string fullPath = Path.GetFullPath(workshopPath);
+            DiagnosticsLog.Info(
+                "LevelPreview",
+                $"Workshop preview ready level={levelId} path='{fullPath}' bytes={new FileInfo(fullPath).Length}");
+            return fullPath;
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("LevelPreview", $"Workshop preview export failed level={levelId}: {ex.Message}");
+            return null;
+        }
+    }
+
+    public static string? TryFindExistingWorkshopPreviewFile(string levelId)
+    {
+        try
+        {
+            string previewsRoot = GetPreviewDirectory(levelId);
+            if (!Directory.Exists(previewsRoot))
+            {
+                return null;
+            }
+
+            string stem = SanitizeLevelIdForFile(levelId);
+            foreach (string file in Directory.EnumerateFiles(previewsRoot, "*_workshop.png"))
+            {
+                string name = Path.GetFileNameWithoutExtension(file);
+                if (!name.EndsWith($"_{stem}_workshop", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(name, $"{stem}_workshop", StringComparison.OrdinalIgnoreCase)
+                    && !name.Contains(stem, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return Path.GetFullPath(file);
+            }
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("LevelPreview", $"Workshop preview lookup failed level={levelId}: {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private static void SaveLetterboxedWorkshopPng(
+        GraphicsDevice graphicsDevice,
+        Texture2D pixel,
+        Texture2D source,
+        string destinationPath)
+    {
+        const int size = WorkshopPreviewSize;
+        using var renderTarget = new RenderTarget2D(
+            graphicsDevice,
+            size,
+            size,
+            false,
+            SurfaceFormat.Color,
+            DepthFormat.None,
+            0,
+            RenderTargetUsage.PreserveContents);
+
+        RenderTargetBinding[] previousTargets = graphicsDevice.GetRenderTargets();
+        graphicsDevice.SetRenderTarget(renderTarget);
+        graphicsDevice.Clear(new Color(28, 33, 43));
+
+        float scale = Math.Min((float)size / source.Width, (float)size / source.Height);
+        int drawW = Math.Max(1, (int)Math.Round(source.Width * scale));
+        int drawH = Math.Max(1, (int)Math.Round(source.Height * scale));
+        int drawX = (size - drawW) / 2;
+        int drawY = (size - drawH) / 2;
+
+        using (var spriteBatch = new SpriteBatch(graphicsDevice))
+        {
+            spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+            spriteBatch.Draw(pixel, new Rectangle(0, 0, size, size), new Color(28, 33, 43));
+            spriteBatch.Draw(source, new Rectangle(drawX, drawY, drawW, drawH), Color.White);
+            spriteBatch.End();
+        }
+
+        var data = new Color[size * size];
+        renderTarget.GetData(data);
+        graphicsDevice.SetRenderTargets(previousTargets);
+
+        using var texture = new Texture2D(graphicsDevice, size, size);
+        texture.SetData(data);
+        using FileStream writeStream = File.Create(destinationPath);
+        texture.SaveAsPng(writeStream, size, size);
     }
 
     private static void RenamePreviousPreviewFiles(string previewsDir, string levelId, string previewPath)
@@ -68,8 +180,14 @@ public static class LevelPreviewManager
             return;
         }
 
-        foreach (string filePath in Directory.EnumerateFiles(previewsDir, $"*_{levelId}.png"))
+        string stem = SanitizeLevelIdForFile(levelId);
+        foreach (string filePath in Directory.EnumerateFiles(previewsDir, $"*_{stem}.png"))
         {
+            if (filePath.EndsWith("_workshop.png", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             if (string.Equals(filePath, previewPath, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -123,16 +241,30 @@ public static class LevelPreviewManager
         return Path.Combine(GetPreviewDirectory(levelId), fileName);
     }
 
+    private static string GetWorkshopPreviewPath(string levelId, string levelName)
+    {
+        string stem = SanitizeLevelIdForFile(levelId);
+        string safeName = SanitizeFileName(levelName);
+        string fileName = string.IsNullOrWhiteSpace(safeName)
+            ? $"{stem}_workshop.png"
+            : $"{safeName}_{stem}_workshop.png";
+        return Path.Combine(GetPreviewDirectory(levelId), fileName);
+    }
+
     private static string GetPreviewFileName(string levelId, string levelName)
     {
+        string safeId = SanitizeLevelIdForFile(levelId);
         string safeName = SanitizeFileName(levelName);
         if (string.IsNullOrWhiteSpace(safeName))
         {
-            return $"{levelId}.png";
+            return $"{safeId}.png";
         }
 
-        return $"{safeName}_{levelId}.png";
+        return $"{safeName}_{safeId}.png";
     }
+
+    private static string SanitizeLevelIdForFile(string levelId) =>
+        levelId.Replace(':', '_');
 
     private static string SanitizeFileName(string name)
     {

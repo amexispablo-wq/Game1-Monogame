@@ -220,12 +220,22 @@ public sealed class SteamWorkshopService : IDisposable
         string? previewPath = TryFindPreviewFile(metadata.Id);
         if (previewPath is not null)
         {
-            if (!SteamUGC.SetItemPreview(update, previewPath))
+            bool previewOk = SteamUGC.SetItemPreview(update, previewPath);
+            DiagnosticsLog.Info(
+                "SteamWorkshop",
+                $"SetItemPreview level={metadata.Id} path='{previewPath}' ok={previewOk}");
+            if (!previewOk)
             {
                 DiagnosticsLog.Info(
                     "SteamWorkshop",
-                    $"SetItemPreview failed level={metadata.Id} path='{previewPath}' — continuing without preview");
+                    $"SetItemPreview failed level={metadata.Id} — check Steam Cloud quota (previews use Cloud). Continuing without preview.");
             }
+        }
+        else
+        {
+            DiagnosticsLog.Info(
+                "SteamWorkshop",
+                $"Publish without preview — no PNG for level={metadata.Id}");
         }
 
         SteamCallTracker.Track<SubmitItemUpdateResult_t>(
@@ -380,8 +390,24 @@ public sealed class SteamWorkshopService : IDisposable
     private static string? TryFindPreviewFile(string levelId)
     {
         const long MinPreviewBytes = 16;
+        // Steam primary preview must be under 1MB.
+        const long MaxSteamPreviewBytes = 1024L * 1024L;
         try
         {
+            string? workshopPreview = LevelPreviewManager.TryFindExistingWorkshopPreviewFile(levelId);
+            if (workshopPreview is not null && IsValidPngPreview(workshopPreview, MinPreviewBytes))
+            {
+                var workshopInfo = new FileInfo(workshopPreview);
+                if (workshopInfo.Length <= MaxSteamPreviewBytes)
+                {
+                    return workshopPreview;
+                }
+
+                DiagnosticsLog.Info(
+                    "SteamWorkshop",
+                    $"Workshop preview too large ({workshopInfo.Length} bytes) path='{workshopPreview}'");
+            }
+
             string previewsRoot = LevelContentPaths.GetPreviewsRoot(LevelIdentity.GetSource(levelId));
             if (!Directory.Exists(previewsRoot))
             {
@@ -391,9 +417,14 @@ public sealed class SteamWorkshopService : IDisposable
             string stem = levelId.Replace(':', '_');
             foreach (string file in Directory.EnumerateFiles(previewsRoot, "*.png"))
             {
+                if (file.EndsWith("_workshop.png", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 string name = Path.GetFileNameWithoutExtension(file);
                 if (!name.EndsWith(stem, StringComparison.OrdinalIgnoreCase)
-                    && !Path.GetFileName(file).Contains(levelId, StringComparison.OrdinalIgnoreCase))
+                    && !Path.GetFileName(file).Contains(stem, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -404,6 +435,15 @@ public sealed class SteamWorkshopService : IDisposable
                     DiagnosticsLog.Info(
                         "SteamWorkshop",
                         $"Skipping invalid preview level={levelId} path='{fullPath}'");
+                    continue;
+                }
+
+                var info = new FileInfo(fullPath);
+                if (info.Length > MaxSteamPreviewBytes)
+                {
+                    DiagnosticsLog.Info(
+                        "SteamWorkshop",
+                        $"Skipping oversized preview ({info.Length} bytes) level={levelId} path='{fullPath}'");
                     continue;
                 }
 
@@ -479,6 +519,17 @@ public sealed class SteamWorkshopService : IDisposable
     // Subscriptions / downloads (read-only Workshop levels)
     // ------------------------------------------------------------------
 
+    public bool IsSubscribed(ulong workshopId)
+    {
+        if (!IsAvailable || workshopId == 0)
+        {
+            return false;
+        }
+
+        uint state = SteamUGC.GetItemState(new PublishedFileId_t(workshopId));
+        return (state & (uint)EItemState.k_EItemStateSubscribed) != 0;
+    }
+
     public void Subscribe(ulong workshopId, Action<bool>? onComplete = null)
     {
         if (!IsAvailable)
@@ -492,9 +543,12 @@ public sealed class SteamWorkshopService : IDisposable
             (result, ioFailure) =>
             {
                 bool success = !ioFailure && result.m_eResult == EResult.k_EResultOK;
+                DiagnosticsLog.Info(
+                    "SteamWorkshop",
+                    $"Subscribe id={workshopId} ok={success} result={result.m_eResult} ioFailure={ioFailure}");
                 if (success)
                 {
-                    SteamUGC.DownloadItem(new PublishedFileId_t(workshopId), bHighPriority: true);
+                    RequestDownload(new PublishedFileId_t(workshopId), highPriority: true, reason: "subscribe");
                 }
 
                 onComplete?.Invoke(success);
@@ -542,6 +596,7 @@ public sealed class SteamWorkshopService : IDisposable
             SteamUGC.GetSubscribedItems(subscribed, count);
         }
 
+        DiagnosticsLog.Info("SteamWorkshop", $"SyncSubscribedItems count={count}");
         var subscribedSet = new HashSet<ulong>();
         foreach (PublishedFileId_t id in subscribed)
         {
@@ -549,6 +604,9 @@ public sealed class SteamWorkshopService : IDisposable
             uint state = SteamUGC.GetItemState(id);
             bool installed = (state & (uint)EItemState.k_EItemStateInstalled) != 0;
             bool needsUpdate = (state & (uint)EItemState.k_EItemStateNeedsUpdate) != 0;
+            DiagnosticsLog.Info(
+                "SteamWorkshop",
+                $"Sync id={id.m_PublishedFileId} state={FormatItemState(state)} installed={installed} needsUpdate={needsUpdate}");
 
             if (installed && !needsUpdate)
             {
@@ -556,7 +614,7 @@ public sealed class SteamWorkshopService : IDisposable
             }
             else
             {
-                SteamUGC.DownloadItem(id, bHighPriority: false);
+                RequestDownload(id, highPriority: false, reason: "sync");
             }
         }
 
@@ -590,29 +648,83 @@ public sealed class SteamWorkshopService : IDisposable
             return;
         }
 
+        DiagnosticsLog.Info(
+            "SteamWorkshop",
+            $"ItemInstalled id={data.m_nPublishedFileId.m_PublishedFileId}");
         CopyInstalledItem(data.m_nPublishedFileId);
     }
 
     private void OnDownloadItemResult(DownloadItemResult_t data)
     {
-        if (data.m_unAppID != SteamUtils.GetAppID() || data.m_eResult != EResult.k_EResultOK)
+        if (data.m_unAppID != SteamUtils.GetAppID())
+        {
+            return;
+        }
+
+        ulong id = data.m_nPublishedFileId.m_PublishedFileId;
+        uint state = SteamUGC.GetItemState(data.m_nPublishedFileId);
+        DiagnosticsLog.Info(
+            "SteamWorkshop",
+            $"DownloadItemResult id={id} result={data.m_eResult} state={FormatItemState(state)}");
+
+        if (data.m_eResult != EResult.k_EResultOK)
         {
             return;
         }
 
         CopyInstalledItem(data.m_nPublishedFileId);
+    }
+
+    private static void RequestDownload(PublishedFileId_t fileId, bool highPriority, string reason)
+    {
+        uint stateBefore = SteamUGC.GetItemState(fileId);
+        bool started = SteamUGC.DownloadItem(fileId, highPriority);
+        DiagnosticsLog.Info(
+            "SteamWorkshop",
+            $"DownloadItem id={fileId.m_PublishedFileId} reason={reason} highPriority={highPriority} "
+            + $"started={started} stateBefore={FormatItemState(stateBefore)}");
+        if (!started)
+        {
+            DiagnosticsLog.Info(
+                "SteamWorkshop",
+                $"DownloadItem refused id={fileId.m_PublishedFileId} — invalid id or user not logged on");
+        }
+    }
+
+    private static string FormatItemState(uint state)
+    {
+        if (state == 0)
+        {
+            return "None";
+        }
+
+        var parts = new List<string>();
+        if ((state & (uint)EItemState.k_EItemStateSubscribed) != 0) parts.Add("Subscribed");
+        if ((state & (uint)EItemState.k_EItemStateLegacyItem) != 0) parts.Add("Legacy");
+        if ((state & (uint)EItemState.k_EItemStateInstalled) != 0) parts.Add("Installed");
+        if ((state & (uint)EItemState.k_EItemStateNeedsUpdate) != 0) parts.Add("NeedsUpdate");
+        if ((state & (uint)EItemState.k_EItemStateDownloading) != 0) parts.Add("Downloading");
+        if ((state & (uint)EItemState.k_EItemStateDownloadPending) != 0) parts.Add("DownloadPending");
+        if ((state & (uint)EItemState.k_EItemStateDisabledLocally) != 0) parts.Add("DisabledLocally");
+        return parts.Count > 0 ? string.Join("|", parts) : $"0x{state:X}";
     }
 
     private void CopyInstalledItem(PublishedFileId_t fileId)
     {
         if (!SteamUGC.GetItemInstallInfo(fileId, out _, out string installFolder, 1024, out uint updateTimestamp))
         {
+            DiagnosticsLog.Info(
+                "SteamWorkshop",
+                $"GetItemInstallInfo failed id={fileId.m_PublishedFileId} state={FormatItemState(SteamUGC.GetItemState(fileId))}");
             return;
         }
 
         string sourceLevel = Path.Combine(installFolder, "level.json");
         if (!File.Exists(sourceLevel))
         {
+            DiagnosticsLog.Info(
+                "SteamWorkshop",
+                $"Install folder missing level.json id={fileId.m_PublishedFileId} path='{installFolder}'");
             return;
         }
 

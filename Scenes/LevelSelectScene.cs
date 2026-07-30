@@ -591,33 +591,33 @@ public sealed class LevelSelectScene : IScene
         }
 
         int? watchWrIndex = null;
-        if (_watchWorldRecordFocus != null && _detailsSupportsLeaderboards)
+        if (_watchWorldRecordFocus != null && _selectedLevelId is not null && _detailsSupportsLeaderboards)
         {
             _watchWorldRecordFocus.IsEnabled = true;
             watchWrIndex = _focus.Add(_watchWorldRecordFocus, "WatchWorldRecord");
         }
 
         int? leaderboardIndex = null;
-        if (_leaderboardFocus != null && _detailsSupportsLeaderboards)
+        if (_leaderboardFocus != null && _selectedLevelId is not null && _detailsSupportsLeaderboards)
         {
             _leaderboardFocus.IsEnabled = true;
             leaderboardIndex = _focus.Add(_leaderboardFocus, "Leaderboard");
         }
 
         int? lavaIndex = null;
-        if (_lavaRiseFocus != null)
+        if (_lavaRiseFocus != null && _selectedLevelId is not null)
         {
             lavaIndex = _focus.Add(_lavaRiseFocus, "LavaRise");
         }
 
         int? playerCollisionIndex = null;
-        if (_playerCollisionFocus != null)
+        if (_playerCollisionFocus != null && _selectedLevelId is not null)
         {
             playerCollisionIndex = _focus.Add(_playerCollisionFocus, "PlayerCollision");
         }
 
         int? ghostIndex = null;
-        if (_ghostModeFocus != null)
+        if (_ghostModeFocus != null && _selectedLevelId is not null)
         {
             ghostIndex = _focus.Add(_ghostModeFocus, "GhostMode");
         }
@@ -744,15 +744,52 @@ public sealed class LevelSelectScene : IScene
             }
             else if (_mode == LevelSelectMode.PlayMode)
             {
-                int downTarget = ropeIndex ?? primaryIndex ?? backIndex;
-                NavigationGraphBuilder.LinkGridBottomRowTo(nav, gridStart, _gridFocusables.Count, _gridLayout.Columns, downTarget);
+                int? detailsEntry = FirstEnabledDetailsFocus(
+                    watchReplayIndex,
+                    watchWrIndex,
+                    leaderboardIndex,
+                    lavaIndex,
+                    playerCollisionIndex,
+                    ghostIndex);
 
-                if (ropeIndex is int rope && primaryIndex is int playFromRope)
+                int? actionFirst = workshopPrimaryIndex
+                    ?? workshopSecondaryIndex
+                    ?? workshopTertiaryIndex
+                    ?? workshopQuinaryIndex;
+
+                int downFromGrid = ropeIndex ?? primaryIndex ?? backIndex;
+                NavigationGraphBuilder.LinkGridBottomRowTo(
+                    nav, gridStart, _gridFocusables.Count, _gridLayout.Columns, downFromGrid);
+
+                int? gridExitLeft = null;
+                if (_gridFocusables.Count > 0)
                 {
-                    nav.LinkVertical(rope, playFromRope);
+                    gridExitLeft = gridStart + Math.Min(_gridLayout.Columns - 1, _gridFocusables.Count - 1);
                 }
 
-                // Details: Watch PB → Watch WR → Leaderboard → Lava → Collision → Ghost → Play
+                if (detailsEntry is int detailsTarget && gridExitLeft is int gridRight)
+                {
+                    NavigationGraphBuilder.LinkGridRowEndsRightTo(
+                        nav, gridStart, _gridFocusables.Count, _gridLayout.Columns, detailsTarget);
+
+                    // Every details control can exit Left to the grid (not only entry/ghost).
+                    void LinkDetailsLeft(int? index)
+                    {
+                        if (index is int detailsNode)
+                        {
+                            nav.Link(detailsNode, NavigationDirection.Left, gridRight);
+                        }
+                    }
+
+                    LinkDetailsLeft(watchReplayIndex);
+                    LinkDetailsLeft(watchWrIndex);
+                    LinkDetailsLeft(leaderboardIndex);
+                    LinkDetailsLeft(lavaIndex);
+                    LinkDetailsLeft(playerCollisionIndex);
+                    LinkDetailsLeft(ghostIndex);
+                }
+
+                // Details vertical chain → Play
                 int? detailsCursor = watchReplayIndex;
                 if (detailsCursor is int watch && watchWrIndex is int watchWr)
                 {
@@ -797,36 +834,63 @@ public sealed class LevelSelectScene : IScene
                     nav.Link(detailsBottom, NavigationDirection.Down, playFromDetails);
                 }
 
-                if (watchReplayIndex is int watchReplay && _gridFocusables.Count > 0)
+                // Re-apply Left after LinkVertical (vertical pair overwrites Up/Down only, but be safe).
+                if (gridExitLeft is int gridRightAfter)
                 {
-                    int topRight = gridStart + Math.Min(_gridLayout.Columns - 1, _gridFocusables.Count - 1);
-                    nav.Link(topRight, NavigationDirection.Right, watchReplay);
-                    nav.Link(watchReplay, NavigationDirection.Left, topRight);
-                }
-                else if (watchWrIndex is int wrNav && _gridFocusables.Count > 0)
-                {
-                    int topRight = gridStart + Math.Min(_gridLayout.Columns - 1, _gridFocusables.Count - 1);
-                    nav.Link(topRight, NavigationDirection.Right, wrNav);
-                    nav.Link(wrNav, NavigationDirection.Left, topRight);
-                }
-                else if (leaderboardIndex is int lbNav && _gridFocusables.Count > 0)
-                {
-                    int topRight = gridStart + Math.Min(_gridLayout.Columns - 1, _gridFocusables.Count - 1);
-                    nav.Link(topRight, NavigationDirection.Right, lbNav);
-                    nav.Link(lbNav, NavigationDirection.Left, topRight);
+                    void RelinkLeft(int? index)
+                    {
+                        if (index is int detailsNode)
+                        {
+                            nav.Link(detailsNode, NavigationDirection.Left, gridRightAfter);
+                        }
+                    }
+
+                    RelinkLeft(watchReplayIndex);
+                    RelinkLeft(watchWrIndex);
+                    RelinkLeft(leaderboardIndex);
+                    RelinkLeft(lavaIndex);
+                    RelinkLeft(playerCollisionIndex);
+                    RelinkLeft(ghostIndex);
                 }
 
-                // Workshop action strip (bottom): Back → actions → Play
+                // Play: Left Back, Up Rope, Down first action, Right details
+                if (primaryIndex is int playBtn)
+                {
+                    nav.LinkHorizontal(backIndex, playBtn);
+
+                    if (ropeIndex is int rope)
+                    {
+                        nav.LinkVertical(rope, playBtn);
+                        nav.Link(rope, NavigationDirection.Left, backIndex);
+                    }
+
+                    if (actionFirst is int firstAction)
+                    {
+                        nav.LinkVertical(playBtn, firstAction);
+                    }
+
+                    if (detailsEntry is int playDetails)
+                    {
+                        nav.Link(playBtn, NavigationDirection.Right, playDetails);
+                    }
+                }
+                else
+                {
+                    nav.Link(backIndex, NavigationDirection.Up, gridStart);
+                }
+
+                if (ropeIndex is int ropeRight && detailsEntry is int ropeDetails)
+                {
+                    nav.Link(ropeRight, NavigationDirection.Right, ropeDetails);
+                }
+
+                // Action row below Play (Local / Workshop)
                 int? actionCursor = null;
-                void LinkWorkshopAction(int actionIndex)
+                void LinkAction(int actionIndex)
                 {
                     if (actionCursor is int fromAction)
                     {
                         nav.LinkHorizontal(fromAction, actionIndex);
-                    }
-                    else
-                    {
-                        nav.LinkHorizontal(backIndex, actionIndex);
                     }
 
                     actionCursor = actionIndex;
@@ -834,43 +898,69 @@ public sealed class LevelSelectScene : IScene
 
                 if (workshopPrimaryIndex is int wp)
                 {
-                    LinkWorkshopAction(wp);
+                    LinkAction(wp);
                 }
 
                 if (workshopSecondaryIndex is int ws)
                 {
-                    LinkWorkshopAction(ws);
+                    LinkAction(ws);
                 }
 
                 if (workshopTertiaryIndex is int wt)
                 {
-                    LinkWorkshopAction(wt);
-                }
-
-                if (workshopQuaternaryIndex is int wq)
-                {
-                    LinkWorkshopAction(wq);
+                    LinkAction(wt);
                 }
 
                 if (workshopQuinaryIndex is int w5)
                 {
-                    LinkWorkshopAction(w5);
+                    LinkAction(w5);
                 }
 
-                if (primaryIndex is int playBtn)
+                if (primaryIndex is int playForActions && actionFirst is int actUp)
                 {
-                    if (actionCursor is int fromAction)
+                    if (workshopPrimaryIndex is int wpUp && wpUp != actUp)
                     {
-                        nav.LinkHorizontal(fromAction, playBtn);
+                        nav.Link(wpUp, NavigationDirection.Up, playForActions);
                     }
-                    else
+
+                    if (workshopSecondaryIndex is int wsUp)
                     {
-                        nav.LinkHorizontal(backIndex, playBtn);
+                        nav.Link(wsUp, NavigationDirection.Up, playForActions);
                     }
+
+                    if (workshopTertiaryIndex is int wtUp)
+                    {
+                        nav.Link(wtUp, NavigationDirection.Up, playForActions);
+                    }
+
+                    if (workshopQuinaryIndex is int w5Up)
+                    {
+                        nav.Link(w5Up, NavigationDirection.Up, playForActions);
+                    }
+                }
+
+                if (primaryIndex is null)
+                {
+                    nav.Link(backIndex, NavigationDirection.Up, gridStart);
+                }
+                else if (ropeIndex is null)
+                {
+                    nav.Link(backIndex, NavigationDirection.Up, gridStart);
+                    if (primaryIndex is int playNoRope)
+                    {
+                        nav.Link(playNoRope, NavigationDirection.Up, gridStart);
+                    }
+                }
+                else
+                {
+                    nav.Link(backIndex, NavigationDirection.Up, ropeIndex.Value);
                 }
             }
 
-            nav.Link(backIndex, NavigationDirection.Up, gridStart);
+            if (_mode != LevelSelectMode.PlayMode)
+            {
+                nav.Link(backIndex, NavigationDirection.Up, gridStart);
+            }
         }
 
         string defaultFocus = gridStart >= 0 ? "Level0" : (_mode == LevelSelectMode.PlayMode ? "Play" : "EditLevel");
@@ -1079,89 +1169,87 @@ public sealed class LevelSelectScene : IScene
         const int buttonGap = 15;
         const int bottomMargin = 25;
 
-        // Layout back button separately (left side)
-        _backButton.Bounds = new Rectangle(25, viewport.Height - buttonHeight - bottomMargin, 120, buttonHeight);
+        const int secondRowBottomMargin = 22;
+        const int rowGap = 14;
+        const int backLeft = 25;
+        const int backWidth = 120;
+        bool playActionRow = NeedsPlayActionRow();
+        int playRowBottomMargin = playActionRow
+            ? secondRowBottomMargin + buttonHeight + rowGap
+            : bottomMargin;
+
+        // Shared content column for Play / rope / actions.
+        // Action rows clear Back; details panel steals right inset when open.
+        int contentLeftInset = playActionRow ? backLeft + backWidth + buttonGap : 0;
+        int contentRightInset = 0;
+        if (_mode == LevelSelectMode.PlayMode && _selectedLevel is not null)
+        {
+            contentRightInset = GetDetailsPanelWidth(viewport.Width)
+                + Math.Clamp(viewport.Width / 64, 12, 20)
+                + 8;
+        }
+
+        _backButton.Bounds = new Rectangle(
+            backLeft,
+            viewport.Height - buttonHeight - playRowBottomMargin,
+            backWidth,
+            buttonHeight);
+
+        int playTop = viewport.Height - buttonHeight - playRowBottomMargin;
 
         if (_mode == LevelSelectMode.PlayMode && _ropeModeSelector != null)
         {
-            int stripY = Math.Max(78, viewport.Height - 190);
-            int stripBottom = viewport.Height - 100;
-            int selectorWidth = Math.Min(380, Math.Max(1, viewport.Width - 40));
+            int stripBottom = playTop;
             int selectorHeight = 46;
-            int selectorY = Math.Max(86, viewport.Height - 172);
-            _ropeModePanelBounds = new Rectangle(0, stripY, viewport.Width, Math.Max(0, stripBottom - stripY));
-            _ropeModeLabelBounds = new Rectangle(20, selectorY - 22, Math.Max(1, viewport.Width - 40), 18);
-            _ropeModeSelector.Bounds = new Rectangle((viewport.Width - selectorWidth) / 2, selectorY, selectorWidth, selectorHeight);
-            _ropeModeDescriptionBounds = new Rectangle(20, selectorY + selectorHeight + 8, Math.Max(1, viewport.Width - 40), 18);
+            int contentWidth = Math.Max(1, viewport.Width - contentLeftInset - contentRightInset);
+            int selectorWidth = Math.Min(380, Math.Max(1, contentWidth - 40));
+            int selectorY = Math.Max(86, stripBottom - selectorHeight - 26);
+            int stripY = Math.Max(78, selectorY - 28);
+            int selectorX = contentLeftInset + Math.Max(0, (contentWidth - selectorWidth) / 2);
+            _ropeModePanelBounds = new Rectangle(
+                contentLeftInset,
+                stripY,
+                contentWidth,
+                Math.Max(0, stripBottom - stripY));
+            _ropeModeLabelBounds = new Rectangle(contentLeftInset + 20, selectorY - 22, Math.Max(1, contentWidth - 40), 18);
+            _ropeModeSelector.Bounds = new Rectangle(selectorX, selectorY, selectorWidth, selectorHeight);
+            _ropeModeDescriptionBounds = new Rectangle(
+                contentLeftInset + 20,
+                selectorY + selectorHeight + 6,
+                Math.Max(1, contentWidth - 40),
+                18);
         }
 
         if (_mode == LevelSelectMode.PlayMode)
         {
             RefreshWorkshopActionLabels();
 
-            var labels = new List<string> { "Play" };
-            if (ShouldShowWorkshopPrimary())
+            var playRow = ButtonRowLayout.Create(
+                new[] { "Play" },
+                viewport.Width,
+                viewport.Height,
+                buttonHeight,
+                horizontalPadding,
+                12,
+                buttonGap,
+                playRowBottomMargin,
+                contentLeftInset,
+                contentRightInset);
+            if (playRow.ButtonBounds.Length > 0)
             {
-                labels.Insert(0, _workshopPrimaryButton!.Text);
+                _primaryButton!.Bounds = playRow.ButtonBounds[0];
             }
 
-            if (ShouldShowWorkshopSecondary())
+            if (playActionRow)
             {
-                labels.Insert(ShouldShowWorkshopPrimary() ? 1 : 0, _workshopSecondaryButton!.Text);
-            }
-
-            if (ShouldShowWorkshopTertiary())
-            {
-                int insertAt = labels.Count - 1;
-                labels.Insert(insertAt, _workshopTertiaryButton!.Text);
-            }
-
-            if (ShouldShowWorkshopQuaternary())
-            {
-                int insertAt = labels.Count - 1;
-                labels.Insert(insertAt, _workshopQuaternaryButton!.Text);
-            }
-
-            if (ShouldShowWorkshopQuinary())
-            {
-                int insertAt = labels.Count - 1;
-                labels.Insert(insertAt, _workshopQuinaryButton!.Text);
-            }
-
-            var layout = ButtonRowLayout.Create(
-                labels.ToArray(),
-                viewport.Width, viewport.Height,
-                buttonHeight, horizontalPadding, 12, buttonGap, bottomMargin);
-
-            int boundIndex = 0;
-            if (ShouldShowWorkshopPrimary() && boundIndex < layout.ButtonBounds.Length)
-            {
-                _workshopPrimaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
-            }
-
-            if (ShouldShowWorkshopSecondary() && boundIndex < layout.ButtonBounds.Length)
-            {
-                _workshopSecondaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
-            }
-
-            if (ShouldShowWorkshopTertiary() && boundIndex < layout.ButtonBounds.Length)
-            {
-                _workshopTertiaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
-            }
-
-            if (ShouldShowWorkshopQuaternary() && boundIndex < layout.ButtonBounds.Length)
-            {
-                _workshopQuaternaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
-            }
-
-            if (ShouldShowWorkshopQuinary() && boundIndex < layout.ButtonBounds.Length)
-            {
-                _workshopQuinaryButton!.Bounds = layout.ButtonBounds[boundIndex++];
-            }
-
-            if (boundIndex < layout.ButtonBounds.Length)
-            {
-                _primaryButton!.Bounds = layout.ButtonBounds[boundIndex];
+                LayoutPlayActionRow(
+                    viewport,
+                    buttonHeight,
+                    horizontalPadding,
+                    buttonGap,
+                    secondRowBottomMargin,
+                    contentLeftInset,
+                    contentRightInset);
             }
 
             bool leaderCanPlay = CanStartPlay();
@@ -1170,8 +1258,6 @@ public sealed class LevelSelectScene : IScene
         }
         else
         {
-            const int secondRowBottomMargin = 22;
-            const int rowGap = 14;
             int mainRowBottomMargin = secondRowBottomMargin + buttonHeight + rowGap;
 
             var mainRow = ButtonRowLayout.Create(
@@ -1302,17 +1388,151 @@ public sealed class LevelSelectScene : IScene
         }
     }
 
-    private int GetBottomBarHeight()
+    private bool NeedsPlayActionRow()
     {
-        if (_mode != LevelSelectMode.EditMode)
+        if (_mode != LevelSelectMode.PlayMode)
         {
-            return 100;
+            return false;
         }
 
+        if (_activeTab == LevelSource.Workshop)
+        {
+            return true;
+        }
+
+        if (_activeTab != LevelSource.Local)
+        {
+            return false;
+        }
+
+        return ShouldShowWorkshopPrimary()
+            || ShouldShowWorkshopSecondary()
+            || ShouldShowWorkshopTertiary();
+    }
+
+    private void LayoutPlayActionRow(
+        Viewport viewport,
+        int buttonHeight,
+        int horizontalPadding,
+        int buttonGap,
+        int bottomMargin,
+        int leftInset,
+        int rightInset)
+    {
+        var labels = new List<string>();
+        if (ShouldShowWorkshopPrimary())
+        {
+            labels.Add(_workshopPrimaryButton!.Text);
+        }
+
+        if (ShouldShowWorkshopSecondary())
+        {
+            labels.Add(_workshopSecondaryButton!.Text);
+        }
+
+        if (ShouldShowWorkshopTertiary())
+        {
+            labels.Add(_workshopTertiaryButton!.Text);
+        }
+
+        if (ShouldShowWorkshopQuinary())
+        {
+            labels.Add(_workshopQuinaryButton!.Text);
+        }
+
+        if (labels.Count == 0)
+        {
+            return;
+        }
+
+        var row = ButtonRowLayout.Create(
+            labels.ToArray(),
+            viewport.Width,
+            viewport.Height,
+            buttonHeight,
+            horizontalPadding,
+            12,
+            buttonGap,
+            bottomMargin,
+            leftInset,
+            rightInset);
+
+        int index = 0;
+        if (ShouldShowWorkshopPrimary() && index < row.ButtonBounds.Length)
+        {
+            _workshopPrimaryButton!.Bounds = row.ButtonBounds[index++];
+        }
+
+        if (ShouldShowWorkshopSecondary() && index < row.ButtonBounds.Length)
+        {
+            _workshopSecondaryButton!.Bounds = row.ButtonBounds[index++];
+        }
+
+        if (ShouldShowWorkshopTertiary() && index < row.ButtonBounds.Length)
+        {
+            _workshopTertiaryButton!.Bounds = row.ButtonBounds[index++];
+        }
+
+        if (ShouldShowWorkshopQuinary() && index < row.ButtonBounds.Length)
+        {
+            _workshopQuinaryButton!.Bounds = row.ButtonBounds[index];
+        }
+    }
+
+    private int? FirstEnabledDetailsFocus(
+        int? watchReplay,
+        int? watchWr,
+        int? leaderboard,
+        int? lava,
+        int? collision,
+        int? ghost)
+    {
+        if (watchReplay is int watch && _watchReplayFocus is { IsEnabled: true })
+        {
+            return watch;
+        }
+
+        if (watchWr is int wr)
+        {
+            return wr;
+        }
+
+        if (leaderboard is int lb)
+        {
+            return lb;
+        }
+
+        if (lava is int lavaIdx)
+        {
+            return lavaIdx;
+        }
+
+        if (collision is int collisionIdx)
+        {
+            return collisionIdx;
+        }
+
+        if (ghost is int ghostIdx)
+        {
+            return ghostIdx;
+        }
+
+        return null;
+    }
+
+    private int GetBottomBarHeight()
+    {
         const int buttonHeight = 50;
         const int secondRowBottomMargin = 22;
         const int rowGap = 14;
-        return buttonHeight * 2 + rowGap + secondRowBottomMargin + 16;
+        int twoRowHeight = buttonHeight * 2 + rowGap + secondRowBottomMargin + 16;
+
+        if (_mode == LevelSelectMode.EditMode || NeedsPlayActionRow())
+        {
+            return twoRowHeight;
+        }
+
+        return 100;
     }
 
     private void DrawSourceTabs(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, GameTime gameTime)
@@ -2305,7 +2525,9 @@ public sealed class LevelSelectScene : IScene
     private int GetGridLayoutHeight()
     {
         int topOffset = _importOfficialPickerOpen ? 130 : 118;
-        int bottomReserved = _mode == LevelSelectMode.EditMode ? GetBottomBarHeight() + 20 : 160;
+        int bottomReserved = (_mode == LevelSelectMode.EditMode || NeedsPlayActionRow())
+            ? GetBottomBarHeight() + 20
+            : 160;
         return Math.Max(220, _game.Viewport.Height - topOffset - bottomReserved);
     }
 
@@ -2859,13 +3081,10 @@ public sealed class LevelSelectScene : IScene
         else if (_activeTab == LevelSource.Workshop)
         {
             _workshopPrimaryButton.Text = "Browse Workshop";
-            _workshopSecondaryButton.Text = "Subscribe";
+            bool subscribed = TryGetSelectedWorkshopId(out ulong workshopId)
+                && _game.SteamWorkshop.IsSubscribed(workshopId);
+            _workshopSecondaryButton.Text = subscribed ? "Unsubscribe" : "Subscribe";
             _workshopTertiaryButton.Text = "Open Workshop";
-            if (_workshopQuaternaryButton is not null)
-            {
-                _workshopQuaternaryButton.Text = "Unsubscribe";
-            }
-
             if (_workshopQuinaryButton is not null)
             {
                 _workshopQuinaryButton.Text = "Create Copy";
@@ -2916,11 +3135,8 @@ public sealed class LevelSelectScene : IScene
         return _activeTab == LevelSource.Workshop && TryGetSelectedWorkshopId(out _);
     }
 
-    private bool ShouldShowWorkshopQuaternary() =>
-        _mode == LevelSelectMode.PlayMode
-        && _activeTab == LevelSource.Workshop
-        && _selectedLevelId is not null
-        && TryGetSelectedWorkshopId(out _);
+    /// <summary>Quaternary was Unsubscribe; merged into secondary (Subscribe/Unsubscribe toggle).</summary>
+    private bool ShouldShowWorkshopQuaternary() => false;
 
     private bool ShouldShowWorkshopQuinary() =>
         _mode == LevelSelectMode.PlayMode
@@ -2980,6 +3196,8 @@ public sealed class LevelSelectScene : IScene
         }
 
         string levelId = _selectedLevelId;
+        EnsureWorkshopPreviewForPublish(levelId);
+
         _game.SteamWorkshop.PublishLevel(levelId, result =>
         {
             if (_selectedLevelId != levelId)
@@ -3004,11 +3222,47 @@ public sealed class LevelSelectScene : IScene
         });
     }
 
+    private void EnsureWorkshopPreviewForPublish(string levelId)
+    {
+        try
+        {
+            Level? level = null;
+            if (_selectedLevel is not null && string.Equals(_selectedLevelId, levelId, StringComparison.Ordinal))
+            {
+                level = _selectedLevel;
+            }
+            else
+            {
+                level = LevelLibrary.TryLoadLevel(levelId);
+            }
+
+            if (level is null)
+            {
+                DiagnosticsLog.Info("SteamWorkshop", $"Preview skip — could not load level id={levelId}");
+                return;
+            }
+
+            string? path = LevelPreviewManager.EnsureWorkshopPreviewFile(
+                _game.GraphicsDevice,
+                _game.Pixel,
+                level,
+                levelId);
+            if (path is null)
+            {
+                DiagnosticsLog.Info("SteamWorkshop", $"Preview ensure returned null id={levelId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("SteamWorkshop", $"Preview ensure failed id={levelId}: {ex.Message}");
+        }
+    }
+
     private void HandleWorkshopSecondaryAction()
     {
         if (_activeTab == LevelSource.Workshop)
         {
-            if (!TryGetSelectedWorkshopId(out ulong subscribeId))
+            if (!TryGetSelectedWorkshopId(out ulong workshopId))
             {
                 return;
             }
@@ -3019,7 +3273,30 @@ public sealed class LevelSelectScene : IScene
                 return;
             }
 
-            _game.SteamWorkshop.Subscribe(subscribeId, ok =>
+            if (_game.SteamWorkshop.IsSubscribed(workshopId))
+            {
+                string levelId = _selectedLevelId!;
+                _game.SteamWorkshop.Unsubscribe(workshopId, ok =>
+                {
+                    if (!ok)
+                    {
+                        _alertPopup = new AlertPopup("WORKSHOP", "Unsubscribe failed.");
+                        return;
+                    }
+
+                    if (_selectedLevelId == levelId)
+                    {
+                        _selectedIndex = null;
+                        _selectedLevel = null;
+                        _selectedLevelId = null;
+                    }
+
+                    RefreshLevelList();
+                });
+                return;
+            }
+
+            _game.SteamWorkshop.Subscribe(workshopId, ok =>
             {
                 if (!ok)
                 {
@@ -3035,12 +3312,12 @@ public sealed class LevelSelectScene : IScene
             return;
         }
 
-        if (!TryGetSelectedWorkshopId(out ulong workshopId))
+        if (!TryGetSelectedWorkshopId(out ulong openId))
         {
             return;
         }
 
-        _game.SteamWorkshop.OpenWorkshopPage(workshopId);
+        _game.SteamWorkshop.OpenWorkshopPage(openId);
     }
 
     private void HandleWorkshopTertiaryAction()
@@ -3071,31 +3348,7 @@ public sealed class LevelSelectScene : IScene
 
     private void HandleWorkshopQuaternaryAction()
     {
-        if (_activeTab != LevelSource.Workshop
-            || _selectedLevelId is null
-            || !TryGetSelectedWorkshopId(out ulong workshopId))
-        {
-            return;
-        }
-
-        string levelId = _selectedLevelId;
-        _game.SteamWorkshop.Unsubscribe(workshopId, ok =>
-        {
-            if (!ok)
-            {
-                _alertPopup = new AlertPopup("WORKSHOP", "Unsubscribe failed.");
-                return;
-            }
-
-            if (_selectedLevelId == levelId)
-            {
-                _selectedIndex = null;
-                _selectedLevel = null;
-                _selectedLevelId = null;
-            }
-
-            RefreshLevelList();
-        });
+        // Unsubscribe merged into secondary (Subscribe/Unsubscribe toggle).
     }
 
     private void RefreshGhostModeOptions(string levelId)

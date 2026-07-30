@@ -14,7 +14,8 @@ public sealed class ButtonRowLayout
     }
 
     public static ButtonRowLayout Create(string[] buttonTexts, int viewportWidth, int viewportHeight,
-        int buttonHeight, int horizontalPadding = 16, int verticalPadding = 12, int buttonGap = 15, int bottomMargin = 25)
+        int buttonHeight, int horizontalPadding = 16, int verticalPadding = 12, int buttonGap = 15, int bottomMargin = 25,
+        int leftInset = 0, int rightInset = 0)
     {
         var layout = new ButtonRowLayout();
 
@@ -38,7 +39,7 @@ public sealed class ButtonRowLayout
         }
 
         int totalWidth = totalButtonWidth + ((buttonTexts.Length - 1) * buttonGap);
-        int availableWidth = Math.Max(0, viewportWidth - 40);
+        int availableWidth = Math.Max(0, viewportWidth - 40 - leftInset - rightInset);
 
         if (totalWidth > availableWidth)
         {
@@ -56,7 +57,8 @@ public sealed class ButtonRowLayout
         }
 
         layout.TotalWidth = totalWidth;
-        int startX = (viewportWidth - totalWidth) / 2;
+        int contentWidth = Math.Max(0, viewportWidth - leftInset - rightInset);
+        int startX = leftInset + Math.Max(0, (contentWidth - totalWidth) / 2);
         int startY = viewportHeight - buttonHeight - bottomMargin;
 
         layout.ButtonBounds = new Rectangle[buttonTexts.Length];
