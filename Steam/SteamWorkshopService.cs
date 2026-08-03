@@ -16,6 +16,11 @@ public sealed class WorkshopPublishResult
     public ulong WorkshopId { get; init; }
     public string Message { get; init; } = string.Empty;
     public bool NeedsLegalAgreement { get; init; }
+    /// <summary>True when this publish updated an existing Workshop item (not a first CreateItem).</summary>
+    public bool WasUpdate { get; init; }
+    public bool WasCancelled { get; init; }
+    /// <summary>True when the local WorkshopId likely points at a deleted/inaccessible Steam item.</summary>
+    public bool SuggestClearWorkshopId { get; init; }
 }
 
 /// <summary>Cached community metadata for a workshop item (votes, subscribers, dates).</summary>
@@ -59,6 +64,7 @@ public sealed class SteamWorkshopService : IDisposable
     private Callback<ItemInstalled_t>? _itemInstalled;
     private Callback<DownloadItemResult_t>? _downloadResult;
     private bool _isDisposed;
+    private bool _publishCancelRequested;
 
     public SteamWorkshopService(SteamManager steam)
     {
@@ -67,6 +73,21 @@ public sealed class SteamWorkshopService : IDisposable
 
     public bool IsAvailable => _steam.IsInitialized;
     public bool IsPublishing { get; private set; }
+
+    /// <summary>
+    /// Soft-cancel the in-flight publish. Steam cannot abort SubmitItemUpdate once started;
+    /// we skip post-submit success handling and bail before Submit when possible.
+    /// </summary>
+    public void CancelPublish()
+    {
+        if (!IsPublishing)
+        {
+            return;
+        }
+
+        _publishCancelRequested = true;
+        DiagnosticsLog.Info("SteamWorkshop", "Publish cancel requested.");
+    }
 
     /// <summary>Bumped whenever the local workshop level folder changes; UI polls this to refresh lists.</summary>
     public int ChangeStamp { get; private set; }
@@ -126,15 +147,42 @@ public sealed class SteamWorkshopService : IDisposable
         }
 
         IsPublishing = true;
+        _publishCancelRequested = false;
         void Complete(WorkshopPublishResult result)
         {
             IsPublishing = false;
+            _publishCancelRequested = false;
             onComplete(result);
         }
 
         if (ulong.TryParse(metadata.WorkshopId, out ulong existingId) && existingId != 0)
         {
-            SubmitUpdate(metadata, new PublishedFileId_t(existingId), isNewItem: false, Complete);
+            SubmitUpdate(metadata, new PublishedFileId_t(existingId), isNewItem: false, result =>
+            {
+                if (!result.Success
+                    && !result.WasCancelled
+                    && result.SuggestClearWorkshopId)
+                {
+                    DiagnosticsLog.Info(
+                        "SteamWorkshop",
+                        $"Stale WorkshopId={existingId} for level={metadata.Id}; clearing and creating new item.");
+                    ClearWorkshopFieldsFromLocalLevel(metadata);
+                    BeginCreateItem(metadata, Complete);
+                    return;
+                }
+
+                Complete(result);
+            });
+            return;
+        }
+
+        BeginCreateItem(metadata, Complete);
+    }
+
+    private void BeginCreateItem(LevelMetadata metadata, Action<WorkshopPublishResult> onComplete)
+    {
+        if (TryConsumeCancel(onComplete))
+        {
             return;
         }
 
@@ -142,9 +190,14 @@ public sealed class SteamWorkshopService : IDisposable
             SteamUGC.CreateItem(SteamUtils.GetAppID(), EWorkshopFileType.k_EWorkshopFileTypeCommunity),
             (created, ioFailure) =>
             {
+                if (TryConsumeCancel(onComplete))
+                {
+                    return;
+                }
+
                 if (ioFailure || created.m_eResult != EResult.k_EResultOK)
                 {
-                    Complete(Fail(FormatCreateFailure(created.m_eResult, ioFailure)));
+                    onComplete(Fail(FormatCreateFailure(created.m_eResult, ioFailure)));
                     return;
                 }
 
@@ -154,7 +207,7 @@ public sealed class SteamWorkshopService : IDisposable
                     OpenWorkshopPage(created.m_nPublishedFileId.m_PublishedFileId);
                 }
 
-                SubmitUpdate(metadata, created.m_nPublishedFileId, isNewItem: true, Complete);
+                SubmitUpdate(metadata, created.m_nPublishedFileId, isNewItem: true, onComplete);
             });
     }
 
@@ -164,6 +217,11 @@ public sealed class SteamWorkshopService : IDisposable
         bool isNewItem,
         Action<WorkshopPublishResult> onComplete)
     {
+        if (TryConsumeCancel(onComplete))
+        {
+            return;
+        }
+
         string stagingFolder;
         try
         {
@@ -238,13 +296,28 @@ public sealed class SteamWorkshopService : IDisposable
                 $"Publish without preview — no PNG for level={metadata.Id}");
         }
 
+        if (TryConsumeCancel(onComplete))
+        {
+            return;
+        }
+
         SteamCallTracker.Track<SubmitItemUpdateResult_t>(
             SteamUGC.SubmitItemUpdate(update, $"Version {metadata.Version}"),
             (submitted, ioFailure) =>
             {
+                // Steam cannot abort an in-flight SubmitItemUpdate. If the user cancelled,
+                // still report cancelled even when Steam finished uploading.
+                if (_publishCancelRequested)
+                {
+                    onComplete(Cancelled());
+                    return;
+                }
+
                 if (ioFailure || submitted.m_eResult != EResult.k_EResultOK)
                 {
-                    onComplete(Fail(FormatSubmitFailure(submitted.m_eResult, ioFailure)));
+                    onComplete(Fail(
+                        FormatSubmitFailure(submitted.m_eResult, ioFailure),
+                        suggestClearWorkshopId: !isNewItem && IsMissingOrForbiddenWorkshopResult(submitted.m_eResult)));
                     return;
                 }
 
@@ -256,10 +329,28 @@ public sealed class SteamWorkshopService : IDisposable
                     Success = true,
                     WorkshopId = fileId.m_PublishedFileId,
                     NeedsLegalAgreement = submitted.m_bUserNeedsToAcceptWorkshopLegalAgreement,
+                    WasUpdate = !isNewItem,
                     Message = isNewItem ? "Level uploaded to the Workshop." : "Workshop item updated."
                 });
             });
     }
+
+    private bool TryConsumeCancel(Action<WorkshopPublishResult> onComplete)
+    {
+        if (!_publishCancelRequested)
+        {
+            return false;
+        }
+
+        onComplete(Cancelled());
+        return true;
+    }
+
+    private static bool IsMissingOrForbiddenWorkshopResult(EResult result) =>
+        result is EResult.k_EResultFileNotFound
+            or EResult.k_EResultAccessDenied
+            or EResult.k_EResultInsufficientPrivilege
+            or EResult.k_EResultFail;
 
     private static string BuildStagingFolder(LevelMetadata metadata, ulong workshopId)
     {
@@ -394,7 +485,8 @@ public sealed class SteamWorkshopService : IDisposable
         const long MaxSteamPreviewBytes = 1024L * 1024L;
         try
         {
-            string? workshopPreview = LevelPreviewManager.TryFindExistingWorkshopPreviewFile(levelId);
+            string? levelName = LevelLibrary.GetLevel(levelId)?.Name;
+            string? workshopPreview = LevelPreviewManager.TryFindExistingWorkshopPreviewFile(levelId, levelName);
             if (workshopPreview is not null && IsValidPngPreview(workshopPreview, MinPreviewBytes))
             {
                 var workshopInfo = new FileInfo(workshopPreview);
@@ -514,6 +606,35 @@ public sealed class SteamWorkshopService : IDisposable
             DiagnosticsLog.Info("SteamWorkshop", $"Failed to persist workshop id for {metadata.Id}: {ex.Message}");
         }
     }
+
+    private void ClearWorkshopFieldsFromLocalLevel(LevelMetadata metadata)
+    {
+        try
+        {
+            LevelData? data = JsonSerializer.Deserialize<LevelData>(File.ReadAllText(metadata.FilePath), JsonOptions);
+            if (data is null)
+            {
+                return;
+            }
+
+            data.WorkshopId = string.Empty;
+            data.OwnerSteamId = string.Empty;
+            File.WriteAllText(metadata.FilePath, JsonSerializer.Serialize(data, JsonOptions));
+            metadata.WorkshopId = string.Empty;
+            metadata.OwnerSteamId = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("SteamWorkshop", $"Failed to clear workshop id for {metadata.Id}: {ex.Message}");
+            metadata.WorkshopId = string.Empty;
+        }
+    }
+
+    private static WorkshopPublishResult Fail(string message, bool suggestClearWorkshopId = false) =>
+        new() { Success = false, Message = message, SuggestClearWorkshopId = suggestClearWorkshopId };
+
+    private static WorkshopPublishResult Cancelled() =>
+        new() { Success = false, WasCancelled = true, Message = "Upload cancelled." };
 
     // ------------------------------------------------------------------
     // Subscriptions / downloads (read-only Workshop levels)
@@ -913,7 +1034,6 @@ public sealed class SteamWorkshopService : IDisposable
             $"https://steamcommunity.com/app/{SteamUtils.GetAppID().m_AppId}/workshop/");
     }
 
-    private static WorkshopPublishResult Fail(string message) => new() { Success = false, Message = message };
 
     private static JsonSerializerOptions CreateJsonOptions()
     {

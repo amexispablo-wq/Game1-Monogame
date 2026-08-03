@@ -18,6 +18,8 @@ namespace ColorBlocks;
 public sealed class SteamGhostService
 {
     private const int MaxPlayerCounts = 4;
+    /// <summary>LRU cap for leaderboard entry downloads under Cache/Replays.</summary>
+    public const int MaxCachedEntryReplays = 5;
 
     private sealed class WorldRecordGhostMeta
     {
@@ -73,6 +75,136 @@ public sealed class SteamGhostService
         }
 
         return entry.GhostId;
+    }
+
+    /// <summary>
+    /// Cache path for an arbitrary leaderboard-entry replay (not only WR).
+    /// Layout: Cache/Replays/{Official|Workshop}/{levelId}_p{n}_{ugc}.replay
+    /// </summary>
+    public static string GetEntryReplayPath(string levelId, int playerCount, ulong ugcHandle)
+    {
+        LevelSource source = LevelIdentity.GetSource(levelId);
+        int clamped = SteamLeaderboardService.ClampPlayerCount(playerCount);
+        return Path.Combine(
+            UserDataPaths.ReplayCache,
+            source.ToString(),
+            $"{levelId.Replace(':', '_')}_p{clamped}_{ugcHandle}.replay");
+    }
+
+    /// <summary>
+    /// Downloads (or reuses cache for) the replay attached to any leaderboard row.
+    /// Callback receives local path on success, null on failure / missing UGC.
+    /// Touches + LRU-prunes Cache/Replays so entry downloads cannot grow unbounded.
+    /// </summary>
+    public void EnsureEntryReplay(
+        SteamLeaderboardEntry entry,
+        string levelId,
+        int playerCount,
+        Action<string?> onReady)
+    {
+        ulong handle = ResolveGhostUgcHandle(entry);
+        int clamped = SteamLeaderboardService.ClampPlayerCount(playerCount);
+        if (!IsAvailable || handle == 0 || !SupportsWorldRecordGhost(levelId))
+        {
+            onReady(null);
+            return;
+        }
+
+        string path = GetEntryReplayPath(levelId, clamped, handle);
+        if (File.Exists(path)
+            && ReplayFileSerializer.TryLoad(path, invalidateOnHashMismatch: false) is not null)
+        {
+            TouchEntryReplayAccess(path);
+            PruneEntryReplayCache(path);
+            onReady(path);
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        _replays.DownloadReplay(handle, path, success =>
+        {
+            if (success
+                && File.Exists(path)
+                && ReplayFileSerializer.TryLoad(path, invalidateOnHashMismatch: false) is not null)
+            {
+                DiagnosticsLog.Info(
+                    "SteamGhost",
+                    $"Entry replay cached level={levelId} players={clamped} handle={handle}");
+                TouchEntryReplayAccess(path);
+                PruneEntryReplayCache(path);
+                onReady(path);
+                return;
+            }
+
+            onReady(null);
+        });
+    }
+
+    private static void TouchEntryReplayAccess(string path)
+    {
+        try
+        {
+            File.SetLastAccessTimeUtc(path, DateTime.UtcNow);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>
+    /// Deletes oldest entry-replay files under <see cref="UserDataPaths.ReplayCache"/>
+    /// until count ≤ <see cref="MaxCachedEntryReplays"/>. Never deletes <paramref name="keepPath"/>.
+    /// </summary>
+    private static void PruneEntryReplayCache(string keepPath)
+    {
+        try
+        {
+            string root = UserDataPaths.ReplayCache;
+            if (!Directory.Exists(root))
+            {
+                return;
+            }
+
+            string keepFull = Path.GetFullPath(keepPath);
+            FileInfo[] files = new DirectoryInfo(root).GetFiles("*.replay", SearchOption.AllDirectories);
+            if (files.Length <= MaxCachedEntryReplays)
+            {
+                return;
+            }
+
+            Array.Sort(files, static (a, b) => a.LastAccessTimeUtc.CompareTo(b.LastAccessTimeUtc));
+
+            int deleted = 0;
+            int remaining = files.Length;
+            for (int i = 0; i < files.Length && remaining > MaxCachedEntryReplays; i++)
+            {
+                FileInfo file = files[i];
+                if (string.Equals(file.FullName, keepFull, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    file.Delete();
+                    deleted++;
+                    remaining--;
+                }
+                catch
+                {
+                }
+            }
+
+            if (deleted > 0)
+            {
+                DiagnosticsLog.Info(
+                    "SteamGhost",
+                    $"Pruned {deleted} entry replay cache file(s) (cap={MaxCachedEntryReplays})");
+            }
+        }
+        catch
+        {
+        }
     }
 
     /// <summary>

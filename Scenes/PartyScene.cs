@@ -161,7 +161,13 @@ public sealed class PartyScene : IScene
         _focus.FinalizeFocus("Play");
         _focus.Update(gameTime, _game.Input);
 
-        if (_leaveRequested || _game.Input.ExitPressed || _game.Input.MenuCancelPressed || _backFocus.WasActivated)
+        if (_leaveRequested)
+        {
+            LeaveLobbyAndReturnToMenu();
+            return;
+        }
+
+        if (_game.Input.ExitPressed || _game.Input.MenuCancelPressed || _backFocus.WasActivated)
         {
             LeaveAndReturnToMenu();
             return;
@@ -290,7 +296,13 @@ public sealed class PartyScene : IScene
     private void LeaveAndReturnToMenu()
     {
         // Back to main menu only — keep Steam lobby/party intact so friends stay connected.
-        // Explicit leave/dissolve stays on LeaveParty (e.g. ExitGame), not Back.
+        // Explicit leave/dissolve stays on LeaveParty (guest Leave / ExitGame), not Back.
+        _game.ChangeScene(new MenuScene(_game));
+    }
+
+    private void LeaveLobbyAndReturnToMenu()
+    {
+        _game.Party.LeaveParty();
         _game.ChangeScene(new MenuScene(_game));
     }
 

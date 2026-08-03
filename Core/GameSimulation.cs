@@ -213,6 +213,8 @@ public sealed class GameSimulation
         // Keep SnapshotCount monotonic for the online session — zeroing it makes clients
         // drop post-restart snaps until seq climbs past the old latch (felt multi-minute freeze).
         LastSnapshot = CreateSnapshot(SimulationTick.Zero);
+        // Platforms use tick time, not ElapsedTime — snap color/motion for this frame.
+        ApplyMovingPlatformVisuals(SimulationTick.Zero);
         DiagnosticsLog.Info("Sim", "RestartLevel — cleared input latch + InputBuffer (tick→0)");
     }
 
@@ -512,10 +514,8 @@ public sealed class GameSimulation
 
     public void RespawnFromStart()
     {
-        PlayerManager.ClearCheckpoint();
-        PlayerManager.ReviveAllAtStart();
-        ElapsedTime = 0f;
-        ResetAfterRespawn();
+        // Must rewind CurrentTick: ApplyColorAtTime / motion use tick, not ElapsedTime.
+        RestartLevel();
     }
 
     public void RespawnFromCheckpoint()

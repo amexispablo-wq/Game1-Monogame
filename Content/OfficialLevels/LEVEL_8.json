@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "LEVEL 8",
   "platforms": [
     {
@@ -960,8 +960,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-07-27T19:43:12.4886551Z",
-  "modifiedDate": "2026-07-28T02:22:23.4351963Z",
-  "version": 19,
+  "modifiedDate": "2026-08-02T21:04:20.0849396Z",
+  "version": 20,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null

@@ -47,6 +47,7 @@ public sealed class GameScene : IScene
     private const float DisconnectReturnDelay = 2.5f;
     private const float ClientSnapshotStallSeconds = 2f;
     private readonly ReplayRecorder _replayRecorder = new();
+    private readonly ActiveWallClock _activeWallClock = new();
     private readonly GhostPlayer? _ghostPlayer;
     private readonly GhostPlayer? _worldRecordGhost;
     private readonly GhostMode _ghostMode;
@@ -278,11 +279,13 @@ public sealed class GameScene : IScene
 
         _persistedNewRecordReplay = true;
         _savedNewRecordReplay = true;
+        _activeWallClock.CaptureFinal();
         ReplayFile replayFile = ReplayFileSerializer.CreateFromSession(
             session,
             _levelId,
             _simulation.FinalTime,
-            _playerManager.Players.Count);
+            _playerManager.Players.Count,
+            _activeWallClock.ElapsedSeconds);
         ReplayStorage.SaveBestReplay(replayFile, _playerManager.Players.Count);
         UploadRecordToSteamLeaderboard();
     }
@@ -489,18 +492,31 @@ public sealed class GameScene : IScene
     {
         float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, MaxSceneFrameTime);
         Viewport viewport = _game.Viewport;
+        SyncActiveWallClock();
 
         if (!_editorTestMode && _game.Input.ReplayForceSavePressed)
         {
-            ReplayData? forced = _replayRecorder.ExportReplay();
-            if (forced is not null)
+            // Never overwrite official best with an incomplete quit mid-run.
+            if (_simulation.IsLevelComplete)
             {
-                ReplayFile replayFile = ReplayFileSerializer.CreateFromSession(
-                    forced,
-                    _levelId,
-                    _simulation.ElapsedTime,
-                    _playerManager.Players.Count);
-                ReplayStorage.SaveBestReplay(replayFile, _playerManager.Players.Count);
+                ReplayData? forced = _replayRecorder.ExportReplay();
+                if (forced is not null)
+                {
+                    _activeWallClock.CaptureFinal();
+                    ReplayFile replayFile = ReplayFileSerializer.CreateFromSession(
+                        forced,
+                        _levelId,
+                        _simulation.ElapsedTime,
+                        _playerManager.Players.Count,
+                        _activeWallClock.ElapsedSeconds);
+                    ReplayStorage.SaveBestReplay(replayFile, _playerManager.Players.Count);
+                }
+            }
+            else
+            {
+                DiagnosticsLog.Info(
+                    "Replay",
+                    "Force-save ignored — level not complete (would pollute official best).");
             }
         }
 
@@ -630,7 +646,7 @@ public sealed class GameScene : IScene
             return;
         }
 
-        if (_game.Input.GameplayPausePressed)
+        if (_game.Input.GameplayPausePressed || WasAssignedLocalGamepadDisconnected())
         {
             _simulation.SetPaused(true);
             _game.GameNetwork.ClearClientLatchedInput();
@@ -746,6 +762,27 @@ public sealed class GameScene : IScene
         }
 
         return true;
+    }
+
+    private bool WasAssignedLocalGamepadDisconnected()
+    {
+        for (int i = 0; i < _playerManager.Players.Count; i++)
+        {
+            Player player = _playerManager.Players[i];
+            if (!player.IsLocal)
+            {
+                continue;
+            }
+
+            InputDevice device = player.AssignedInput;
+            if (device.DeviceType == InputDeviceType.Gamepad
+                && _game.Input.WasGamepadDisconnected(device.DeviceIndex))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void HandlePauseMenuChoice(PauseMenuChoice choice)
@@ -1157,6 +1194,7 @@ public sealed class GameScene : IScene
     private void ResetGameplaySession()
     {
         _simulation.RestartLevel();
+        _activeWallClock.Reset();
         _game.GameNetwork.ClearClientLatchedInput();
         _camera.Position = GetPlayersCenter();
         _camera.SetZoom(GetTargetCameraZoom(_game.Viewport));
@@ -1179,6 +1217,7 @@ public sealed class GameScene : IScene
     private void RespawnFromStartClearingReplay()
     {
         _simulation.RespawnFromStart();
+        _activeWallClock.Reset();
         if (!_editorTestMode)
         {
             _replayRecorder.ResetSession();
@@ -1186,6 +1225,29 @@ public sealed class GameScene : IScene
 
         _savedNewRecordReplay = false;
         _persistedNewRecordReplay = false;
+    }
+
+    /// <summary>
+    /// Upload-only integrity clock. Never feeds physics. Stops on pause, death,
+    /// completion, photo mode, unfocused window, and clients (host uploads).
+    /// </summary>
+    private void SyncActiveWallClock()
+    {
+        if (_simulation.IsLevelComplete)
+        {
+            _activeWallClock.CaptureFinal();
+            return;
+        }
+
+        bool accumulate = !_editorTestMode
+            && _session.Role != GameSessionRole.Client
+            && _simulation.TimerRunning
+            && !_simulation.IsPaused
+            && !_simulation.IsPlayerDead
+            && !_photoMode
+            && _game.IsActive;
+
+        _activeWallClock.SetAccumulating(accumulate);
     }
 
     private void ReturnToLevelSelect()

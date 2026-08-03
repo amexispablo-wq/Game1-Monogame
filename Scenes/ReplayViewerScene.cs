@@ -12,6 +12,7 @@ public sealed class ReplayViewerScene : IScene
   private readonly string _levelId;
   private readonly string? _replayPathOverride;
   private readonly int _playerCount;
+  private readonly Func<IScene>? _createReturnScene;
   private readonly ReplayPlayer _player = new();
   private readonly Camera _camera = new(Vector2.Zero);
   private float _speedMultiplier = 1f;
@@ -20,13 +21,15 @@ public sealed class ReplayViewerScene : IScene
     ColorBlocksGame game,
     string levelId,
     string? replayPathOverride = null,
-    int? playerCount = null)
+    int? playerCount = null,
+    Func<IScene>? createReturnScene = null)
   {
     _game = game;
     _levelId = levelId;
     _replayPathOverride = replayPathOverride;
     _playerCount = SteamLeaderboardService.ClampPlayerCount(
       playerCount ?? Math.Max(1, game.Party.Members.Count));
+    _createReturnScene = createReturnScene;
     LoadReplay();
   }
 
@@ -42,7 +45,8 @@ public sealed class ReplayViewerScene : IScene
 
     if (input.ReplayViewerExitPressed || input.ExitPressed || input.MenuCancelPressed)
     {
-      _game.ChangeScene(new LevelSelectScene(_game, LevelSelectMode.PlayMode));
+      _game.ChangeScene(_createReturnScene?.Invoke()
+        ?? new LevelSelectScene(_game, LevelSelectMode.PlayMode));
       return;
     }
 

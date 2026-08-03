@@ -32,6 +32,8 @@ Empezá por [`20_GameStandards`](Framework/20_GameStandards/README.md) + [`00_Ge
 | [`08-ROADMAP.md`](08-ROADMAP.md) | Roadmap Steam CB |
 | [`09-HERRAMIENTAS-DEV.md`](09-HERRAMIENTAS-DEV.md) | Dev mode, sandbox, benchmarks |
 | [`10-REPLAY-Y-GHOSTS.md`](10-REPLAY-Y-GHOSTS.md) | Replay pipeline + Steam Ghost |
+| [`11-SEGURIDAD.md`](11-SEGURIDAD.md) | Seguridad cliente, residual sin anticheat server |
+| [`12-LEADERBOARD-ADMIN.md`](12-LEADERBOARD-ADMIN.md) | Cupo LB Steam, top workshop UGC, tool local de maintenance |
 | [`STEAM_INPUT_OFFICIAL_SHIP.md`](STEAM_INPUT_OFFICIAL_SHIP.md) | Checklist Partner Gamepad Publish |
 
 > Doc legado en la raíz: `MULTI_LEVEL_SYSTEM.md` (usar `04-NIVELES-Y-EDITOR.md`).

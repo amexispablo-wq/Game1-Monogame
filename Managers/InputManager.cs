@@ -165,7 +165,8 @@ public sealed class InputManager : ILocalPlayerInputSource
         for (int i = 0; i < MaxLocalPlayers; i++)
         {
             _previousGamepads[i] = _currentGamepads[i];
-            _currentGamepads[i] = GamePad.GetState((PlayerIndex)i);
+            GamePadState monoGame = GamePad.GetState((PlayerIndex)i);
+            XInputGamepadPoller.ResolveSlot(i, monoGame, out _currentGamepads[i]);
         }
 
         RouteAnalogVectors();
@@ -372,6 +373,15 @@ public sealed class InputManager : ILocalPlayerInputSource
         return deviceIndex >= 0
             && deviceIndex < MaxLocalPlayers
             && _currentGamepads[deviceIndex].IsConnected;
+    }
+
+    /// <summary>True on the frame a previously-connected pad becomes disconnected.</summary>
+    public bool WasGamepadDisconnected(int deviceIndex)
+    {
+        return deviceIndex >= 0
+            && deviceIndex < MaxLocalPlayers
+            && _previousGamepads[deviceIndex].IsConnected
+            && !_currentGamepads[deviceIndex].IsConnected;
     }
 
     /// <summary>

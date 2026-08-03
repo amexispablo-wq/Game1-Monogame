@@ -672,9 +672,6 @@ public sealed class PartyManager
             return;
         }
 
-        // Online remote peers must not auto-join as local couch seats via Remote Play pads.
-        bool blockAutoJoin = _steamLobby?.IsInLobby == true && HasNonLocalMembers();
-
         for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
         {
             // Join when MonoGame reports the pad available for assign.
@@ -683,9 +680,7 @@ public sealed class PartyManager
                 continue;
             }
 
-            if (!blockAutoJoin
-                && input.WasGamepadJoinPressed(i)
-                && !IsControllerAssigned(i))
+            if (input.WasGamepadJoinPressed(i) && !IsControllerAssigned(i))
             {
                 TryJoinGamepad(i);
             }
@@ -795,19 +790,6 @@ public sealed class PartyManager
                 && other.IsLocallyOwned
                 && other.InputSource == PartyInputSource.Gamepad
                 && other.ControllerId == controllerId)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private bool HasNonLocalMembers()
-    {
-        foreach (PartyMember member in _members)
-        {
-            if (!member.IsLocallyOwned)
             {
                 return true;
             }

@@ -31,6 +31,13 @@ developer_settings.json
 # Generated on every build by GenerateBuildInfo target
 Content/version.json
 
+# LeaderboardAdmin local secrets / allowlist cache
+Backend/LeaderboardAdmin/data/
+Backend/LeaderboardAdmin/appsettings.Development.json
+Tools/LeaderboardMaintenance/maintenance-state.json
+Tools/LeaderboardMaintenance/publish/
+Tools/LeaderboardMaintenance/.env
+
 # Local ffmpeg conversion backups (source music must be real Ogg Vorbis)
 Content/Audio/**/_mp3_backup/
 Content/Audio/_mp3_backup/

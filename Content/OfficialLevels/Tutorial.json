@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "LEVEL 0",
   "platforms": [
     {
@@ -6,35 +6,95 @@
       "y": 420,
       "width": 480,
       "height": 40,
-      "color": "Red"
+      "color": "Red",
+      "moveVertical": false,
+      "verticalSpeed": 20,
+      "verticalDistanceBlocks": 2,
+      "verticalDirection": "Up",
+      "moveHorizontal": false,
+      "horizontalSpeed": 15,
+      "horizontalDistanceBlocks": 1,
+      "horizontalDirection": "Right",
+      "colorChangeEnabled": false,
+      "colorCycle": [],
+      "colorChangePeriodSeconds": 2,
+      "colorChangePhaseSeconds": 0
     },
     {
       "x": 480,
       "y": 420,
       "width": 192,
       "height": 40,
-      "color": "Blue"
+      "color": "Blue",
+      "moveVertical": false,
+      "verticalSpeed": 20,
+      "verticalDistanceBlocks": 2,
+      "verticalDirection": "Up",
+      "moveHorizontal": false,
+      "horizontalSpeed": 15,
+      "horizontalDistanceBlocks": 1,
+      "horizontalDirection": "Right",
+      "colorChangeEnabled": false,
+      "colorCycle": [],
+      "colorChangePeriodSeconds": 2,
+      "colorChangePhaseSeconds": 0
     },
     {
       "x": 672,
       "y": 420,
       "width": 192,
       "height": 40,
-      "color": "Green"
+      "color": "Green",
+      "moveVertical": false,
+      "verticalSpeed": 20,
+      "verticalDistanceBlocks": 2,
+      "verticalDirection": "Up",
+      "moveHorizontal": false,
+      "horizontalSpeed": 15,
+      "horizontalDistanceBlocks": 1,
+      "horizontalDirection": "Right",
+      "colorChangeEnabled": false,
+      "colorCycle": [],
+      "colorChangePeriodSeconds": 2,
+      "colorChangePhaseSeconds": 0
     },
     {
       "x": 864,
       "y": 420,
       "width": 160,
       "height": 40,
-      "color": "Red"
+      "color": "Red",
+      "moveVertical": false,
+      "verticalSpeed": 20,
+      "verticalDistanceBlocks": 2,
+      "verticalDirection": "Up",
+      "moveHorizontal": false,
+      "horizontalSpeed": 15,
+      "horizontalDistanceBlocks": 1,
+      "horizontalDirection": "Right",
+      "colorChangeEnabled": false,
+      "colorCycle": [],
+      "colorChangePeriodSeconds": 2,
+      "colorChangePhaseSeconds": 0
     },
     {
       "x": 864,
       "y": 420,
       "width": 160,
       "height": 40,
-      "color": "Blue"
+      "color": "Blue",
+      "moveVertical": false,
+      "verticalSpeed": 20,
+      "verticalDistanceBlocks": 2,
+      "verticalDirection": "Up",
+      "moveHorizontal": false,
+      "horizontalSpeed": 15,
+      "horizontalDistanceBlocks": 1,
+      "horizontalDirection": "Right",
+      "colorChangeEnabled": false,
+      "colorCycle": [],
+      "colorChangePeriodSeconds": 2,
+      "colorChangePhaseSeconds": 0
     },
     {
       "x": 1024,
@@ -42,23 +102,60 @@
       "width": 224,
       "height": 40,
       "color": "Red",
+      "moveVertical": false,
+      "verticalSpeed": 20,
+      "verticalDistanceBlocks": 2,
+      "verticalDirection": "Up",
+      "moveHorizontal": false,
+      "horizontalSpeed": 15,
+      "horizontalDistanceBlocks": 1,
+      "horizontalDirection": "Right",
       "colorChangeEnabled": true,
-      "colorCycle": [ "Red", "Blue", "Green" ],
-      "colorChangePeriodSeconds": 6
+      "colorCycle": [
+        "Red",
+        "Blue",
+        "Green"
+      ],
+      "colorChangePeriodSeconds": 6,
+      "colorChangePhaseSeconds": 0
     },
     {
       "x": 1248,
       "y": 420,
       "width": 320,
       "height": 40,
-      "color": "Red"
+      "color": "Red",
+      "moveVertical": false,
+      "verticalSpeed": 20,
+      "verticalDistanceBlocks": 2,
+      "verticalDirection": "Up",
+      "moveHorizontal": false,
+      "horizontalSpeed": 15,
+      "horizontalDistanceBlocks": 1,
+      "horizontalDirection": "Right",
+      "colorChangeEnabled": false,
+      "colorCycle": [],
+      "colorChangePeriodSeconds": 2,
+      "colorChangePhaseSeconds": 0
     },
     {
       "x": 200,
       "y": 320,
       "width": 128,
       "height": 28,
-      "color": "Red"
+      "color": "Red",
+      "moveVertical": false,
+      "verticalSpeed": 20,
+      "verticalDistanceBlocks": 2,
+      "verticalDirection": "Up",
+      "moveHorizontal": false,
+      "horizontalSpeed": 15,
+      "horizontalDistanceBlocks": 1,
+      "horizontalDirection": "Right",
+      "colorChangeEnabled": false,
+      "colorCycle": [],
+      "colorChangePeriodSeconds": 2,
+      "colorChangePhaseSeconds": 0
     }
   ],
   "goals": [
@@ -74,7 +171,7 @@
     {
       "x": 24,
       "y": 220,
-      "text": "MOVE <{MoveLeft}  {MoveRight}>\nJUMP ^{Jump}",
+      "text": "MOVE \u003C{MoveLeft}  {MoveRight}\u003E\nJUMP ^{Jump}",
       "scale": 2
     },
     {
@@ -116,7 +213,7 @@
     {
       "x": 1248,
       "y": 300,
-      "text": "REACH GOAL >",
+      "text": "REACH GOAL \u003E",
       "scale": 2
     }
   ],
@@ -127,5 +224,25 @@
   "playerSpawnColor": "Red",
   "musicId": "default",
   "allPlayers": true,
-  "version": 1
+  "player1": false,
+  "player2": false,
+  "player3": false,
+  "player4": false,
+  "anyRope": true,
+  "coloredRope": false,
+  "regularRope": false,
+  "lavaRise": false,
+  "playerCollision": false,
+  "lavaLine": {
+    "surfaceY": 700,
+    "riseSpeed": 10
+  },
+  "author": "Game",
+  "workshopId": "",
+  "createdDate": "2026-07-27T21:15:37.8481457Z",
+  "modifiedDate": "2026-08-02T21:03:53.2126763Z",
+  "version": 2,
+  "ownerSteamId": "",
+  "downloadedVersion": "",
+  "lastSync": null
 }

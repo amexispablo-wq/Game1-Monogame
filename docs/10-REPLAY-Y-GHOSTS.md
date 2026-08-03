@@ -42,16 +42,18 @@ Namespace: `ColorBlocks.Replay` (salvo servicios Steam en `ColorBlocks`).
 ## Steam — `SteamGhostService`
 
 - Solo Official + Workshop (`SupportsWorldRecordGhost`; Local no).
-- Por board de player-count: pide top LB → si cambia handle/score, re-descarga.
-- Cache: `%LocalAppData%/…/Ghosts/{Official|Workshop}/…` + sidecar meta (UGC, version, score).
-- Playback: `GhostPlayer` (mismo formato que replay local).
+- Por board de player-count: pide top LB → si cambia handle/score, re-descarga WR.
+- Cache WR: `%LocalAppData%/…/Ghosts/{Official|Workshop}/…` + sidecar meta (UGC, version, score).
+- `EnsureEntryReplay` — download/cache de **cualquier** fila LB (`Cache/Replays/.../{level}_p{n}_{ugc}.replay`). LRU cap **5** archivos (borra oldest por LastAccessTime). No toca PB locales ni Ghosts WR.
+- Playback: `GhostPlayer` / `ReplayViewerScene` (mismo formato).
 
 ## Escenas / UX
 
 | Pieza | Uso |
 |-------|-----|
-| `ReplayViewerScene` | Ver best local o path WR pasado desde Level Select |
-| Level Select | Descargar / abrir world record replay |
+| `ReplayViewerScene` | Best local, path WR, o path de fila LB; `createReturnScene` vuelve a Leaderboard |
+| `LeaderboardScene` | Columna Replay por fila (1–4P board); sticky PB si off-screen |
+| Level Select | Watch Replay / Watch WR (aún usan party size) |
 | Menú | `ReplayBackgroundRenderer` si hay replay + toggle |
 
 ## Dev keys
@@ -61,8 +63,13 @@ Ver [`09-HERRAMIENTAS-DEV.md`](09-HERRAMIENTAS-DEV.md): F10 force-save / F11 bac
 ## Relación con Leaderboards
 
 1. Completar nivel → mejor tiempo local opcional.
-2. Share replay → UGC handle.
+2. Share replay → UGC handle (cada PB KeepBest, no solo WR).
 3. Upload score LB con details + attach UGC.
-4. Otros clientes: LB top → GhostService cache → ghost race / viewer.
+4. Leaderboard fila → `EnsureEntryReplay` → `ReplayViewerScene`.
+5. WR in-game ghost: top LB → `EnsureWorldRecordGhost` → `GhostPlayer`.
+
+### Replay ausente
+
+- Fila con `--` o download fail: entry sin `ReplayId`/`GhostId` (Cloud share falló al subir, o Attach no corrió porque KeepBest no cambió).
 
 Detalle boards: [`05-STEAM.md`](05-STEAM.md). Roadmap polish: [`08-ROADMAP.md`](08-ROADMAP.md) Fase 3.

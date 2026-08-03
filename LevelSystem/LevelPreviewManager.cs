@@ -84,6 +84,7 @@ public static class LevelPreviewManager
             }
 
             string fullPath = Path.GetFullPath(workshopPath);
+            CleanupStaleWorkshopPreviewFiles(levelId, level.Name, fullPath);
             DiagnosticsLog.Info(
                 "LevelPreview",
                 $"Workshop preview ready level={levelId} path='{fullPath}' bytes={new FileInfo(fullPath).Length}");
@@ -96,7 +97,7 @@ public static class LevelPreviewManager
         }
     }
 
-    public static string? TryFindExistingWorkshopPreviewFile(string levelId)
+    public static string? TryFindExistingWorkshopPreviewFile(string levelId, string? levelName = null)
     {
         try
         {
@@ -106,18 +107,32 @@ public static class LevelPreviewManager
                 return null;
             }
 
+            // Prefer the canonical path for this level identity (and optional display name).
+            if (!string.IsNullOrWhiteSpace(levelName))
+            {
+                string canonical = Path.GetFullPath(GetWorkshopPreviewPath(levelId, levelName));
+                if (File.Exists(canonical))
+                {
+                    return canonical;
+                }
+            }
+
             string stem = SanitizeLevelIdForFile(levelId);
+            string stemOnly = Path.Combine(previewsRoot, $"{stem}_workshop.png");
+            if (File.Exists(stemOnly))
+            {
+                return Path.GetFullPath(stemOnly);
+            }
+
+            string exactSuffix = $"_{stem}_workshop.png";
             foreach (string file in Directory.EnumerateFiles(previewsRoot, "*_workshop.png"))
             {
-                string name = Path.GetFileNameWithoutExtension(file);
-                if (!name.EndsWith($"_{stem}_workshop", StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(name, $"{stem}_workshop", StringComparison.OrdinalIgnoreCase)
-                    && !name.Contains(stem, StringComparison.OrdinalIgnoreCase))
+                string fileName = Path.GetFileName(file);
+                if (fileName.EndsWith(exactSuffix, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(fileName, $"{stem}_workshop.png", StringComparison.OrdinalIgnoreCase))
                 {
-                    continue;
+                    return Path.GetFullPath(file);
                 }
-
-                return Path.GetFullPath(file);
             }
         }
         catch (Exception ex)
@@ -126,6 +141,47 @@ public static class LevelPreviewManager
         }
 
         return null;
+    }
+
+    /// <summary>Deletes stale *_workshop.png siblings that are not the canonical path for this level.</summary>
+    public static void CleanupStaleWorkshopPreviewFiles(string levelId, string levelName, string keepPath)
+    {
+        try
+        {
+            string previewsRoot = GetPreviewDirectory(levelId);
+            if (!Directory.Exists(previewsRoot))
+            {
+                return;
+            }
+
+            string stem = SanitizeLevelIdForFile(levelId);
+            string keepFull = Path.GetFullPath(keepPath);
+            string exactSuffix = $"_{stem}_workshop.png";
+            foreach (string file in Directory.EnumerateFiles(previewsRoot, "*_workshop.png"))
+            {
+                string full = Path.GetFullPath(file);
+                if (string.Equals(full, keepFull, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string fileName = Path.GetFileName(file);
+                bool matchesStem = fileName.EndsWith(exactSuffix, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(fileName, $"{stem}_workshop.png", StringComparison.OrdinalIgnoreCase)
+                    || fileName.Contains(stem, StringComparison.OrdinalIgnoreCase);
+                if (!matchesStem)
+                {
+                    continue;
+                }
+
+                File.Delete(full);
+                DiagnosticsLog.Info("LevelPreview", $"Removed stale workshop preview '{full}'");
+            }
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("LevelPreview", $"Stale workshop preview cleanup failed level={levelId}: {ex.Message}");
+        }
     }
 
     private static void SaveLetterboxedWorkshopPng(

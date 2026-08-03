@@ -50,11 +50,10 @@ public sealed class SteamLeaderboardEntry
 
 /// <summary>
 /// Steam Leaderboards for Official and Workshop levels. Local levels are never uploaded.
-/// Versioning reuses the existing level Version field. Boards are also split by player
-/// count so a 2-player run only competes on the 2-player board:
-/// "{levelId}_v{version}_p{playerCount}_f4" (seconds×10000).
-/// Same-version legacy boards without _f4 (centiseconds) are merged on download for display —
-/// old scores pad to four fractional digits (÷100 → time with trailing 00). Uploads only go to _f4.
+/// Stable board names (no level version in the name) keep Official within the reserved quota:
+/// "{levelId}_p{playerCount}_f4" (seconds×10000). Level version is stored in score details.
+/// Boards are split by player count (1–4). Downloads never create boards; uploads may
+/// FindOrCreate only when the level is leaderboard-eligible.
 /// </summary>
 public sealed class SteamLeaderboardService
 {
@@ -64,11 +63,15 @@ public sealed class SteamLeaderboardService
 
     private readonly SteamManager _steam;
     private readonly Dictionary<string, SteamLeaderboard_t> _boardHandles = new(StringComparer.Ordinal);
+    private Func<string, bool>? _isEligible;
 
     public SteamLeaderboardService(SteamManager steam)
     {
         _steam = steam;
     }
+
+    /// <summary>Optional gate for workshop allowlist (official always eligible when SupportsLeaderboards).</summary>
+    public void SetEligibilityCheck(Func<string, bool> isEligible) => _isEligible = isEligible;
 
     public bool IsAvailable => _steam.IsInitialized;
 
@@ -76,27 +79,53 @@ public sealed class SteamLeaderboardService
     public static bool SupportsLeaderboards(string levelId) =>
         LevelIdentity.GetSource(levelId) != LevelSource.Local;
 
+    public bool IsEligibleForLeaderboards(string levelId)
+    {
+        if (!SupportsLeaderboards(levelId))
+        {
+            return false;
+        }
+
+        if (LevelIdentity.GetSource(levelId) == LevelSource.Official)
+        {
+            return true;
+        }
+
+        return _isEligible?.Invoke(levelId) ?? false;
+    }
+
     public static int ClampPlayerCount(int playerCount) =>
         Math.Clamp(playerCount, 1, MaxTrackedPlayers);
 
-    /// <summary>Current board (four fractional digits / seconds×10000).</summary>
-    public static string GetLeaderboardName(string levelId, int levelVersion, int playerCount) =>
+    /// <summary>Stable board name (four fractional digits / seconds×10000). Version is not part of the name.</summary>
+    public static string GetLeaderboardName(string levelId, int playerCount) =>
+        $"{levelId.Replace(':', '_')}_p{ClampPlayerCount(playerCount)}_f4";
+
+    /// <summary>Compatibility overload — <paramref name="levelVersion"/> is ignored (kept in score details only).</summary>
+    public static string GetLeaderboardName(string levelId, int levelVersion, int playerCount)
+    {
+        _ = levelVersion;
+        return GetLeaderboardName(levelId, playerCount);
+    }
+
+    /// <summary>Pre-stable board that included level version (read-only merge source during migration).</summary>
+    public static string GetVersionedLeaderboardName(string levelId, int levelVersion, int playerCount) =>
         $"{levelId.Replace(':', '_')}_v{Math.Max(1, levelVersion)}_p{ClampPlayerCount(playerCount)}_f4";
 
-    /// <summary>Pre-_f4 board for the same level version (centiseconds). Read-only merge source.</summary>
+    /// <summary>Pre-_f4 board for a versioned name (centiseconds). Read-only merge source.</summary>
     public static string GetLegacyLeaderboardName(string levelId, int levelVersion, int playerCount) =>
         $"{levelId.Replace(':', '_')}_v{Math.Max(1, levelVersion)}_p{ClampPlayerCount(playerCount)}";
 
     public void UploadRecord(SteamLeaderboardRecord record, Action<bool>? onComplete = null)
     {
-        if (!IsAvailable || !SupportsLeaderboards(record.LevelId))
+        if (!IsAvailable || !IsEligibleForLeaderboards(record.LevelId))
         {
             onComplete?.Invoke(false);
             return;
         }
 
         int playerCount = ClampPlayerCount(record.PlayerCount);
-        string boardName = GetLeaderboardName(record.LevelId, record.LevelVersion, playerCount);
+        string boardName = GetLeaderboardName(record.LevelId, playerCount);
         FindBoard(boardName, createIfMissing: true, board =>
         {
             if (board.m_SteamLeaderboard == 0)
@@ -146,9 +175,8 @@ public sealed class SteamLeaderboardService
     }
 
     /// <summary>
-    /// Downloads entries for the current _f4 board and merges same-version legacy
-    /// centisecond board (÷100 → time with trailing 00 in FormatTime). Prefer _f4 when the
-    /// same Steam user appears on both. Callback receives null only if both fail.
+    /// Downloads entries for the stable _f4 board and merges versioned/legacy boards when present.
+    /// Never creates boards (browse must not consume Steam's 10k quota).
     /// </summary>
     public void DownloadEntries(
         string levelId,
@@ -164,27 +192,67 @@ public sealed class SteamLeaderboardService
             return;
         }
 
+        // Workshop levels outside the allowlist: still try Find (read-only) if a board exists,
+        // but do not create. Official always readable.
         int clamped = ClampPlayerCount(playerCount);
         int version = Math.Max(1, levelVersion);
-        string currentName = GetLeaderboardName(levelId, version, clamped);
+        string currentName = GetLeaderboardName(levelId, clamped);
+        string versionedName = GetVersionedLeaderboardName(levelId, version, clamped);
         string legacyName = GetLegacyLeaderboardName(levelId, version, clamped);
 
-        DownloadBoardEntries(currentName, createIfMissing: true, scope, maxEntries, scoreDivisor: 10000f, current =>
+        DownloadBoardEntries(currentName, createIfMissing: false, scope, maxEntries, scoreDivisor: 10000f, current =>
         {
-            DownloadBoardEntries(legacyName, createIfMissing: false, scope, maxEntries, scoreDivisor: 100f, legacy =>
+            DownloadBoardEntries(versionedName, createIfMissing: false, scope, maxEntries, scoreDivisor: 10000f, versioned =>
             {
-                if (current is null && legacy is null)
+                DownloadBoardEntries(legacyName, createIfMissing: false, scope, maxEntries, scoreDivisor: 100f, legacy =>
                 {
-                    onComplete(null);
+                    if (current is null && versioned is null && legacy is null)
+                    {
+                        onComplete(null);
+                        return;
+                    }
+
+                    IReadOnlyList<SteamLeaderboardEntry> merged = MergeSameVersionBoards(
+                        MergeSameVersionBoards(current, versioned, maxEntries),
+                        legacy,
+                        maxEntries);
+                    DiagnosticsLog.Info(
+                        "SteamLeaderboard",
+                        $"Merge p{clamped}: stable={current?.Count ?? 0} v{version}={versioned?.Count ?? 0} legacy={legacy?.Count ?? 0} → {merged.Count}");
+                    onComplete(merged);
+                });
+            });
+        });
+    }
+
+    /// <summary>
+    /// Fetches the local user's board row (AroundUser range that returns a single entry).
+    /// Used by Leaderboard sticky PB when Global top does not include the player.
+    /// </summary>
+    public void DownloadLocalEntry(
+        string levelId,
+        int levelVersion,
+        int playerCount,
+        Action<SteamLeaderboardEntry?> onComplete)
+    {
+        DownloadEntries(levelId, levelVersion, playerCount, LeaderboardScope.AroundUser, 1, entries =>
+        {
+            if (entries is null || entries.Count == 0)
+            {
+                onComplete(null);
+                return;
+            }
+
+            for (int i = 0; i < entries.Count; i++)
+            {
+                if (entries[i].IsLocalUser)
+                {
+                    onComplete(entries[i]);
                     return;
                 }
+            }
 
-                IReadOnlyList<SteamLeaderboardEntry> merged = MergeSameVersionBoards(current, legacy, maxEntries);
-                DiagnosticsLog.Info(
-                    "SteamLeaderboard",
-                    $"Merge v{version} p{clamped}: f4={current?.Count ?? 0} legacy={legacy?.Count ?? 0} → {merged.Count}");
-                onComplete(merged);
-            });
+            onComplete(entries[0]);
         });
     }
 

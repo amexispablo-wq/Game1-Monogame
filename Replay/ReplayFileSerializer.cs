@@ -26,7 +26,8 @@ public static class ReplayFileSerializer
     ReplayData data,
     string levelId,
     float officialBestTime,
-    int playerCount)
+    int playerCount,
+    float activeWallSeconds = 0f)
   {
     // Death → restart-from-start used to leave pre-restart frames in the buffer, so
     // DurationSeconds (frame count) could exceed the official timer. Trim to the last
@@ -34,6 +35,9 @@ public static class ReplayFileSerializer
     ReplayData trimmed = TrimToLastTimerRun(data);
     int ticksPerSecond = Math.Max(1, trimmed.Header.TicksPerSecond);
     float roundedBest = BestTimeStorage.RoundToTenThousandths(officialBestTime);
+    float wall = activeWallSeconds > 0f && float.IsFinite(activeWallSeconds)
+      ? activeWallSeconds
+      : 0f;
     return new ReplayFile
     {
       Metadata = new ReplayFileMetadata
@@ -47,7 +51,8 @@ public static class ReplayFileSerializer
         OfficialBestTime = roundedBest,
         RopeMode = trimmed.Header.RopeMode,
         LavaRiseEnabled = trimmed.Header.LavaRiseEnabled,
-        TicksPerSecond = ticksPerSecond
+        TicksPerSecond = ticksPerSecond,
+        ActiveWallSeconds = wall
       },
       Data = trimmed
     };
@@ -117,12 +122,6 @@ public static class ReplayFileSerializer
     }
 
     float roundedScore = BestTimeStorage.RoundToTenThousandths(expectedScoreSeconds);
-    float durationDelta = MathF.Abs(file.Metadata.DurationSeconds - roundedScore);
-    if (durationDelta <= LeaderboardSanity.ReplayDurationToleranceSeconds)
-    {
-      return true;
-    }
-
     ReplayData trimmed = TrimToLastTimerRun(file.Data);
     if (trimmed.Frames.Length == 0)
     {
@@ -130,15 +129,26 @@ public static class ReplayFileSerializer
       return false;
     }
 
-    float lastElapsed = trimmed.Frames[^1].Timer.IsComplete
-      ? trimmed.Frames[^1].Timer.FinalTime
-      : trimmed.Frames[^1].Timer.ElapsedTime;
-    float lastDelta = MathF.Abs(BestTimeStorage.RoundToTenThousandths(lastElapsed) - roundedScore);
+    ReplayFrameSnapshot last = trimmed.Frames[^1];
+    if (!last.Timer.IsComplete)
+    {
+      reason = "Best-replay does not end in a completed run.";
+      return false;
+    }
+
+    float lastDelta = MathF.Abs(
+      BestTimeStorage.RoundToTenThousandths(last.Timer.FinalTime) - roundedScore);
     if (lastDelta > LeaderboardSanity.ReplayDurationToleranceSeconds)
     {
       reason =
-        $"Replay duration {file.Metadata.DurationSeconds:F2}s diverges from score {roundedScore:F2}s";
+        $"Replay FinalTime {last.Timer.FinalTime:F2}s diverges from score {roundedScore:F2}s";
       return false;
+    }
+
+    float durationDelta = MathF.Abs(file.Metadata.DurationSeconds - roundedScore);
+    if (durationDelta <= LeaderboardSanity.ReplayDurationToleranceSeconds)
+    {
+      return true;
     }
 
     var repaired = new ReplayFile
@@ -154,7 +164,8 @@ public static class ReplayFileSerializer
         OfficialBestTime = roundedScore,
         RopeMode = file.Metadata.RopeMode,
         LavaRiseEnabled = file.Metadata.LavaRiseEnabled,
-        TicksPerSecond = file.Metadata.TicksPerSecond
+        TicksPerSecond = file.Metadata.TicksPerSecond,
+        ActiveWallSeconds = file.Metadata.ActiveWallSeconds
       },
       Data = trimmed
     };
@@ -191,7 +202,8 @@ public static class ReplayFileSerializer
         OfficialBestTime = file.Metadata.OfficialBestTime,
         RopeMode = file.Metadata.RopeMode,
         LavaRiseEnabled = file.Metadata.LavaRiseEnabled,
-        TicksPerSecond = file.Metadata.TicksPerSecond
+        TicksPerSecond = file.Metadata.TicksPerSecond,
+        ActiveWallSeconds = file.Metadata.ActiveWallSeconds
       },
       Data = file.Data
     };

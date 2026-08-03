@@ -69,14 +69,22 @@ Tokens Partner: [`Steam/rich_presence_english.txt`](../Steam/rich_presence_engli
 
 ## Leaderboards — `Steam/SteamLeaderboardService.cs`
 
-- Boards Official + Workshop: `"{levelId}_v{version}_p{playerCount}"` (Local no upload).
-- Score = tiempo en centisegundos (menor = mejor).
-- Details + attach UGC replay (`ReplayUgcHandle` / ghost id).
-- UI: `Scenes/LeaderboardScene.cs`; upload al completar run desde gameplay.
+- Boards Official + Workshop: `"{levelId}_p{playerCount}_f4"` (stable; version lives in details). Local never uploads.
+- Score = seconds × 10000 (menor = mejor).
+- Workshop uploads only if the level is in the **top 2480 by unique subscriptions** (Steam UGC client query + disk cache). See [`12-LEADERBOARD-ADMIN.md`](12-LEADERBOARD-ADMIN.md).
+- Browse / WR peek: Find only (no FindOrCreate).
+- Details + attach UGC replay (`ReplayUgcHandle` / ghost id) on **every** KeepBest PB (not WR-only).
+- UI: `Scenes/LeaderboardScene.cs` — 1–4P boards, per-row **Replay** (download entry UGC), sticky local PB footer → Around You.
+- `DownloadLocalEntry` — AroundUser(1) for sticky when Global top excludes the player.
+- Missing Replay on a row = no UGC (`ShareReplayFile` failed and/or Attach only when `m_bScoreChanged==1`).
+- Reset/delete of Steam boards: local tool [`Tools/LeaderboardMaintenance`](../Tools/LeaderboardMaintenance/) (publisher key on your PC; schedule or run manually). No 24/7 game backend.
 
 ## Workshop — `Steam/SteamWorkshopService.cs`
 
-- Publish: solo niveles **Local** → UGC.
+- Publish: solo niveles **Local** → UGC. Con `WorkshopId` válido → **Update** del mismo item; sin id → `CreateItem`.
+- UI: overlay Uploading… con Cancel (soft-cancel; Steam no aborta SubmitItemUpdate ya enviado).
+- Preview: PNG canónico regenerado al publicar; si el item Steam fue borrado, se limpia `WorkshopId` y se crea de nuevo.
+- Tras Update: LB reset **no** es automático en el cliente — corre `LeaderboardMaintenance` (detecta `time_updated`).
 - Sync subs → `%LocalAppData%/Color Blocks/Workshop/{id}/level.json` (lista `LevelLibrary` Workshop).
 - Edición: Duplicate → Local (estilo Portal 2).
 

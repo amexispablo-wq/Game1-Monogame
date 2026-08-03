@@ -138,6 +138,14 @@ public static class SteamBestReplayUploader
             return false;
         }
 
+        ReplayData diskTrimmed = ReplayFileSerializer.TrimToLastTimerRun(diskReplay.Data);
+        if (diskTrimmed.Frames.Length == 0 || !diskTrimmed.Frames[^1].Timer.IsComplete)
+        {
+            reason =
+                $"BestTimes {uploadTime:0.####}s has no matching replay; disk PB incomplete — re-run PB to publish";
+            return false;
+        }
+
         // BestTimes already matches disk — nothing else to try.
         if (BestTimeStorage.ToLeaderboardScore(diskTime)
             == BestTimeStorage.ToLeaderboardScore(uploadTime))

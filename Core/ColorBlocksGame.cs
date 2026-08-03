@@ -22,12 +22,14 @@ public class ColorBlocksGame : Game
     private readonly SteamLeaderboardService _steamLeaderboards;
     private readonly SteamGhostService _steamGhosts;
     private readonly SteamWorkshopService _steamWorkshop;
+    private readonly WorkshopLeaderboardEligibility _workshopLbEligibility;
     private readonly PartyHudOverlay _partyHud = new();
     private Popup? _partyInvitePopup;
     private ulong _partyInvitePopupLobbyId;
     private readonly MusicManager _music = new();
     private readonly SfxManager _sfx = new();
     private readonly AudioOutputHotSwap _audioOutputHotSwap = new();
+    private readonly GamepadHotPlugRescan _gamepadHotPlugRescan = new();
     private readonly PresentationManager _presentation = new();
     private readonly ReplayBackgroundRenderer _replayBackground = new();
     private readonly BenchmarkOverlay _benchmarkOverlay = new();
@@ -74,6 +76,8 @@ public class ColorBlocksGame : Game
         _steamLeaderboards = new SteamLeaderboardService(_steam);
         _steamGhosts = new SteamGhostService(_steamLeaderboards, _steamReplays);
         _steamWorkshop = new SteamWorkshopService(_steam);
+        _workshopLbEligibility = new WorkshopLeaderboardEligibility();
+        _steamLeaderboards.SetEligibilityCheck(_workshopLbEligibility.IsLevelEligible);
     }
 
     public InputManager Input => _input;
@@ -90,6 +94,7 @@ public class ColorBlocksGame : Game
     public SteamLeaderboardService SteamLeaderboards => _steamLeaderboards;
     public SteamGhostService SteamGhosts => _steamGhosts;
     public SteamWorkshopService SteamWorkshop => _steamWorkshop;
+    public WorkshopLeaderboardEligibility WorkshopLbEligibility => _workshopLbEligibility;
     public MusicManager Music => _music;
     public SfxManager Sfx => _sfx;
     public Viewport Viewport => _presentation.LogicalViewport;
@@ -376,6 +381,7 @@ public class ColorBlocksGame : Game
             _steamWorkshop.Initialize();
             _steamWorkshop.SyncSubscribedItems();
             _steamInvites.TryConsumeLaunchJoin(Environment.GetCommandLineArgs());
+            _workshopLbEligibility.EnsureFresh();
         }
 
         _input = new InputManager();
@@ -409,10 +415,12 @@ public class ColorBlocksGame : Game
     protected override void Update(GameTime gameTime)
     {
         _steam.RunCallbacks();
+        float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+        // Before Input.Update so the same frame can see pads plugged after launch.
+        _gamepadHotPlugRescan.Update(dt);
         _input.ConfigurePointerTransform(Window.ClientBounds, GraphicsDevice.Viewport, _presentation);
         _input.AnalogContext = ResolveAnalogInputContext();
-        _input.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
-        float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+        _input.Update(dt);
         GameAudio.Update(dt);
         _music.Update(dt);
         _audioOutputHotSwap.Update(dt);

@@ -48,6 +48,7 @@ public sealed class LevelSelectScene : IScene
     private int? _selectedIndex;
     private Popup? _popup;
     private AlertPopup? _alertPopup;
+    private UploadingOverlay? _uploadOverlay;
     private LevelSelectPopupKind _popupKind;
     private LevelSource _activeTab;
     private bool _importOfficialPickerOpen;
@@ -62,6 +63,8 @@ public sealed class LevelSelectScene : IScene
     private string? _detailsWorkshopVisibilityText;
     private bool _detailsHasWorldRecordReplay;
     private bool _detailsSupportsLeaderboards;
+    private bool _detailsLeaderboardEligible;
+    private string? _detailsLeaderboardGateText;
     private bool _wrPeekRequested;
     private bool _localBestSteamSyncRequested;
 
@@ -355,6 +358,17 @@ public sealed class LevelSelectScene : IScene
         LayoutButtons();
         RefreshGridLayout();
 
+        if (_uploadOverlay != null)
+        {
+            _uploadOverlay.Update(gameTime, _game.Input, _game.Viewport.Width, _game.Viewport.Height);
+            if (_uploadOverlay.CancelRequested)
+            {
+                _game.SteamWorkshop.CancelPublish();
+            }
+
+            return;
+        }
+
         if (_alertPopup != null)
         {
             _alertPopup.Update(gameTime, _game.Input, _game.Viewport.Width, _game.Viewport.Height);
@@ -471,7 +485,7 @@ public sealed class LevelSelectScene : IScene
 
         if (_watchWorldRecordFocus?.WasActivated == true
             && _selectedLevelId is not null
-            && _detailsSupportsLeaderboards)
+            && _detailsLeaderboardEligible)
         {
             HandleWatchWorldRecord();
             return;
@@ -481,6 +495,14 @@ public sealed class LevelSelectScene : IScene
             && _selectedLevelId is not null
             && _detailsSupportsLeaderboards)
         {
+            if (!_detailsLeaderboardEligible)
+            {
+                _alertPopup = new AlertPopup(
+                    "LEADERBOARD",
+                    _detailsLeaderboardGateText ?? "Leaderboards are not available for this level.");
+                return;
+            }
+
             _game.ChangeScene(new LeaderboardScene(_game, _selectedLevelId, _mode));
             return;
         }
@@ -1105,6 +1127,13 @@ public sealed class LevelSelectScene : IScene
         {
             spriteBatch.Begin(samplerState: SamplerState.PointClamp);
             _alertPopup.Draw(spriteBatch, pixel, viewport.Width, viewport.Height, gameTime, _game.Input);
+            spriteBatch.End();
+        }
+
+        if (_uploadOverlay != null)
+        {
+            spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+            _uploadOverlay.Draw(spriteBatch, pixel, viewport.Width, viewport.Height, gameTime, _game.Input);
             spriteBatch.End();
         }
     }
@@ -2194,6 +2223,8 @@ public sealed class LevelSelectScene : IScene
             _detailsHasUnofficialBest = false;
             _detailsHasBestReplay = false;
             _detailsSupportsLeaderboards = false;
+            _detailsLeaderboardEligible = false;
+            _detailsLeaderboardGateText = null;
             _detailsHasWorldRecordReplay = false;
             _detailsWorldRecordText = null;
             _detailsWorkshopVotesText = null;
@@ -2224,6 +2255,17 @@ public sealed class LevelSelectScene : IScene
             : "";
         _detailsHasBestReplay = ReplayStorage.HasValidBestReplay(_selectedLevelId, playerCount);
         _detailsSupportsLeaderboards = SteamLeaderboardService.SupportsLeaderboards(_selectedLevelId);
+        _detailsLeaderboardEligible = _detailsSupportsLeaderboards
+            && _game.SteamLeaderboards.IsEligibleForLeaderboards(_selectedLevelId);
+        _detailsLeaderboardGateText = null;
+        if (_detailsSupportsLeaderboards && !_detailsLeaderboardEligible
+            && LevelIdentity.GetSource(_selectedLevelId) == LevelSource.Workshop)
+        {
+            _detailsLeaderboardGateText = _game.WorkshopLbEligibility.HasCache
+                ? "Leaderboards unlock in the top Workshop downloads."
+                : "Leaderboards unlock in the top Workshop downloads (ranking still loading).";
+        }
+
         int wrPlayers = GetLeaderboardPlayerCount();
         _detailsHasWorldRecordReplay = SteamGhostService.SupportsWorldRecordGhost(_selectedLevelId)
             && _game.SteamGhosts.HasCachedWorldRecordGhost(_selectedLevelId, wrPlayers);
@@ -2257,7 +2299,7 @@ public sealed class LevelSelectScene : IScene
             }
         }
 
-        if (_detailsSupportsLeaderboards)
+        if (_detailsLeaderboardEligible)
         {
             RequestWorldRecordPeek(_selectedLevelId, Math.Max(1, metadata?.Version ?? 1), wrPlayers);
             if (SteamGhostService.SupportsWorldRecordGhost(_selectedLevelId))
@@ -2277,7 +2319,7 @@ public sealed class LevelSelectScene : IScene
 
     private void HandleWatchWorldRecord()
     {
-        if (_selectedLevelId is null || !_detailsSupportsLeaderboards)
+        if (_selectedLevelId is null || !_detailsLeaderboardEligible)
         {
             return;
         }
@@ -2661,8 +2703,19 @@ public sealed class LevelSelectScene : IScene
             int wrPlayers = GetLeaderboardPlayerCount();
             DrawStatPair(
                 wrPlayers == 1 ? "World Record:" : $"World Record ({wrPlayers}P):",
-                _detailsWorldRecordText ?? "--",
+                _detailsLeaderboardEligible ? (_detailsWorldRecordText ?? "--") : "N/A",
                 new Color(255, 210, 90));
+            if (!_detailsLeaderboardEligible && _detailsLeaderboardGateText is not null)
+            {
+                SimpleTextRenderer.DrawString(
+                    spriteBatch,
+                    pixel,
+                    TruncateToPanelWidth(_detailsLeaderboardGateText, textWidth, 1),
+                    new Microsoft.Xna.Framework.Vector2(textX, y),
+                    1,
+                    new Color(200, 180, 140));
+                y += rowH + rowGap;
+            }
         }
 
         if (_detailsWorkshopVotesText is not null)
@@ -3198,10 +3251,20 @@ public sealed class LevelSelectScene : IScene
         string levelId = _selectedLevelId;
         EnsureWorkshopPreviewForPublish(levelId);
 
+        var overlay = new UploadingOverlay();
+        _uploadOverlay = overlay;
         _game.SteamWorkshop.PublishLevel(levelId, result =>
         {
+            _uploadOverlay = null;
+
             if (_selectedLevelId != levelId)
             {
+                return;
+            }
+
+            if (result.WasCancelled)
+            {
+                _alertPopup = new AlertPopup("WORKSHOP", "Upload cancelled.");
                 return;
             }
 
@@ -3213,7 +3276,7 @@ public sealed class LevelSelectScene : IScene
                     "WORKSHOP",
                     result.NeedsLegalAgreement
                         ? "Published. Accept the Steam Workshop legal agreement if prompted."
-                        : "Level published to Workshop.");
+                        : result.Message);
             }
             else
             {

@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "LEVEL 6",
   "platforms": [
     {
@@ -1286,6 +1286,7 @@
   ],
   "launchPads": [],
   "powerUps": [],
+  "signs": [],
   "playerSpawn": {
     "x": -128,
     "y": 320
@@ -1309,8 +1310,8 @@
   "author": "Game",
   "workshopId": "",
   "createdDate": "2026-07-27T19:43:01.1678073Z",
-  "modifiedDate": "2026-07-27T19:59:52.1696147Z",
-  "version": 8,
+  "modifiedDate": "2026-08-02T20:59:03.5012942Z",
+  "version": 9,
   "ownerSteamId": "",
   "downloadedVersion": "",
   "lastSync": null
