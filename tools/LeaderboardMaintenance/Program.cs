@@ -103,32 +103,92 @@ internal static class Program
             boardByName[name] = id;
         }
 
+        Console.WriteLine("→ Planning official / workshop / leftover actions…");
+        MaintenancePlan plan = BuildPlan(officialDir, state, topSet, boardByName,
+            await CollectWorkshopTimeUpdatedAsync(steam, topWorkshop, boardByName));
+
+        PrintPlan(plan, boardByName);
+
+        if (plan.IsEmpty)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Nothing to do. State unchanged.");
+            return 0;
+        }
+
+        if (!ConfirmProceed())
+        {
+            Console.WriteLine();
+            Console.WriteLine("Cancelled. No resets or deletes were applied.");
+            return 0;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("→ Applying…");
         int officialResets = 0;
         int workshopResets = 0;
         int deletes = 0;
 
-        Console.WriteLine("→ Official version checks…");
-        foreach ((string stem, int version) in ReadOfficialVersions(officialDir))
+        foreach (OfficialResetItem item in plan.OfficialResets)
         {
-            if (state.OfficialVersions.TryGetValue(stem, out int last) && last == version)
-            {
-                continue;
-            }
-
-            Console.WriteLine($"  RESET official stem={stem} version {last} → {version}");
+            Console.WriteLine($"  RESET official stem={item.Stem} version {item.PreviousVersion} → {item.NewVersion}");
             for (int p = 1; p <= PlayerCountBoards; p++)
             {
-                string name = $"official_{stem}_p{p}_f4";
+                string name = $"official_{item.Stem}_p{p}_f4";
                 if (await steam.ResetLeaderboardByNameAsync(name, boardByName))
                 {
                     officialResets++;
                 }
             }
 
-            state.OfficialVersions[stem] = version;
+            state.OfficialVersions[item.Stem] = item.NewVersion;
         }
 
-        Console.WriteLine("→ Workshop content / out-of-top checks…");
+        foreach (WorkshopResetItem item in plan.WorkshopResets)
+        {
+            Console.WriteLine(
+                $"  RESET workshop id={item.WorkshopId} time_updated {item.PreviousTimeUpdated} → {item.NewTimeUpdated}");
+            for (int p = 1; p <= PlayerCountBoards; p++)
+            {
+                string name = $"workshop_{item.WorkshopId}_p{p}_f4";
+                if (await steam.ResetLeaderboardByNameAsync(name, boardByName))
+                {
+                    workshopResets++;
+                }
+            }
+
+            state.WorkshopTimeUpdated[item.WorkshopId.ToString(CultureInfo.InvariantCulture)] = item.NewTimeUpdated;
+        }
+
+        foreach (string name in plan.BoardsToDelete)
+        {
+            Console.WriteLine($"  DELETE board={name}");
+            if (await steam.DeleteLeaderboardAsync(name))
+            {
+                deletes++;
+                boardByName.Remove(name);
+            }
+        }
+
+        foreach (ulong workshopId in plan.WorkshopIdsToForget)
+        {
+            state.WorkshopTimeUpdated.Remove(workshopId.ToString(CultureInfo.InvariantCulture));
+        }
+
+        state.LastRunUtc = DateTime.UtcNow;
+        state.Save(statePath);
+
+        Console.WriteLine();
+        Console.WriteLine($"Done. officialResets={officialResets} workshopResets={workshopResets} deletes={deletes}");
+        Console.WriteLine($"State saved: {statePath}");
+        return 0;
+    }
+
+    private static async Task<Dictionary<ulong, uint>> CollectWorkshopTimeUpdatedAsync(
+        SteamWebApi steam,
+        List<ulong> topWorkshop,
+        Dictionary<string, uint> boardByName)
+    {
         var workshopIdsWithBoards = new HashSet<ulong>();
         foreach (string name in boardByName.Keys)
         {
@@ -144,24 +204,68 @@ internal static class Program
             workshopIdsToInspect.Add(id);
         }
 
-        Dictionary<ulong, uint> timeUpdated =
-            await steam.GetPublishedFileTimeUpdatedAsync(workshopIdsToInspect.ToList());
+        return await steam.GetPublishedFileTimeUpdatedAsync(workshopIdsToInspect.ToList());
+    }
+
+    private static MaintenancePlan BuildPlan(
+        string officialDir,
+        MaintenanceState state,
+        HashSet<ulong> topSet,
+        Dictionary<string, uint> boardByName,
+        Dictionary<ulong, uint> timeUpdated)
+    {
+        var plan = new MaintenancePlan();
+
+        foreach ((string stem, int version) in ReadOfficialVersions(officialDir))
+        {
+            if (state.OfficialVersions.TryGetValue(stem, out int last) && last == version)
+            {
+                continue;
+            }
+
+            var boards = new List<string>();
+            for (int p = 1; p <= PlayerCountBoards; p++)
+            {
+                boards.Add($"official_{stem}_p{p}_f4");
+            }
+
+            plan.OfficialResets.Add(new OfficialResetItem(stem, last, version, boards));
+        }
+
+        var workshopIdsWithBoards = new HashSet<ulong>();
+        foreach (string name in boardByName.Keys)
+        {
+            if (TryParseWorkshopIdFromBoardName(name, out ulong wid))
+            {
+                workshopIdsWithBoards.Add(wid);
+            }
+        }
+
+        var workshopIdsToInspect = new HashSet<ulong>(workshopIdsWithBoards);
+        foreach (ulong id in topSet)
+        {
+            workshopIdsToInspect.Add(id);
+        }
 
         foreach (ulong workshopId in workshopIdsToInspect.OrderBy(x => x))
         {
             if (!topSet.Contains(workshopId))
             {
-                foreach (string name in boardByName.Keys.Where(n => BoardBelongsToWorkshop(n, workshopId)).ToList())
+                List<string> toDelete = boardByName.Keys
+                    .Where(n => BoardBelongsToWorkshop(n, workshopId))
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList();
+                foreach (string name in toDelete)
                 {
-                    Console.WriteLine($"  DELETE out-of-top board={name}");
-                    if (await steam.DeleteLeaderboardAsync(name))
-                    {
-                        deletes++;
-                        boardByName.Remove(name);
-                    }
+                    plan.BoardsToDelete.Add(name);
                 }
 
-                state.WorkshopTimeUpdated.Remove(workshopId.ToString(CultureInfo.InvariantCulture));
+                if (toDelete.Count > 0 || state.WorkshopTimeUpdated.ContainsKey(
+                        workshopId.ToString(CultureInfo.InvariantCulture)))
+                {
+                    plan.WorkshopIdsToForget.Add(workshopId);
+                }
+
                 continue;
             }
 
@@ -176,38 +280,136 @@ internal static class Program
                 continue;
             }
 
-            Console.WriteLine($"  RESET workshop id={workshopId} time_updated {lastUpdated} → {updated}");
+            var boards = new List<string>();
             for (int p = 1; p <= PlayerCountBoards; p++)
             {
-                string name = $"workshop_{workshopId}_p{p}_f4";
-                if (await steam.ResetLeaderboardByNameAsync(name, boardByName))
+                boards.Add($"workshop_{workshopId}_p{p}_f4");
+            }
+
+            plan.WorkshopResets.Add(new WorkshopResetItem(workshopId, lastUpdated, updated, boards));
+        }
+
+        foreach (string name in boardByName.Keys
+                     .Where(n => n.Contains("_v", StringComparison.OrdinalIgnoreCase))
+                     .OrderBy(n => n, StringComparer.Ordinal))
+        {
+            if (!plan.BoardsToDelete.Contains(name))
+            {
+                plan.BoardsToDelete.Add(name);
+            }
+        }
+
+        plan.BoardsToDelete = plan.BoardsToDelete
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+
+        return plan;
+    }
+
+    private static void PrintPlan(MaintenancePlan plan, Dictionary<string, uint> boardByName)
+    {
+        Console.WriteLine();
+        Console.WriteLine("========== PREVIEW (nothing applied yet) ==========");
+
+        if (plan.OfficialResets.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"RESET official ({plan.OfficialResets.Count} level(s)):");
+            foreach (OfficialResetItem item in plan.OfficialResets)
+            {
+                Console.WriteLine($"  • {item.Stem}  v{item.PreviousVersion} → v{item.NewVersion}");
+                foreach (string board in item.BoardNames)
                 {
-                    workshopResets++;
+                    string exists = boardByName.ContainsKey(board) ? "exists" : "missing (skip)";
+                    Console.WriteLine($"      - {board}  [{exists}]");
                 }
             }
-
-            state.WorkshopTimeUpdated[key] = updated;
         }
 
-        Console.WriteLine("→ Deleting leftover versioned (_v*) boards…");
-        foreach (string name in boardByName.Keys.Where(n => n.Contains("_v", StringComparison.OrdinalIgnoreCase)).ToList())
+        if (plan.WorkshopResets.Count > 0)
         {
-            Console.WriteLine($"  DELETE legacy board={name}");
-            if (await steam.DeleteLeaderboardAsync(name))
+            Console.WriteLine();
+            Console.WriteLine($"RESET workshop ({plan.WorkshopResets.Count} item(s)):");
+            foreach (WorkshopResetItem item in plan.WorkshopResets)
             {
-                deletes++;
-                boardByName.Remove(name);
+                Console.WriteLine(
+                    $"  • workshop {item.WorkshopId}  time_updated {item.PreviousTimeUpdated} → {item.NewTimeUpdated}");
+                foreach (string board in item.BoardNames)
+                {
+                    string exists = boardByName.ContainsKey(board) ? "exists" : "missing (skip)";
+                    Console.WriteLine($"      - {board}  [{exists}]");
+                }
             }
         }
 
-        state.LastRunUtc = DateTime.UtcNow;
-        state.Save(statePath);
+        if (plan.BoardsToDelete.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"DELETE ({plan.BoardsToDelete.Count} board(s)):");
+            foreach (string name in plan.BoardsToDelete)
+            {
+                Console.WriteLine($"  • {name}");
+            }
+        }
 
         Console.WriteLine();
-        Console.WriteLine($"Done. officialResets={officialResets} workshopResets={workshopResets} deletes={deletes}");
-        Console.WriteLine($"State saved: {statePath}");
-        return 0;
+        Console.WriteLine(
+            $"Totals: officialResetLevels={plan.OfficialResets.Count}, " +
+            $"workshopResetItems={plan.WorkshopResets.Count}, " +
+            $"boardsToDelete={plan.BoardsToDelete.Count}");
+        Console.WriteLine("===================================================");
     }
+
+    private static bool ConfirmProceed()
+    {
+        Console.WriteLine();
+        Console.Write("Apply these resets/deletes? [Y/N]: ");
+        try
+        {
+            string? line = Console.ReadLine();
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return false;
+            }
+
+            line = line.Trim();
+            return line.Equals("Y", StringComparison.OrdinalIgnoreCase)
+                || line.Equals("YES", StringComparison.OrdinalIgnoreCase)
+                || line.Equals("S", StringComparison.OrdinalIgnoreCase)
+                || line.Equals("SI", StringComparison.OrdinalIgnoreCase)
+                || line.Equals("SÍ", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private sealed class MaintenancePlan
+    {
+        public List<OfficialResetItem> OfficialResets { get; } = new();
+        public List<WorkshopResetItem> WorkshopResets { get; } = new();
+        public List<string> BoardsToDelete { get; set; } = new();
+        public HashSet<ulong> WorkshopIdsToForget { get; } = new();
+
+        public bool IsEmpty =>
+            OfficialResets.Count == 0
+            && WorkshopResets.Count == 0
+            && BoardsToDelete.Count == 0;
+    }
+
+    private sealed record OfficialResetItem(
+        string Stem,
+        int PreviousVersion,
+        int NewVersion,
+        List<string> BoardNames);
+
+    private sealed record WorkshopResetItem(
+        ulong WorkshopId,
+        uint PreviousTimeUpdated,
+        uint NewTimeUpdated,
+        List<string> BoardNames);
 
     private static uint TryReadAppIdFromSteamAppIdTxt()
     {
