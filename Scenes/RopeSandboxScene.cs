@@ -30,7 +30,7 @@ public sealed class RopeSandboxScene : IScene
         _game.Party.ApplyPreferredInputForPrimaryLocalMember(_game.Input);
         _game.Party.LockAssignments();
         _playerManager.SpawnFromParty(_game.Party.Members, _game.Input, _game.SteamLobby);
-        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled: false);
+        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled: false, spawnHold: false);
         _camera = new Camera(GetPlayersCenter());
     }
 

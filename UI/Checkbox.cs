@@ -1,3 +1,4 @@
+using System;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -45,7 +46,8 @@ public sealed class Checkbox
         Color tickColor = IsEnabled ? Color.White : new Color(180, 190, 210);
         Color labelColor = IsEnabled ? Color.White : new Color(140, 150, 170);
 
-        Rectangle box = new Rectangle(Bounds.X, Bounds.Y, 24, 24);
+        int boxY = Bounds.Y + Math.Max(0, (Bounds.Height - 24) / 2);
+        Rectangle box = new Rectangle(Bounds.X, boxY, 24, 24);
         spriteBatch.Draw(pixel, box, fill);
         DrawHelper.DrawBorder(spriteBatch, pixel, box, border, _isHovered && IsEnabled ? 3 : 2);
 
@@ -55,7 +57,7 @@ public sealed class Checkbox
             spriteBatch.Draw(pixel, check, tickColor);
         }
 
-        var labelPosition = new Vector2(Bounds.X + 32, Bounds.Y + 2);
+        var labelPosition = new Vector2(Bounds.X + 32, boxY + 2);
         SimpleTextRenderer.DrawString(spriteBatch, pixel, Label, labelPosition, 2, labelColor);
     }
 }

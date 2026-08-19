@@ -10,14 +10,22 @@ public sealed class GameSimulation
     private const float MaxFrameTime = 0.25f;
     private const int MaxTicksPerFrame = 5;
     private const int InputBufferRetentionTicks = 180;
+    public const float SpawnHoldSeconds = 3f;
 
     private readonly GameSession _session;
     private readonly NetworkInputBuffer _inputBuffer = new();
     private readonly Dictionary<int, PlayerInputState> _latchedLocalInput = new();
     private float _fixedTimeAccumulator;
     private readonly float _lavaStartSurfaceY;
+    private bool _snapshotHasCheckpoint;
 
-    public GameSimulation(GameSession session, Level level, PlayerManager playerManager, bool lavaRiseEnabled = false, bool playerCollisionEnabled = false)
+    public GameSimulation(
+        GameSession session,
+        Level level,
+        PlayerManager playerManager,
+        bool lavaRiseEnabled = false,
+        bool playerCollisionEnabled = false,
+        bool spawnHold = true)
     {
         _session = session;
         Level = level;
@@ -38,6 +46,11 @@ public sealed class GameSimulation
         }
 
         PlayerCollisionEnabled = playerCollisionEnabled;
+        if (spawnHold)
+        {
+            BeginSpawnHold();
+        }
+
         LastSnapshot = CreateSnapshot(SimulationTick.Zero);
         MultiplayerDebug.LogSim(
             $"GameSimulation ctor role={session.Role} state={session.State} " +
@@ -64,8 +77,10 @@ public sealed class GameSimulation
     public float LavaRiseSpeed { get; }
     public float LavaSurfaceY { get; private set; }
     public bool IsPlayerDead { get; private set; }
-    public bool HasCheckpoint => PlayerManager.HasCheckpoint;
+    public bool HasCheckpoint => PlayerManager.HasCheckpoint || _snapshotHasCheckpoint;
     public bool IsPaused { get; private set; }
+    public int SpawnHoldTicksRemaining { get; private set; }
+    public bool IsSpawnHold => SpawnHoldTicksRemaining > 0;
     public int SnapshotCount { get; private set; }
     public GameSnapshot LastSnapshot { get; private set; }
     public bool RecordProgress { get; set; } = true;
@@ -155,6 +170,12 @@ public sealed class GameSimulation
         }
     }
 
+    public void BeginSpawnHold()
+    {
+        int ticks = (int)MathF.Round(SpawnHoldSeconds * TickRate.TicksPerSecond);
+        SpawnHoldTicksRemaining = Math.Max(1, ticks);
+    }
+
     /// <summary>Pause-menu respawn: checkpoint if available, else spawn. Timer and lava unchanged.</summary>
     public void PauseMenuRespawn()
     {
@@ -163,16 +184,8 @@ public sealed class GameSimulation
             return;
         }
 
-        foreach (Player player in Players)
-        {
-            if (!player.IsLocal && !player.IsHostControlled)
-            {
-                continue;
-            }
-
-            PlayerManager.RespawnPlayer(player);
-            PhysicsWorld.ResetRopesForPlayer(player);
-        }
+        RespawnAllPlayersSoft();
+        BeginSpawnHold();
     }
 
     public void RestartLevel()
@@ -212,10 +225,13 @@ public sealed class GameSimulation
         CurrentTick = SimulationTick.Zero;
         // Keep SnapshotCount monotonic for the online session — zeroing it makes clients
         // drop post-restart snaps until seq climbs past the old latch (felt multi-minute freeze).
-        LastSnapshot = CreateSnapshot(SimulationTick.Zero);
         // Platforms use tick time, not ElapsedTime — snap color/motion for this frame.
         ApplyMovingPlatformVisuals(SimulationTick.Zero);
+        BeginSpawnHold();
+        LastSnapshot = CreateSnapshot(SimulationTick.Zero);
+        SnapshotCount++;
         DiagnosticsLog.Info("Sim", "RestartLevel — cleared input latch + InputBuffer (tick→0)");
+        LevelRestarted?.Invoke();
     }
 
     public void ApplySnapshot(GameSnapshot snapshot)
@@ -257,12 +273,24 @@ public sealed class GameSimulation
         IsLevelComplete = snapshot.Timer.IsComplete;
         FinalTime = snapshot.Timer.FinalTime;
         NewRecord = snapshot.Timer.NewRecord;
-        // Client never runs CheckLavaDeath; infer dead from timer (stopped, not complete).
-        IsPlayerDead = !snapshot.Timer.IsRunning && !snapshot.Timer.IsComplete;
+        IsPlayerDead = snapshot.IsPlayerDead;
+        SpawnHoldTicksRemaining = Math.Max(0, snapshot.SpawnHoldTicksRemaining);
+        _snapshotHasCheckpoint = snapshot.HasCheckpoint;
         LastSnapshot = snapshot;
         SnapshotCount = Math.Max(SnapshotCount, snapshot.Sequence);
-        CurrentTick = new SimulationTick(Math.Max(CurrentTick.Value, snapshot.Tick));
-        ApplyMovingPlatformVisuals(CurrentTick);
+        _fixedTimeAccumulator = 0f;
+        bool tickRewound = snapshot.Tick < CurrentTick.Value;
+        CurrentTick = new SimulationTick(snapshot.Tick);
+        if (!IsSpawnHold)
+        {
+            ApplyMovingPlatformVisuals(CurrentTick);
+        }
+
+        if (tickRewound)
+        {
+            LevelRestarted?.Invoke();
+        }
+
         MultiplayerDebug.RecordSnapshotApplied();
         MultiplayerDebug.LogSimulationStartedOnce(_session, this);
     }
@@ -301,11 +329,63 @@ public sealed class GameSimulation
         SimulationTick tick = CurrentTick;
         InputFrame localFrame = CaptureLocalInputFrame(tick);
         _inputBuffer.StoreFrame(localFrame);
+        IReadOnlyDictionary<int, PlayerInputState> inputs = _inputBuffer.GetInputs(tick);
 
-        if (!IsLevelComplete && !IsPlayerDead)
+        if (TryHandleRestartInput(inputs))
         {
-            IReadOnlyDictionary<int, PlayerInputState> inputs = _inputBuffer.GetInputs(tick);
+            ApplyHoldColorInputs(inputs);
+            LastSnapshot = CreateSnapshot(CurrentTick);
+            SnapshotCount++;
+            FixedTickCompleted?.Invoke();
+            return;
+        }
+
+        if (IsPlayerDead)
+        {
+            if (TryHandleDeadRespawnInput(inputs))
+            {
+                ApplyHoldColorInputs(inputs);
+                LastSnapshot = CreateSnapshot(CurrentTick);
+                SnapshotCount++;
+                FixedTickCompleted?.Invoke();
+                return;
+            }
+
+            LastSnapshot = CreateSnapshot(tick);
+            SnapshotCount++;
+            _inputBuffer.TrimBefore(CurrentTick, InputBufferRetentionTicks);
+            FixedTickCompleted?.Invoke();
+            return;
+        }
+
+        if (IsSpawnHold)
+        {
+            ApplyHoldColorInputs(inputs);
+            SpawnHoldTicksRemaining--;
+            if (SpawnHoldTicksRemaining <= 0)
+            {
+                SpawnHoldTicksRemaining = 0;
+                _inputBuffer.Clear();
+            }
+
+            LastSnapshot = CreateSnapshot(tick);
+            SnapshotCount++;
+            FixedTickCompleted?.Invoke();
+            return;
+        }
+
+        if (!IsLevelComplete)
+        {
             HandleRespawnInputs(inputs);
+            if (IsSpawnHold)
+            {
+                ApplyHoldColorInputs(inputs);
+                LastSnapshot = CreateSnapshot(tick);
+                SnapshotCount++;
+                FixedTickCompleted?.Invoke();
+                return;
+            }
+
             UpdateMovingPlatforms(tick);
             PhysicsWorld.UpdatePhysics(TickRate.FixedDeltaSeconds, inputs);
             UpdateMotionTrails(TickRate.FixedDeltaSeconds);
@@ -334,8 +414,31 @@ public sealed class GameSimulation
         FixedTickCompleted?.Invoke();
     }
 
+    /// <summary>
+    /// Client-only: tick spawn-hold locally between snapshots so the HUD does not freeze
+    /// on a dropped packet. Next ApplySnapshot snaps remaining ticks back to the host.
+    /// </summary>
+    public void AdvanceReplicatedSpawnHold(float dt)
+    {
+        if (!IsSpawnHold || IsPlayerDead || IsLevelComplete)
+        {
+            return;
+        }
+
+        _fixedTimeAccumulator += Math.Clamp(dt, 0f, MaxFrameTime);
+        float step = TickRate.FixedDeltaSeconds;
+        while (_fixedTimeAccumulator >= step && SpawnHoldTicksRemaining > 0)
+        {
+            _fixedTimeAccumulator -= step;
+            SpawnHoldTicksRemaining--;
+        }
+    }
+
     /// <summary>Fired once per completed fixed simulation tick, after snapshot is produced.</summary>
     public event Action? FixedTickCompleted;
+
+    /// <summary>Host RestartLevel, or client snapshot tick rewind after a party restart.</summary>
+    public event Action? LevelRestarted;
 
     private void AccumulateLocalInput(ILocalPlayerInputSource localInputSource)
     {
@@ -359,13 +462,16 @@ public sealed class GameSimulation
                     current.PullRopeHeld,
                     current.RequestedColor ?? latched.RequestedColor,
                     current.Move,
-                    current.MenuNavigate);
+                    current.MenuNavigate,
+                    latched.RestartPressed || current.RestartPressed);
             }
             else
             {
                 _latchedLocalInput[player.NetworkId] = current;
             }
         }
+
+        localInputSource.ConsumeEdgePulses();
     }
 
     private InputFrame CaptureLocalInputFrame(SimulationTick tick)
@@ -392,7 +498,8 @@ public sealed class GameSimulation
                 input.PullRopeHeld,
                 null,
                 input.Move,
-                input.MenuNavigate);
+                input.MenuNavigate,
+                RestartPressed: false);
         }
 
         return frame;
@@ -424,6 +531,7 @@ public sealed class GameSimulation
 
         TimerRunning = false;
         IsLevelComplete = true;
+        SpawnHoldTicksRemaining = 0;
         FinalTime = BestTimeStorage.RoundToTenThousandths(ElapsedTime);
         ElapsedTime = FinalTime;
         if (RecordProgress)
@@ -505,6 +613,7 @@ public sealed class GameSimulation
         _latchedLocalInput.Clear();
         GameAudio.PlayForce(SfxManager.Lost);
         GameAudio.SetPullRopeLoop(false);
+        SpawnHoldTicksRemaining = 0;
 
         foreach (Player player in Players)
         {
@@ -527,6 +636,7 @@ public sealed class GameSimulation
 
         PlayerManager.ReviveAllAtCheckpoint();
         ResetAfterRespawn();
+        BeginSpawnHold();
     }
 
     private void ResetAfterRespawn()
@@ -545,6 +655,66 @@ public sealed class GameSimulation
 
     private void HandleRespawnInputs(IReadOnlyDictionary<int, PlayerInputState> inputs)
     {
+        if (!AnyControllablePressed(inputs, static input => input.RespawnPressed))
+        {
+            return;
+        }
+
+        RespawnAllPlayersSoft();
+        BeginSpawnHold();
+        DiagnosticsLog.Info("Sim", "APPLY party Respawn");
+        InputDiagnostics.NoteSimApplyRespawn();
+    }
+
+    private bool TryHandleRestartInput(IReadOnlyDictionary<int, PlayerInputState> inputs)
+    {
+        if (!AnyControllablePressed(inputs, static input => input.RestartPressed))
+        {
+            return false;
+        }
+
+        RestartLevel();
+        return true;
+    }
+
+    private bool TryHandleDeadRespawnInput(IReadOnlyDictionary<int, PlayerInputState> inputs)
+    {
+        if (!HasCheckpoint || !AnyControllablePressed(inputs, static input => input.RespawnPressed))
+        {
+            return false;
+        }
+
+        RespawnFromCheckpoint();
+        return true;
+    }
+
+    private void RespawnAllPlayersSoft()
+    {
+        foreach (Player player in Players)
+        {
+            PlayerManager.RespawnPlayer(player);
+            PhysicsWorld.ResetRopesForPlayer(player);
+        }
+    }
+
+    private void ApplyHoldColorInputs(IReadOnlyDictionary<int, PlayerInputState> inputs)
+    {
+        foreach (Player player in Players)
+        {
+            if (!inputs.TryGetValue(player.NetworkId, out PlayerInputState input)
+                || input.RequestedColor is not { } requestedColor)
+            {
+                continue;
+            }
+
+            player.ApplyColorOnly(requestedColor);
+        }
+    }
+
+    private bool AnyControllablePressed(
+        IReadOnlyDictionary<int, PlayerInputState> inputs,
+        Func<PlayerInputState, bool> predicate)
+    {
         foreach (Player player in Players)
         {
             if (!player.IsLocal && !player.IsHostControlled)
@@ -552,16 +722,13 @@ public sealed class GameSimulation
                 continue;
             }
 
-            if (!inputs.TryGetValue(player.NetworkId, out PlayerInputState input) || !input.RespawnPressed)
+            if (inputs.TryGetValue(player.NetworkId, out PlayerInputState input) && predicate(input))
             {
-                continue;
+                return true;
             }
-
-            PlayerManager.RespawnPlayer(player);
-            PhysicsWorld.ResetRopesForPlayer(player);
-            DiagnosticsLog.Info("Sim", $"APPLY Respawn netId={player.NetworkId}");
-            InputDiagnostics.NoteSimApplyRespawn();
         }
+
+        return false;
     }
 
     private void UpdateCheckpointActivation()
@@ -596,7 +763,10 @@ public sealed class GameSimulation
                 TimerRunning,
                 IsLevelComplete,
                 FinalTime,
-                NewRecord)
+                NewRecord),
+            IsPlayerDead = IsPlayerDead,
+            SpawnHoldTicksRemaining = SpawnHoldTicksRemaining,
+            HasCheckpoint = PlayerManager.HasCheckpoint
         };
 
         foreach (Player player in Players)

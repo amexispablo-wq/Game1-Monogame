@@ -790,6 +790,18 @@ public sealed class Player : INetworkEntity
         Velocity = new Vector2(Velocity.X - (sign * step), Velocity.Y);
     }
 
+    /// <summary>Color + SFX only. No overlap ejection (spawn-hold countdown).</summary>
+    public void ApplyColorOnly(GameColor requestedColor)
+    {
+        if (requestedColor == CurrentColor)
+        {
+            return;
+        }
+
+        CurrentColor = requestedColor;
+        GameAudio.PlayColor(requestedColor);
+    }
+
     private void HandleColorChange(PlayerInputState input, Level level, IReadOnlyList<Player> allPlayers)
     {
         if (input.RequestedColor is not { } requestedColor || requestedColor == CurrentColor)
@@ -797,8 +809,7 @@ public sealed class Player : INetworkEntity
             return;
         }
 
-        CurrentColor = requestedColor;
-        GameAudio.PlayColor(requestedColor);
+        ApplyColorOnly(requestedColor);
 
         if (State == PlayerState.Ejecting)
         {

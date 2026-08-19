@@ -10,6 +10,9 @@ public sealed class GameSnapshot
     public TimerSnapshot Timer { get; init; }
     public RopeGameplayMode RopeMode { get; init; }
     public float LavaSurfaceY { get; init; }
+    public bool IsPlayerDead { get; init; }
+    public int SpawnHoldTicksRemaining { get; init; }
+    public bool HasCheckpoint { get; init; }
     public List<PlayerSnapshot> Players { get; init; } = new();
     public List<RopeSnapshot> Ropes { get; init; } = new();
 }

@@ -474,7 +474,10 @@ public sealed partial class EditorScene : IScene
         _level.DrawPowerUps(spriteBatch, pixel, debugDraw: false, isEditorMode: true);
         _level.DrawGoals(spriteBatch, pixel, debugDraw: false);
         _level.DrawCheckpointFlags(spriteBatch, pixel, debugDraw: false);
-        _level.DrawSigns(spriteBatch, pixel);
+        _level.DrawSigns(
+            spriteBatch,
+            pixel,
+            BindingDisplay.UseGamepadBindings(_game.Input.LastUsedPartyInputSource));
         DrawPlayerSpawnMarker(spriteBatch, pixel, _level.PlayerStart, _level.PlayerStartColor, 1f);
         if (_playerSpawnSelected || _playerSpawnHovered)
         {

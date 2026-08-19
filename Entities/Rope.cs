@@ -187,6 +187,7 @@ public sealed class Rope : INetworkEntity
         LastPullIntensity = 0f;
         LastPulledNodeCount = 0;
         TensionPhase = RopeTensionPhase.Slack;
+        IsPulling = false;
     }
 
     public void Simulate(

@@ -177,6 +177,12 @@ public sealed class SfxManager : IDisposable
         }
     }
 
+    public void ResetPhysicsExpulsion()
+    {
+        _physicsExpulsionActiveCount = 0;
+        StopInstance(ref _physicsExpulsionLoop);
+    }
+
     public void SetPullRopeLoop(bool active)
     {
         float volume = GetVolume(PullRope);

@@ -133,6 +133,7 @@ public static class SettingsManager
             ResolutionHeight = source.ResolutionHeight,
             MusicVolume = source.MusicVolume,
             ContinueMenuMusicInLevels = source.ContinueMenuMusicInLevels,
+            ShowControlsHud = source.ShowControlsHud,
             FpsLimit = source.FpsLimit,
             Keybindings = new Dictionary<string, string>(source.Keybindings),
             GamepadBindings = new Dictionary<string, string>(source.GamepadBindings),

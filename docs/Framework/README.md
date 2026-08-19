@@ -1,10 +1,14 @@
 # MonoGame Game Development Framework
 
-**Este kit NO es documentación de Color Blocks.**
+**Kit canónico (portable):** [`C:\Users\amexi\Desktop\MonoGame-Game-Framework\`](file:///C:/Users/amexi/Desktop/MonoGame-Game-Framework/)
 
-Es el punto de partida para **todo juego futuro** en MonoGame (2D o 3D): platformers, RPGs, survival, sandbox, roguelikes, action, etc.
+Usá ese directorio como fuente de verdad para juegos nuevos. Ver `USAGE.md` allí.
 
-Principios: arquitectura y estándares **agnósticos al género**. Los ejemplos de Color Blocks viven solo en `docs/01`–`10` del repo producto y se citan como “worked example” opcional.
+Esta carpeta (`docs/Framework/` dentro de Color Blocks) es una **copia de lectura** histórica. Puede desactualizarse; no edites estándares universales solo acá — subilos al kit del Desktop.
+
+---
+
+Copia local (índice de referencia; puede laggear respecto al canónico):
 
 ## Cómo empezar un juego nuevo
 
@@ -44,9 +48,7 @@ Principios: arquitectura y estándares **agnósticos al género**. Los ejemplos 
 
 ## Relación con documentación de producto
 
-Si este Framework vive dentro del repo Color Blocks:
-
 - **Producto CB:** `docs/01-ARQUITECTURA.md` … `docs/10-REPLAY-Y-GHOSTS.md`
-- **Framework (este folder):** estándares para el *siguiente* juego
+- **Framework canónico:** `C:\Users\amexi\Desktop\MonoGame-Game-Framework\`
 
-No dupliques mecánicas de producto aquí. Linkeá al doc de producto cuando haga falta un ejemplo real.
+No dupliques mecánicas de producto en el Framework. Linkeá al doc de producto cuando haga falta un ejemplo real.

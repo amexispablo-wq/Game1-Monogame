@@ -21,6 +21,7 @@ public sealed class GameScene : IScene
     private readonly GameSimulation _simulation;
     private readonly Camera _camera;
     private readonly PauseMenuOverlay _pauseMenu = new();
+    private readonly ControlsHudOverlay _controlsHud = new();
     private OptionsScene? _pauseOptions;
     private bool _debugDraw;
     private readonly DeveloperTuningPanel _tuningPanel = new();
@@ -152,6 +153,7 @@ public sealed class GameScene : IScene
         }
 
         _simulation.FixedTickCompleted += OnSimulationFixedTick;
+        _simulation.LevelRestarted += OnLevelRestarted;
 
         if (_ghostMode.IncludesPersonalBest())
         {
@@ -219,6 +221,7 @@ public sealed class GameScene : IScene
         _exited = true;
         _game.ActiveTuningPanel = null;
         _simulation.FixedTickCompleted -= OnSimulationFixedTick;
+        _simulation.LevelRestarted -= OnLevelRestarted;
         ReplayDiagnostics.ActiveRecorder = null;
         if (!_editorTestMode)
         {
@@ -457,17 +460,34 @@ public sealed class GameScene : IScene
 
     private void UpdateGameplayAudio()
     {
-        bool pulling = false;
-        foreach (Rope rope in Ropes)
+        bool freezeSimAudio = _simulation.IsSpawnHold
+            || _simulation.IsPlayerDead
+            || _simulation.IsLevelComplete
+            || _simulation.IsPaused;
+        if (freezeSimAudio)
         {
-            if (rope.IsPulling)
+            GameAudio.SetPullRopeLoop(false);
+            GameAudio.ResetPhysicsExpulsion();
+            if (_simulation.IsPlayerDead || _simulation.IsLevelComplete)
             {
-                pulling = true;
-                break;
+                GameAudio.UpdateLavaProximity(float.MaxValue);
+                return;
             }
         }
+        else
+        {
+            bool pulling = false;
+            foreach (Rope rope in Ropes)
+            {
+                if (rope.IsPulling)
+                {
+                    pulling = true;
+                    break;
+                }
+            }
 
-        GameAudio.SetPullRopeLoop(pulling);
+            GameAudio.SetPullRopeLoop(pulling);
+        }
 
         if (!_simulation.LavaActive)
         {
@@ -552,6 +572,10 @@ public sealed class GameScene : IScene
                 _confirmPopup = null;
                 _pendingConfirm = ConfirmActionKind.None;
                 ExecuteConfirmedAction(action);
+                if (action == ConfirmActionKind.RestartLevel && !_exited)
+                {
+                    TickGameplaySimulation(gameTime, dt);
+                }
             }
             else if (_confirmPopup.Result == PopupResult.Cancelled)
             {
@@ -580,6 +604,7 @@ public sealed class GameScene : IScene
             GameAudio.SetPullRopeLoop(false);
             if (TryHotRestartLevel())
             {
+                TickGameplaySimulation(gameTime, dt);
                 return;
             }
 
@@ -587,6 +612,10 @@ public sealed class GameScene : IScene
             if (choice.HasValue)
             {
                 HandlePauseMenuChoice(choice.Value);
+                if (choice.Value is PauseMenuChoice.Resume or PauseMenuChoice.Respawn)
+                {
+                    TickGameplaySimulation(gameTime, dt);
+                }
             }
 
             return;
@@ -619,8 +648,12 @@ public sealed class GameScene : IScene
                 _deathMenuFocusInitialized = true;
             }
 
-            UpdateDeathUi(gameTime);
-            UpdateCamera(gameTime);
+            if (!TryHotRestartLevel())
+            {
+                UpdateDeathUi(gameTime);
+            }
+
+            TickGameplaySimulation(gameTime, dt);
             return;
         }
 
@@ -656,6 +689,7 @@ public sealed class GameScene : IScene
 
         if (TryHotRestartLevel())
         {
+            TickGameplaySimulation(gameTime, dt);
             return;
         }
 
@@ -671,6 +705,11 @@ public sealed class GameScene : IScene
 
         _tuningPanel.Update(gameTime, _game.Input, viewport, _game.Party);
 
+        TickGameplaySimulation(gameTime, dt);
+    }
+
+    private void TickGameplaySimulation(GameTime gameTime, float dt)
+    {
         GameNetworkCoordinator network = _game.GameNetwork;
         network.PumpIncoming(_session, _simulation);
         MultiplayerDebug.UpdateRates(
@@ -702,9 +741,12 @@ public sealed class GameScene : IScene
                     _replayRecorder.RecordFrame(_simulation, _camera);
                 }
 
-                _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
-                _worldRecordGhost?.SyncToGameplayTick(_simulation.CurrentTick.Value);
+                SyncGhostsToSimulation();
                 UpdateGameplayAudio();
+            }
+            else
+            {
+                _simulation.AdvanceReplicatedSpawnHold(dt);
             }
 
             BeginCompletionUi();
@@ -713,8 +755,7 @@ public sealed class GameScene : IScene
         }
 
         _simulation.Advance(dt, _game.Input);
-        _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
-        _worldRecordGhost?.SyncToGameplayTick(_simulation.CurrentTick.Value);
+        SyncGhostsToSimulation();
         UpdateGameplayAudio();
         BeginCompletionUi();
         if (_simulation.IsLevelComplete && _simulation.NewRecord)
@@ -722,13 +763,23 @@ public sealed class GameScene : IScene
             _savedNewRecordReplay = true;
         }
 
-        // Snapshots broadcast from OnSimulationFixedTick (once per sim tick) — not every render frame.
-
         UpdateCamera(gameTime);
     }
 
+    private void SyncGhostsToSimulation()
+    {
+        if (_simulation.IsSpawnHold)
+        {
+            return;
+        }
+
+        _ghostPlayer?.SyncToGameplayTick(_simulation.CurrentTick.Value);
+        _worldRecordGhost?.SyncToGameplayTick(_simulation.CurrentTick.Value);
+    }
+
     /// <summary>
-    /// R3 / RestartLevel: instant restart, no pause-menu confirm. Host/solo only.
+    /// R3 / RestartLevel: instant restart, no pause-menu confirm.
+    /// Host/solo apply locally; Steam guests pulse RestartPressed to the host.
     /// </summary>
     private bool TryHotRestartLevel()
     {
@@ -737,14 +788,19 @@ public sealed class GameScene : IScene
             return false;
         }
 
-        if (_session.Role == GameSessionRole.Client)
+        if (_photoMode || _completionUiActive || _disconnectPending)
         {
             return false;
         }
 
-        if (_photoMode || _completionUiActive || _disconnectPending)
+        if (_session.Role == GameSessionRole.Client)
         {
-            return false;
+            _confirmPopup = null;
+            _pendingConfirm = ConfirmActionKind.None;
+            _simulation.SetPaused(false);
+            _pauseMenu.Close();
+            _game.Input.PulseRestart();
+            return true;
         }
 
         _confirmPopup = null;
@@ -796,7 +852,15 @@ public sealed class GameScene : IScene
             case PauseMenuChoice.Respawn:
                 _simulation.SetPaused(false);
                 _pauseMenu.Close();
-                _simulation.PauseMenuRespawn();
+                if (_session.Role == GameSessionRole.Client)
+                {
+                    _game.Input.PulseRespawn();
+                }
+                else
+                {
+                    _simulation.PauseMenuRespawn();
+                }
+
                 break;
             case PauseMenuChoice.RestartLevel:
                 _confirmPopup = new Popup(
@@ -833,6 +897,14 @@ public sealed class GameScene : IScene
         switch (action)
         {
             case ConfirmActionKind.RestartLevel:
+                if (_session.Role == GameSessionRole.Client)
+                {
+                    _simulation.SetPaused(false);
+                    _pauseMenu.Close();
+                    _game.Input.PulseRestart();
+                    break;
+                }
+
                 if (_simulation.IsPlayerDead)
                 {
                     RespawnFromStartClearingReplay();
@@ -870,12 +942,22 @@ public sealed class GameScene : IScene
             _debugDraw,
             _ghostPlayer,
             drawPlayerIndicators: !_photoMode,
-            worldRecordGhost: _worldRecordGhost);
+            worldRecordGhost: _worldRecordGhost,
+            useGamepadBindings: BindingDisplay.UseGamepadBindings(_game.Input.LastUsedPartyInputSource));
 
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         if (!_photoMode)
         {
             DrawTimer(spriteBatch, _game.Pixel, viewport);
+            DrawSpawnHoldCountdown(spriteBatch, _game.Pixel, viewport);
+            if (SettingsManager.CurrentSettings.ShowControlsHud)
+            {
+                _controlsHud.Draw(
+                    spriteBatch,
+                    _game.Pixel,
+                    viewport,
+                    BindingDisplay.UseGamepadBindings(_game.Input.LastUsedPartyInputSource));
+            }
         }
 
         if (_debugDraw && !_photoMode)
@@ -1194,6 +1276,25 @@ public sealed class GameScene : IScene
     private void ResetGameplaySession()
     {
         _simulation.RestartLevel();
+    }
+
+    /// <summary>
+    /// Death / hot-restart from start: timer resets but historically left pre-death frames
+    /// in the session buffer, which made replay DurationSeconds diverge from FinalTime and
+    /// blocked Steam leaderboard uploads. Always clear the buffer with the timer.
+    /// </summary>
+    private void RespawnFromStartClearingReplay()
+    {
+        _simulation.RespawnFromStart();
+    }
+
+    private void OnLevelRestarted()
+    {
+        if (_exited)
+        {
+            return;
+        }
+
         _activeWallClock.Reset();
         _game.GameNetwork.ClearClientLatchedInput();
         _camera.Position = GetPlayersCenter();
@@ -1207,24 +1308,17 @@ public sealed class GameScene : IScene
 
         _savedNewRecordReplay = false;
         _persistedNewRecordReplay = false;
-    }
+        _deathMenuFocusInitialized = false;
+        _confirmPopup = null;
+        _pendingConfirm = ConfirmActionKind.None;
+        _pauseMenu.Close();
+        _simulation.SetPaused(false);
+        _game.Input.GameplayInputBlocked = false;
 
-    /// <summary>
-    /// Death / hot-restart from start: timer resets but historically left pre-death frames
-    /// in the session buffer, which made replay DurationSeconds diverge from FinalTime and
-    /// blocked Steam leaderboard uploads. Always clear the buffer with the timer.
-    /// </summary>
-    private void RespawnFromStartClearingReplay()
-    {
-        _simulation.RespawnFromStart();
-        _activeWallClock.Reset();
-        if (!_editorTestMode)
+        if (_session.Role == GameSessionRole.Host)
         {
-            _replayRecorder.ResetSession();
+            _game.GameNetwork.BroadcastSnapshot(_session, _simulation.LastSnapshot);
         }
-
-        _savedNewRecordReplay = false;
-        _persistedNewRecordReplay = false;
     }
 
     /// <summary>
@@ -1244,6 +1338,7 @@ public sealed class GameScene : IScene
             && _simulation.TimerRunning
             && !_simulation.IsPaused
             && !_simulation.IsPlayerDead
+            && !_simulation.IsSpawnHold
             && !_photoMode
             && _game.IsActive;
 
@@ -1360,6 +1455,29 @@ public sealed class GameScene : IScene
 
         DrawCenteredText(spriteBatch, pixel, timeText, viewport.Width / 2 + 2, y + 2, scale, Color.Black * 0.45f);
         DrawCenteredText(spriteBatch, pixel, timeText, viewport.Width / 2, y, scale, Color.White);
+    }
+
+    private void DrawSpawnHoldCountdown(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
+    {
+        if (!_simulation.IsSpawnHold || _simulation.IsPlayerDead || _simulation.IsLevelComplete)
+        {
+            return;
+        }
+
+        int ticksPerSecond = Math.Max(1, _simulation.TickRate.TicksPerSecond);
+        int display = (_simulation.SpawnHoldTicksRemaining + ticksPerSecond - 1) / ticksPerSecond;
+        if (display <= 0)
+        {
+            return;
+        }
+
+        spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(8, 10, 16) * 0.35f);
+
+        string text = display.ToString();
+        int scale = FitTextScale(text, GetResponsiveTextScale(viewport, 70, 8, 18), viewport.Width - 80);
+        int y = (viewport.Height / 2) - (SimpleTextRenderer.MeasureString(text, scale).Y / 2);
+        DrawCenteredText(spriteBatch, pixel, text, (viewport.Width / 2) + 4, y + 4, scale, Color.Black * 0.45f);
+        DrawCenteredText(spriteBatch, pixel, text, viewport.Width / 2, y, scale, Color.White);
     }
 
     private void DrawDebugHud(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport)
@@ -1584,7 +1702,7 @@ public sealed class GameScene : IScene
         {
             if (_simulation.HasCheckpoint && _deathCheckpointBounds.Contains(input.UiPointerPosition))
             {
-                _simulation.RespawnFromCheckpoint();
+                RequestCheckpointRespawn();
                 return;
             }
 
@@ -1656,7 +1774,7 @@ public sealed class GameScene : IScene
         switch (optionIndex)
         {
             case 0 when _simulation.HasCheckpoint:
-                _simulation.RespawnFromCheckpoint();
+                RequestCheckpointRespawn();
                 break;
             case 1:
                 OpenQuitOrRestartConfirm(ConfirmActionKind.RestartLevel);
@@ -1665,6 +1783,17 @@ public sealed class GameScene : IScene
                 OpenQuitOrRestartConfirm(ConfirmActionKind.QuitToMenu);
                 break;
         }
+    }
+
+    private void RequestCheckpointRespawn()
+    {
+        if (_session.Role == GameSessionRole.Client)
+        {
+            _game.Input.PulseRespawn();
+            return;
+        }
+
+        _simulation.RespawnFromCheckpoint();
     }
 
     private void LayoutDeathUi()

@@ -9,7 +9,8 @@ namespace ColorBlocks;
 /// Default gamepad bindings using MonoGame's Xbox-style button layout.
 /// PlayStation pads (DualShock 4 / DualSense, USB or Bluetooth) are supported via
 /// Steam Input when launched through Steam, or via SDL2 mappings when running standalone.
-/// Display names show both Xbox and PlayStation labels for the options screen.
+/// Display names pick Xbox or PlayStation from the active pad's reported name.
+/// Steam Input may remap DualSense to a virtual Xbox pad — then Xbox labels show.
 /// </summary>
 public static class GamepadDefaults
 {
@@ -176,29 +177,96 @@ public static class GamepadDefaults
         Buttons.LeftStick, Buttons.RightStick
     };
 
-    public static string FormatButton(Buttons button) => button switch
+    public static GamepadLabelFamily DetectLabelFamily(int deviceIndex)
     {
-        Buttons.A => "A / Cross",
-        Buttons.B => "B / Circle",
-        Buttons.X => "X / Square",
-        Buttons.Y => "Y / Triangle",
-        Buttons.LeftShoulder => "LB / L1",
-        Buttons.RightShoulder => "RB / R1",
-        Buttons.Back => "Back / Select",
-        Buttons.Start => "Start / Options",
-        Buttons.LeftStick => "L Stick Press",
-        Buttons.RightStick => "R Stick Press",
-        _ => button.ToString()
-    };
+        if (deviceIndex < 0 || deviceIndex >= InputManager.MaxLocalPlayers)
+        {
+            return GamepadLabelFamily.Xbox;
+        }
 
-    public static string GetGamepadDisplayName(GameplayInputAction action, IReadOnlyDictionary<string, string>? overrides)
+        GamePadCapabilities caps = GamePad.GetCapabilities((PlayerIndex)deviceIndex);
+        string haystack = $"{caps.DisplayName} {caps.Identifier}".ToLowerInvariant();
+        if (haystack.Contains("dualsense") || haystack.Contains("ps5"))
+        {
+            return GamepadLabelFamily.DualSense;
+        }
+
+        if (haystack.Contains("dualshock")
+            || haystack.Contains("dual shock")
+            || haystack.Contains("sony")
+            || haystack.Contains("playstation")
+            || haystack.Contains("wireless controller"))
+        {
+            return GamepadLabelFamily.PlayStation;
+        }
+
+        return GamepadLabelFamily.Xbox;
+    }
+
+    /// <summary>
+    /// Preferred connected slot, else first connected pad, else Xbox.
+    /// </summary>
+    public static GamepadLabelFamily DetectActiveLabelFamily(int preferredSlot = -1)
+    {
+        if (preferredSlot >= 0
+            && preferredSlot < InputManager.MaxLocalPlayers
+            && GamePad.GetState((PlayerIndex)preferredSlot).IsConnected)
+        {
+            return DetectLabelFamily(preferredSlot);
+        }
+
+        for (int i = 0; i < InputManager.MaxLocalPlayers; i++)
+        {
+            if (GamePad.GetState((PlayerIndex)i).IsConnected)
+            {
+                return DetectLabelFamily(i);
+            }
+        }
+
+        return GamepadLabelFamily.Xbox;
+    }
+
+    public static bool IsPlayStationFamily(GamepadLabelFamily family) =>
+        family is GamepadLabelFamily.PlayStation or GamepadLabelFamily.DualSense;
+
+    public static string FormatButton(Buttons button) =>
+        FormatButton(button, DetectActiveLabelFamily());
+
+    public static string FormatButton(Buttons button, GamepadLabelFamily family)
+    {
+        bool ps = IsPlayStationFamily(family);
+        return button switch
+        {
+            Buttons.A => ps ? "CROSS" : "A",
+            Buttons.B => ps ? "CIRCLE" : "B",
+            Buttons.X => ps ? "SQUARE" : "X",
+            Buttons.Y => ps ? "TRIANGLE" : "Y",
+            Buttons.LeftShoulder => ps ? "L1" : "LB",
+            Buttons.RightShoulder => ps ? "R1" : "RB",
+            Buttons.LeftTrigger => ps ? "L2" : "LT",
+            Buttons.RightTrigger => ps ? "R2" : "RT",
+            Buttons.Back => family == GamepadLabelFamily.DualSense ? "CREATE" : (ps ? "SHARE" : "BACK"),
+            Buttons.Start => ps ? "OPTIONS" : "START",
+            Buttons.LeftStick => ps ? "L3" : "L STICK",
+            Buttons.RightStick => ps ? "R3" : "R STICK",
+            _ => button.ToString()
+        };
+    }
+
+    public static string GetGamepadDisplayName(GameplayInputAction action, IReadOnlyDictionary<string, string>? overrides) =>
+        GetGamepadDisplayName(action, overrides, DetectActiveLabelFamily());
+
+    public static string GetGamepadDisplayName(
+        GameplayInputAction action,
+        IReadOnlyDictionary<string, string>? overrides,
+        GamepadLabelFamily family)
     {
         if (overrides != null && overrides.TryGetValue(action.ToString(), out string? stored))
         {
-            return GamepadActionBinding.FormatToken(stored, action);
+            return GamepadActionBinding.FormatToken(stored, action, family);
         }
 
-        return GetDisplayName(action);
+        return GetDisplayName(action, family);
     }
 
     /// <summary>Canonical conflict token for the effective binding (exact match only).</summary>
@@ -239,21 +307,32 @@ public static class GamepadDefaults
         _ => GamepadBindingTokens.Unbound
     };
 
-    public static string GetDisplayName(GameplayInputAction action)
+    public static string GetDisplayName(GameplayInputAction action) =>
+        GetDisplayName(action, DetectActiveLabelFamily());
+
+    public static string GetDisplayName(GameplayInputAction action, GamepadLabelFamily family)
     {
+        bool ps = IsPlayStationFamily(family);
         return action switch
         {
             GameplayInputAction.MoveLeft => "Left Stick ←",
             GameplayInputAction.MoveRight => "Left Stick →",
-            GameplayInputAction.Jump => "A / Cross",
-            GameplayInputAction.Respawn => "Back / Select",
-            GameplayInputAction.RestartLevel => "R Stick Press",
+            GameplayInputAction.Jump => FormatButton(Buttons.A, family),
+            GameplayInputAction.Respawn => FormatButton(Buttons.Back, family),
+            GameplayInputAction.RestartLevel => FormatButton(Buttons.RightStick, family),
             GameplayInputAction.FastFall => "Left Stick ↓",
-            GameplayInputAction.PullRope => "RT / R2",
-            GameplayInputAction.Red => "X / Square",
-            GameplayInputAction.Blue => "B / Circle",
-            GameplayInputAction.Green => "Y / Triangle",
+            GameplayInputAction.PullRope => ps ? "R2" : "RT",
+            GameplayInputAction.Red => FormatButton(Buttons.X, family),
+            GameplayInputAction.Blue => FormatButton(Buttons.B, family),
+            GameplayInputAction.Green => FormatButton(Buttons.Y, family),
             _ => "—"
         };
     }
+}
+
+public enum GamepadLabelFamily
+{
+    Xbox,
+    PlayStation,
+    DualSense
 }

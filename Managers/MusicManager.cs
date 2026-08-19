@@ -11,6 +11,7 @@ namespace ColorBlocks;
 /// <summary>
 /// Menu shuffle on MediaPlayer. DesktopGL scratches after Stop/EOF reuse — keep
 /// IsRepeating=true and cut to next track by elapsed timer (never wait for Stopped at EOF).
+/// Cut ~2.5s early so OggStreamer pendingFinish cannot replay the new track from 0.
 /// Mute = IsMuted, playlist keeps advancing.
 /// Editor: mute menu playlist + loop editor cue on a SoundEffectInstance (second channel).
 /// Leaving editor: stop editor SFX + unmute menu — no MediaPlayer restart.
@@ -23,7 +24,10 @@ public sealed class MusicManager
     private const float MinAdvanceElapsedSeconds = 8f;
     private const float AdvanceCooldownSeconds = 2.5f;
     private const float StuckStoppedSeconds = 0.4f;
-    private const float EndCutSeconds = 0.25f;
+    // OpenAL OggStreamer: 3 buffers × ~0.5s. Cut inside that window → stale Finished replays the new track.
+    private const float EndCutSeconds = 2.5f;
+    private const float StaleReplayWatchSeconds = 3f;
+    private const float StaleReplayRewindSeconds = 0.2f;
     private const int MaxSameTrackRestarts = 1;
     private const int MaxPlayHistory = 32;
     private const string MusicRootRelative = "Audio/Music";
@@ -47,6 +51,9 @@ public sealed class MusicManager
     private float _stoppedElapsed;
     private float _trackDuration;
     private float _advanceCooldown;
+    private float _staleReplayWatch;
+    private float _lastPlayPosition = -1f;
+    private bool _staleReplayLogged;
     private int _sameTrackRestarts;
     private bool _catalogLoaded;
 
@@ -75,6 +82,11 @@ public sealed class MusicManager
             _advanceCooldown = Math.Max(0f, _advanceCooldown - dt);
         }
 
+        if (_staleReplayWatch > 0f)
+        {
+            _staleReplayWatch = Math.Max(0f, _staleReplayWatch - dt);
+        }
+
         // Menu playlist always advances (muted under gameplay/editor is fine).
         if (_currentMusicId is null)
         {
@@ -93,6 +105,8 @@ public sealed class MusicManager
             _stoppedElapsed += dt;
         }
 
+        WatchStaleReplay(state);
+
         // Ignore Stopped / advance while post-Play cooldown is active (finished-callback race).
         if (_advanceCooldown > 0f)
         {
@@ -100,7 +114,7 @@ public sealed class MusicManager
         }
 
         // Timer cut: IsRepeating keeps MediaPlayer out of EOF→Stopped (DesktopGL scratch).
-        // Advance slightly before true end so the repeat seam never plays.
+        // Cut well before true end so OggStreamer last-buffer Finished cannot Play(new) from 0.
         float cutAt = _trackDuration >= MinAdvanceElapsedSeconds
             ? Math.Max(_trackDuration - EndCutSeconds, MinAdvanceElapsedSeconds)
             : float.MaxValue;
@@ -567,6 +581,7 @@ public sealed class MusicManager
             _sameTrackRestarts = 0;
             _trackDuration = ResolveDuration(song, assetPath);
             _advanceCooldown = AdvanceCooldownSeconds;
+            ArmStaleReplayWatch();
 
             if (recordHistory
                 && previousId is not null
@@ -612,6 +627,7 @@ public sealed class MusicManager
             _sameTrackRestarts++;
             _stoppedElapsed = 0f;
             _advanceCooldown = AdvanceCooldownSeconds;
+            ArmStaleReplayWatch();
             DiagnosticsLog.Info(
                 "Music",
                 $"Restart same Song (restarts={_sameTrackRestarts} wallElapsed={_trackElapsed:0.#}s id='{_currentMusicId}')");
@@ -622,6 +638,51 @@ public sealed class MusicManager
             DiagnosticsLog.Info("Music", $"Restart failed: {ex.Message}");
             return false;
         }
+    }
+
+    private void ArmStaleReplayWatch()
+    {
+        _staleReplayWatch = StaleReplayWatchSeconds;
+        _lastPlayPosition = -1f;
+        _staleReplayLogged = false;
+    }
+
+    /// <summary>
+    /// MediaPlayer.IsRepeating + OggStreamer pendingFinish can Play(current) from 0 after a switch.
+    /// Log only — do not Play again (that loops the glitch).
+    /// </summary>
+    private void WatchStaleReplay(MediaState state)
+    {
+        if (_staleReplayWatch <= 0f || state != MediaState.Playing)
+        {
+            return;
+        }
+
+        float pos;
+        try
+        {
+            pos = (float)MediaPlayer.PlayPosition.TotalSeconds;
+        }
+        catch
+        {
+            return;
+        }
+
+        if (_lastPlayPosition < 0f)
+        {
+            _lastPlayPosition = pos;
+            return;
+        }
+
+        if (!_staleReplayLogged && _lastPlayPosition - pos >= StaleReplayRewindSeconds)
+        {
+            _staleReplayLogged = true;
+            DiagnosticsLog.Info(
+                "Music",
+                $"stale Finished replay (pos {_lastPlayPosition:0.##}s → {pos:0.##}s id='{_currentMusicId}')");
+        }
+
+        _lastPlayPosition = pos;
     }
 
     private void RetireCurrentSong()

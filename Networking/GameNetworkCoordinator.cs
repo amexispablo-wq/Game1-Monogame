@@ -79,14 +79,15 @@ public sealed class GameNetworkCoordinator
 
             if (!session.IsHost && packetType == NetworkPacketType.GameSnapshot && snapshot is not null)
             {
-                // Host RestartLevel used to zero Sequence; accept tick+seq rewind as session restart.
+                // Sequence stays monotonic across RestartLevel. Restart is seq up + tick down
+                // (hold snaps sit at tick 0). Old seq-rewind detect never fired.
                 if (_lastLatchedSnapshotSequence >= 0
-                    && snapshot.Sequence < _lastLatchedSnapshotSequence
+                    && snapshot.Sequence > _lastLatchedSnapshotSequence
                     && snapshot.Tick < _lastLatchedSnapshotTick)
                 {
                     MultiplayerDebug.LogNet(
                         $"Client snapshot latch RESET — restart detect seq {_lastLatchedSnapshotSequence}→{snapshot.Sequence} " +
-                        $"tick {_lastLatchedSnapshotTick}→{snapshot.Tick}");
+                        $"tick {_lastLatchedSnapshotTick}→{snapshot.Tick} hold={snapshot.SpawnHoldTicksRemaining}");
                     _lastLatchedSnapshotSequence = -1;
                     _lastLatchedSnapshotTick = -1;
                 }
@@ -286,13 +287,16 @@ public sealed class GameNetworkCoordinator
                     current.PullRopeHeld,
                     current.RequestedColor ?? latched.RequestedColor,
                     current.Move,
-                    current.MenuNavigate);
+                    current.MenuNavigate,
+                    latched.RestartPressed || current.RestartPressed);
             }
             else
             {
                 _clientLatchedInput[player.NetworkId] = current;
             }
         }
+
+        inputSource.ConsumeEdgePulses();
     }
 
     private InputFrame BuildLocalInputFrame(
@@ -323,7 +327,8 @@ public sealed class GameNetworkCoordinator
                 input.PullRopeHeld,
                 null,
                 input.Move,
-                input.MenuNavigate);
+                input.MenuNavigate,
+                RestartPressed: false);
         }
 
         return frame;

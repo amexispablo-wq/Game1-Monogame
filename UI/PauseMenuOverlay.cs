@@ -164,7 +164,7 @@ public sealed class PauseMenuOverlay
         Color text = highlighted ? Color.White : new Color(210, 220, 235);
 
         spriteBatch.Draw(pixel, bounds, fill * fade);
-        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, border * fade, highlighted ? 2 : 2);
+        DrawHelper.DrawBorder(spriteBatch, pixel, bounds, border * fade, 2);
 
         int scale = Math.Clamp(bounds.Height / 22, 2, 3);
         SimpleTextRenderer.DrawCentered(spriteBatch, pixel, label, bounds, scale, text * fade);

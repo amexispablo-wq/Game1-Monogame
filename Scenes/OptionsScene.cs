@@ -41,6 +41,10 @@ public sealed class OptionsScene : IScene
     {
         Label = "Continue in levels"
     };
+    private readonly Checkbox _controlsHudCheckbox = new()
+    {
+        Label = "On"
+    };
     private readonly List<(string Key, string Label, Slider Slider, FocusableSlider Focus)> _soundEffectVolumes = new();
 
     // Buttons
@@ -53,6 +57,7 @@ public sealed class OptionsScene : IScene
     private readonly FocusableCycleSelector<ColorMode> _colorModeFocus;
     private readonly FocusableSlider _volumeFocus;
     private readonly FocusableCheckbox _continueMenuMusicFocus;
+    private readonly FocusableCheckbox _controlsHudFocus;
     private readonly FocusableResolutionDropdown _resolutionFocus;
     private readonly FocusableButton _applyFocus;
     private readonly FocusableButton _backFocus;
@@ -68,6 +73,7 @@ public sealed class OptionsScene : IScene
     private DisplaySettingsConfirmOverlay? _displayConfirm;
     private GameSettings? _displayRevertSnapshot;
     private GameSettings? _pendingRevertSnapshot;
+    private bool _focusSectionTabOnRebuild;
 
     private enum RebindKind
     {
@@ -139,6 +145,7 @@ public sealed class OptionsScene : IScene
         _volumeSlider.Label = string.Empty;
         _volumeSlider.Value = pending.MusicVolume;
         _continueMenuMusicCheckbox.IsChecked = pending.ContinueMenuMusicInLevels;
+        _controlsHudCheckbox.IsChecked = pending.ShowControlsHud;
 
         _backButton.TextScale = 3;
         _applyButton.TextScale = 3;
@@ -168,6 +175,7 @@ public sealed class OptionsScene : IScene
         _colorModeFocus = new FocusableCycleSelector<ColorMode>(_colorModeSelector);
         _volumeFocus = new FocusableSlider(_volumeSlider);
         _continueMenuMusicFocus = new FocusableCheckbox(_continueMenuMusicCheckbox);
+        _controlsHudFocus = new FocusableCheckbox(_controlsHudCheckbox);
         _resolutionFocus = new FocusableResolutionDropdown(_resolutionDropdown);
         _resolutionDropdown.RefreshSupportedResolutions(_game.GraphicsDevice);
         _applyFocus = new FocusableButton(_applyButton);
@@ -246,7 +254,10 @@ public sealed class OptionsScene : IScene
             return "—";
         }
 
-        return GamepadDefaults.GetGamepadDisplayName(gameplayAction, SettingsManager.PendingSettings.GamepadBindings);
+        return GamepadDefaults.GetGamepadDisplayName(
+            gameplayAction,
+            SettingsManager.PendingSettings.GamepadBindings,
+            GamepadDefaults.DetectActiveLabelFamily(_game.Input.LastUsedPartyControllerId));
     }
 
     private void ResetControlDefaults()
@@ -365,6 +376,7 @@ public sealed class OptionsScene : IScene
         }
 
         _activeSection = sections[(currentIndex + delta + sections.Length) % sections.Length];
+        _focusSectionTabOnRebuild = true;
     }
 
     private void LeaveOptions()
@@ -390,43 +402,46 @@ public sealed class OptionsScene : IScene
         _focus.Navigation.LinkHorizontal(displayTabIndex, audioTabIndex);
         _focus.Navigation.LinkHorizontal(audioTabIndex, controlsTabIndex);
 
-        int sectionEntryIndex = -1;
-        int sectionExitIndex = -1;
+        int colorModeIndex = -1;
+        int controlsHudIndex = -1;
+        int continueIndex = -1;
+        var sfxIndices = new List<int>();
+        var keyIndices = new List<int>();
+        var padIndices = new List<int>();
+        int resetIndex = -1;
 
         if (_activeSection == OptionsSection.Display)
         {
             int displayModeIndex = _focus.Add(_displayModeFocus, "DisplayMode");
             int resolutionIndex = _focus.Add(_resolutionFocus, "Resolution");
             int fpsIndex = _focus.Add(_fpsLimitFocus, "FpsLimit");
-            int colorModeIndex = _focus.Add(_colorModeFocus, "ColorMode");
+            colorModeIndex = _focus.Add(_colorModeFocus, "ColorMode");
+            controlsHudIndex = _focus.Add(_controlsHudFocus, "ControlsHud");
             _focus.Navigation.LinkVertical(displayTabIndex, displayModeIndex);
             _focus.Navigation.LinkVertical(displayModeIndex, resolutionIndex);
             _focus.Navigation.LinkVertical(resolutionIndex, fpsIndex);
             _focus.Navigation.LinkVertical(fpsIndex, colorModeIndex);
-            sectionEntryIndex = displayModeIndex;
-            sectionExitIndex = colorModeIndex;
+            _focus.Navigation.LinkVertical(colorModeIndex, controlsHudIndex);
         }
         else if (_activeSection == OptionsSection.Audio)
         {
             int volumeIndex = _focus.Add(_volumeFocus, "MusicVolume");
-            int continueIndex = _focus.Add(_continueMenuMusicFocus, "ContinueMenuMusic");
+            continueIndex = _focus.Add(_continueMenuMusicFocus, "ContinueMenuMusic");
             _focus.Navigation.LinkVertical(audioTabIndex, volumeIndex);
             _focus.Navigation.LinkVertical(volumeIndex, continueIndex);
-            sectionEntryIndex = volumeIndex;
-            sectionExitIndex = continueIndex;
-            int previous = continueIndex;
             for (int i = 0; i < _soundEffectVolumes.Count; i++)
             {
-                int effectIndex = _focus.Add(_soundEffectVolumes[i].Focus, $"SoundEffect{i}");
-                _focus.Navigation.LinkVertical(previous, effectIndex);
-                previous = effectIndex;
-                sectionExitIndex = effectIndex;
+                sfxIndices.Add(_focus.Add(_soundEffectVolumes[i].Focus, $"SoundEffect{i}"));
             }
+
+            WireSoundEffectNavigation(
+                continueIndex,
+                sfxIndices,
+                layout.AudioSfxColumns,
+                layout.AudioSfxRowsPerColumn);
         }
         else
         {
-            var keyIndices = new List<int>();
-            var padIndices = new List<int>();
             for (int i = 0; i < _controlBindings.Count; i++)
             {
                 int captured = i;
@@ -449,8 +464,6 @@ public sealed class OptionsScene : IScene
             if (keyIndices.Count > 0)
             {
                 _focus.Navigation.LinkVertical(controlsTabIndex, keyIndices[0]);
-                sectionEntryIndex = keyIndices[0];
-                sectionExitIndex = padIndices[^1];
                 for (int i = 0; i < keyIndices.Count; i++)
                 {
                     _focus.Navigation.LinkHorizontal(keyIndices[i], padIndices[i]);
@@ -462,30 +475,24 @@ public sealed class OptionsScene : IScene
                 }
             }
 
-            int resetIndex = _focus.Add(_resetDefaultsFocus, "ResetDefaults");
-            if (sectionExitIndex >= 0)
-            {
-                _focus.Navigation.LinkVertical(sectionExitIndex, resetIndex);
-            }
-            else
-            {
-                _focus.Navigation.LinkVertical(controlsTabIndex, resetIndex);
-            }
-
-            sectionExitIndex = resetIndex;
+            resetIndex = _focus.Add(_resetDefaultsFocus, "ResetDefaults");
         }
 
         int applyIndex = _focus.Add(_applyFocus, "Apply");
         int backIndex = _focus.Add(_backFocus, "Back");
-        _focus.Navigation.LinkHorizontal(backIndex, applyIndex);
-        if (sectionExitIndex >= 0)
-        {
-            _focus.Navigation.LinkVertical(sectionExitIndex, applyIndex);
-        }
-        else
-        {
-            _focus.Navigation.LinkVertical(controlsTabIndex, applyIndex);
-        }
+        WireFooterNavigation(
+            backIndex,
+            applyIndex,
+            colorModeIndex,
+            controlsHudIndex,
+            continueIndex,
+            sfxIndices,
+            layout.AudioSfxColumns,
+            layout.AudioSfxRowsPerColumn,
+            keyIndices,
+            padIndices,
+            resetIndex,
+            controlsTabIndex);
 
         string defaultFocus = _activeSection switch
         {
@@ -494,7 +501,147 @@ public sealed class OptionsScene : IScene
             _ => "DisplayMode"
         };
         _focus.FinalizeFocus(defaultFocus);
+        if (_focusSectionTabOnRebuild)
+        {
+            _focusSectionTabOnRebuild = false;
+            string tabId = _activeSection switch
+            {
+                OptionsSection.Audio => "AudioTab",
+                OptionsSection.Controls => "ControlsTab",
+                _ => "DisplayTab"
+            };
+            _focus.FocusById(tabId);
+        }
+
         _focus.Update(gameTime, _game.Input);
+    }
+
+    private void WireSoundEffectNavigation(
+        int continueIndex,
+        List<int> sfxIndices,
+        int columns,
+        int rows)
+    {
+        if (sfxIndices.Count == 0)
+        {
+            return;
+        }
+
+        if (columns <= 1)
+        {
+            _focus.Navigation.LinkVertical(continueIndex, sfxIndices[0]);
+            for (int i = 0; i < sfxIndices.Count - 1; i++)
+            {
+                _focus.Navigation.LinkVertical(sfxIndices[i], sfxIndices[i + 1]);
+            }
+
+            return;
+        }
+
+        int rowsPerColumn = Math.Max(1, rows);
+        int columnCount = Math.Max(1, columns);
+        for (int col = 0; col < columnCount; col++)
+        {
+            int colStart = col * rowsPerColumn;
+            if (colStart >= sfxIndices.Count)
+            {
+                break;
+            }
+
+            int colEnd = Math.Min(colStart + rowsPerColumn, sfxIndices.Count);
+            for (int i = colStart; i < colEnd - 1; i++)
+            {
+                _focus.Navigation.LinkVertical(sfxIndices[i], sfxIndices[i + 1]);
+            }
+        }
+
+        int visualRows = Math.Min(rowsPerColumn, sfxIndices.Count);
+        for (int row = 0; row < visualRows; row++)
+        {
+            int right = row + rowsPerColumn;
+            if (right < sfxIndices.Count)
+            {
+                _focus.Navigation.LinkHorizontal(sfxIndices[row], sfxIndices[right]);
+            }
+        }
+
+        _focus.Navigation.LinkVertical(continueIndex, sfxIndices[0]);
+        if (sfxIndices.Count > rowsPerColumn)
+        {
+            _focus.Navigation.Link(sfxIndices[rowsPerColumn], NavigationDirection.Up, continueIndex);
+        }
+    }
+
+    private void WireFooterNavigation(
+        int backIndex,
+        int applyIndex,
+        int colorModeIndex,
+        int controlsHudIndex,
+        int continueIndex,
+        List<int> sfxIndices,
+        int audioColumns,
+        int audioRowsPerColumn,
+        List<int> keyIndices,
+        List<int> padIndices,
+        int resetIndex,
+        int controlsTabIndex)
+    {
+        _focus.Navigation.LinkHorizontal(backIndex, applyIndex);
+
+        if (_activeSection == OptionsSection.Display)
+        {
+            int lastDisplayIndex = controlsHudIndex >= 0 ? controlsHudIndex : colorModeIndex;
+            if (lastDisplayIndex >= 0)
+            {
+                _focus.Navigation.LinkVertical(lastDisplayIndex, applyIndex);
+                _focus.Navigation.Link(backIndex, NavigationDirection.Up, lastDisplayIndex);
+            }
+
+            return;
+        }
+
+        if (_activeSection == OptionsSection.Audio)
+        {
+            if (sfxIndices.Count == 0)
+            {
+                if (continueIndex >= 0)
+                {
+                    _focus.Navigation.LinkVertical(continueIndex, applyIndex);
+                    _focus.Navigation.Link(backIndex, NavigationDirection.Up, continueIndex);
+                }
+
+                return;
+            }
+
+            if (audioColumns <= 1)
+            {
+                _focus.Navigation.LinkVertical(sfxIndices[^1], applyIndex);
+                _focus.Navigation.Link(backIndex, NavigationDirection.Up, sfxIndices[^1]);
+                return;
+            }
+
+            int rows = Math.Max(1, audioRowsPerColumn);
+            int leftBottom = sfxIndices[Math.Min(rows, sfxIndices.Count) - 1];
+            int rightBottom = sfxIndices[^1];
+            _focus.Navigation.LinkVertical(leftBottom, backIndex);
+            _focus.Navigation.LinkVertical(rightBottom, applyIndex);
+            return;
+        }
+
+        if (resetIndex >= 0)
+        {
+            _focus.Navigation.LinkHorizontal(resetIndex, backIndex);
+        }
+
+        if (keyIndices.Count > 0)
+        {
+            _focus.Navigation.LinkVertical(keyIndices[^1], backIndex);
+            _focus.Navigation.LinkVertical(padIndices[^1], applyIndex);
+        }
+        else
+        {
+            _focus.Navigation.LinkVertical(controlsTabIndex, applyIndex);
+        }
     }
 
     private bool BeginRebind(int index, RebindKind kind)
@@ -543,6 +690,11 @@ public sealed class OptionsScene : IScene
         }
 
         DrawButtonTray(spriteBatch, pixel, layout);
+        if (!layout.ResetDefaultsButtonBounds.IsEmpty)
+        {
+            _resetDefaultsButton.Draw(spriteBatch, pixel);
+        }
+
         _backButton.Draw(spriteBatch, pixel);
         _applyButton.Draw(spriteBatch, pixel);
         _focus.DrawFocusHighlights(spriteBatch, pixel, gameTime, _game.Input);
@@ -618,10 +770,17 @@ public sealed class OptionsScene : IScene
         DrawSettingLabel(spriteBatch, pixel, "RESOLUTION", layout.DisplayLabelBounds, layout.ResolutionBounds);
         DrawSettingLabel(spriteBatch, pixel, "FPS LIMIT", layout.DisplayLabelBounds, layout.FpsLimitBounds);
         DrawSettingLabel(spriteBatch, pixel, "COLOR MODE", layout.ColorModeLabelBounds, layout.ColorModeBounds);
+        DrawSettingLabel(
+            spriteBatch,
+            pixel,
+            "CONTROLS HUD",
+            new Rectangle(layout.DisplayLabelBounds.X, layout.ControlsHudBounds.Y, layout.DisplayLabelBounds.Width, layout.ControlsHudBounds.Height),
+            layout.ControlsHudBounds);
 
         _displayModeSelector.Draw(spriteBatch, pixel);
         _fpsLimitSelector.Draw(spriteBatch, pixel);
         _colorModeSelector.Draw(spriteBatch, pixel);
+        _controlsHudCheckbox.Draw(spriteBatch, pixel);
 
         if (!_resolutionDropdown.IsExpanded)
         {
@@ -707,11 +866,6 @@ public sealed class OptionsScene : IScene
             string displayAction = FormatActionName(_controlBindings[i].action);
             DrawFittedLeft(spriteBatch, pixel, displayAction, labelBounds, 2, LabelColor);
         }
-
-        if (!layout.ResetDefaultsButtonBounds.IsEmpty)
-        {
-            _resetDefaultsButton.Draw(spriteBatch, pixel);
-        }
     }
 
     private void DrawControlTableHeader(SpriteBatch spriteBatch, Texture2D pixel, LayoutMetrics layout)
@@ -793,10 +947,13 @@ public sealed class OptionsScene : IScene
     {
         int trayPaddingX = 18;
         int trayPaddingY = 10;
+        int trayLeft = layout.ResetDefaultsButtonBounds.IsEmpty
+            ? layout.BackButtonBounds.X
+            : layout.ResetDefaultsButtonBounds.X;
         Rectangle trayBounds = new(
-            layout.BackButtonBounds.X - trayPaddingX,
+            trayLeft - trayPaddingX,
             layout.BackButtonBounds.Y - trayPaddingY,
-            layout.ApplyButtonBounds.Right - layout.BackButtonBounds.X + (trayPaddingX * 2),
+            layout.ApplyButtonBounds.Right - trayLeft + (trayPaddingX * 2),
             layout.BackButtonBounds.Height + (trayPaddingY * 2));
 
         spriteBatch.Draw(pixel, trayBounds, new Color(22, 29, 42, 205));
@@ -1059,6 +1216,7 @@ public sealed class OptionsScene : IScene
         _fpsLimitSelector.Bounds = layout.FpsLimitBounds;
         _volumeSlider.Bounds = layout.VolumeBounds;
         _continueMenuMusicCheckbox.Bounds = layout.ContinueMenuMusicBounds;
+        _controlsHudCheckbox.Bounds = layout.ControlsHudBounds;
         _colorModeSelector.Bounds = layout.ColorModeBounds;
 
         for (int i = 0; i < _soundEffectVolumes.Count; i++)
@@ -1109,15 +1267,10 @@ public sealed class OptionsScene : IScene
             + controlHeaderHeight + controlHeaderGap;
 
         int topBlockHeight = TitleHeight + titleToSectionsGap + 56 + sectionGap;
-        // Reset Defaults sits between control table and Back/Apply.
         bool showControlsFooter = _activeSection == OptionsSection.Controls;
-        const int resetButtonHeight = 40;
-        int controlsFooterHeight = showControlsFooter
-            ? 10 + resetButtonHeight + 10
-            : 0;
-        int buttonBlockHeight = ButtonHeight + sectionGap + controlsFooterHeight;
+        int buttonBlockHeight = ButtonHeight + sectionGap;
 
-        int displayRows = 4;
+        int displayRows = 5;
         int displayContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing
             + (rowHeight + 10) * (displayRows - 1) + rowHeight;
 
@@ -1233,25 +1386,34 @@ public sealed class OptionsScene : IScene
             activeSectionHeight);
 
         int buttonWidth = Math.Clamp(contentBounds.Width / 5, 128, 150);
-        int buttonTotalWidth = (buttonWidth * 2) + ButtonGap;
+        int buttonY = controlSectionBounds.Bottom + sectionGap;
         Rectangle resetDefaultsButtonBounds = Rectangle.Empty;
+        Rectangle backButtonBounds;
+        Rectangle applyButtonBounds;
         if (showControlsFooter)
         {
-            int resetInnerW = controlSectionBounds.Width - (sectionPadding * 2);
-            int resetBtnW = Math.Min(320, resetInnerW);
-            resetDefaultsButtonBounds = new Rectangle(
-                controlSectionBounds.X + sectionPadding,
-                controlSectionBounds.Bottom + 10,
-                resetBtnW,
-                resetButtonHeight);
+            int resetWidth = Math.Clamp(contentBounds.Width / 4, 180, 240);
+            int groupWidth = resetWidth + ButtonGap + buttonWidth + ButtonGap + buttonWidth;
+            int groupX = panelBounds.Center.X - (groupWidth / 2);
+            resetDefaultsButtonBounds = new Rectangle(groupX, buttonY, resetWidth, ButtonHeight);
+            backButtonBounds = new Rectangle(
+                resetDefaultsButtonBounds.Right + ButtonGap,
+                buttonY,
+                buttonWidth,
+                ButtonHeight);
+            applyButtonBounds = new Rectangle(
+                backButtonBounds.Right + ButtonGap,
+                buttonY,
+                buttonWidth,
+                ButtonHeight);
         }
-
-        int buttonY = showControlsFooter
-            ? resetDefaultsButtonBounds.Bottom + 12
-            : controlSectionBounds.Bottom + sectionGap;
-        int buttonX = panelBounds.Center.X - (buttonTotalWidth / 2);
-        Rectangle backButtonBounds = new(buttonX, buttonY, buttonWidth, ButtonHeight);
-        Rectangle applyButtonBounds = new(backButtonBounds.Right + ButtonGap, buttonY, buttonWidth, ButtonHeight);
+        else
+        {
+            int buttonTotalWidth = (buttonWidth * 2) + ButtonGap;
+            int buttonX = panelBounds.Center.X - (buttonTotalWidth / 2);
+            backButtonBounds = new Rectangle(buttonX, buttonY, buttonWidth, ButtonHeight);
+            applyButtonBounds = new Rectangle(backButtonBounds.Right + ButtonGap, buttonY, buttonWidth, ButtonHeight);
+        }
 
         CreateSettingColumnLayout(displaySectionBounds, sectionPadding, out Rectangle displayLabelBounds, out Rectangle displayControlBounds);
         CreateSettingColumnLayout(audioSectionBounds, sectionPadding, out Rectangle audioLabelBounds, out Rectangle audioControlBounds);
@@ -1261,6 +1423,7 @@ public sealed class OptionsScene : IScene
         Rectangle resolutionBounds = new(displayControlBounds.X, rowStartY + rowHeight + 10, displayControlBounds.Width, rowHeight);
         Rectangle fpsLimitBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 2), displayControlBounds.Width, rowHeight);
         Rectangle colorModeBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 3), displayControlBounds.Width, rowHeight);
+        Rectangle controlsHudBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 4), displayControlBounds.Width, rowHeight);
         Rectangle colorModeLabelBounds = new(displayLabelBounds.X, colorModeBounds.Y, displayLabelBounds.Width, rowHeight);
         Rectangle volumeBounds = new(audioControlBounds.X, rowStartY, audioControlBounds.Width, audioRowHeight);
         Rectangle continueMenuMusicBounds = new(
@@ -1326,6 +1489,7 @@ public sealed class OptionsScene : IScene
             volumeBounds,
             continueMenuMusicBounds,
             colorModeBounds,
+            controlsHudBounds,
             audioSfxArea,
             audioSfxTitleY,
             audioColumns,
@@ -1591,6 +1755,7 @@ public sealed class OptionsScene : IScene
     {
         SettingsManager.PendingSettings.MusicVolume = _volumeSlider.Value;
         SettingsManager.PendingSettings.ContinueMenuMusicInLevels = _continueMenuMusicCheckbox.IsChecked;
+        SettingsManager.PendingSettings.ShowControlsHud = _controlsHudCheckbox.IsChecked;
         SettingsManager.PendingSettings.FpsLimit = _fpsLimitSelector.CurrentOption;
         SettingsManager.PendingSettings.ColorMode = _colorModeSelector.CurrentOption;
         SettingsManager.PendingSettings.DisplayMode = _displayModeSelector.CurrentOption.ToString();
@@ -1791,6 +1956,7 @@ public sealed class OptionsScene : IScene
         _resolutionDropdown.SelectedResolution = new Resolution(pending.ResolutionWidth, pending.ResolutionHeight);
         _volumeSlider.Value = pending.MusicVolume;
         _continueMenuMusicCheckbox.IsChecked = pending.ContinueMenuMusicInLevels;
+        _controlsHudCheckbox.IsChecked = pending.ShowControlsHud;
         _fpsLimitSelector.CurrentOption = pending.FpsLimit;
 
         foreach ((string key, string _, Slider slider, _) in _soundEffectVolumes)
@@ -1838,6 +2004,7 @@ public sealed class OptionsScene : IScene
         Rectangle VolumeBounds,
         Rectangle ContinueMenuMusicBounds,
         Rectangle ColorModeBounds,
+        Rectangle ControlsHudBounds,
         Rectangle AudioSfxArea,
         int AudioSfxTitleY,
         int AudioSfxColumns,

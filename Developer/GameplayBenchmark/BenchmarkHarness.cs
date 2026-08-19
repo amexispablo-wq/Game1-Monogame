@@ -102,7 +102,7 @@ public sealed class BenchmarkHarness : IDisposable
         playerManager.SpawnFromParty(members, bindingInput);
         scriptedInput.BindPlayers(playerManager.Players);
 
-        GameSimulation simulation = new(session, level, playerManager, lavaRiseEnabled);
+        GameSimulation simulation = new(session, level, playerManager, lavaRiseEnabled, spawnHold: false);
         Vector2 center = playerManager.Players.Count > 0
             ? GameplayCameraHelper.GetPlayersCenter(playerManager.Players, level.PlayerStart)
             : level.PlayerStart;

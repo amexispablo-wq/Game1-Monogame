@@ -69,11 +69,14 @@ public readonly struct GamepadActionBinding
         };
     }
 
-    public static string FormatToken(string? stored, GameplayInputAction action)
+    public static string FormatToken(string? stored, GameplayInputAction action) =>
+        FormatToken(stored, action, GamepadDefaults.DetectActiveLabelFamily());
+
+    public static string FormatToken(string? stored, GameplayInputAction action, GamepadLabelFamily family)
     {
         if (stored is null || stored == GamepadBindingTokens.Default)
         {
-            return GamepadDefaults.GetDisplayName(action);
+            return GamepadDefaults.GetDisplayName(action, family);
         }
 
         if (string.IsNullOrWhiteSpace(stored) || stored == GamepadBindingTokens.Unbound)
@@ -83,7 +86,7 @@ public readonly struct GamepadActionBinding
 
         if (Enum.TryParse(stored, out Buttons button))
         {
-            return GamepadDefaults.FormatButton(button);
+            return GamepadDefaults.FormatButton(button, family);
         }
 
         return stored switch
@@ -96,7 +99,9 @@ public readonly struct GamepadActionBinding
             GamepadBindingTokens.DPadRight => "D-Pad →",
             GamepadBindingTokens.DPadUp => "D-Pad ↑",
             GamepadBindingTokens.DPadDown => "D-Pad ↓",
-            _ => GamepadDefaults.GetDisplayName(action)
+            "TriggerRight" => GamepadDefaults.IsPlayStationFamily(family) ? "R2" : "RT",
+            "TriggerLeft" => GamepadDefaults.IsPlayStationFamily(family) ? "L2" : "LT",
+            _ => GamepadDefaults.GetDisplayName(action, family)
         };
     }
 

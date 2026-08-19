@@ -552,7 +552,13 @@ public sealed class Level
         return color == GameColor.White ? GameColor.Red : color;
     }
 
-    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, float animationSeconds = 0f, bool isEditorMode = false)
+    public void Draw(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        bool debugDraw,
+        float animationSeconds = 0f,
+        bool isEditorMode = false,
+        bool useGamepadBindings = false)
     {
         DrawBackground(spriteBatch, pixel);
         DrawPlatforms(spriteBatch, pixel, debugDraw);
@@ -560,14 +566,14 @@ public sealed class Level
         DrawCheckpointFlags(spriteBatch, pixel, debugDraw);
         DrawLaunchPads(spriteBatch, pixel, debugDraw, animationSeconds, isEditorMode);
         DrawPowerUps(spriteBatch, pixel, debugDraw, animationSeconds, isEditorMode);
-        DrawSigns(spriteBatch, pixel);
+        DrawSigns(spriteBatch, pixel, useGamepadBindings);
     }
 
-    public void DrawSigns(SpriteBatch spriteBatch, Texture2D pixel)
+    public void DrawSigns(SpriteBatch spriteBatch, Texture2D pixel, bool useGamepadBindings = false)
     {
         foreach (LevelSign sign in _signs)
         {
-            sign.Draw(spriteBatch, pixel);
+            sign.Draw(spriteBatch, pixel, useGamepadBindings);
         }
     }
 

@@ -79,5 +79,7 @@ public static class GameAudio
 
     public static void EndPhysicsExpulsion() => Sfx?.EndPhysicsExpulsion();
 
+    public static void ResetPhysicsExpulsion() => Sfx?.ResetPhysicsExpulsion();
+
     public static void StopAllLoops() => Sfx?.StopAllLoops();
 }

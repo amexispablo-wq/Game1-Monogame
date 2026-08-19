@@ -32,6 +32,8 @@ public sealed class InputManager : ILocalPlayerInputSource
     private bool _suppressMenuConfirmUntilRelease;
     private float _menuConfirmSuppressSeconds;
     private DateTime _lastKeyboardRespawnAcceptedUtc = DateTime.MinValue;
+    private bool _pulseRespawn;
+    private bool _pulseRestart;
 
     public InputManager()
     {
@@ -211,7 +213,10 @@ public sealed class InputManager : ILocalPlayerInputSource
     {
         _ = localPlayerSlot;
         return InputGlyph.Fallback(
-            GamepadDefaults.GetGamepadDisplayName(action, SettingsManager.CurrentSettings.GamepadBindings));
+            GamepadDefaults.GetGamepadDisplayName(
+                action,
+                SettingsManager.CurrentSettings.GamepadBindings,
+                GamepadDefaults.DetectActiveLabelFamily(LastUsedPartyControllerId)));
     }
 
     public string GetActionGlyphLabel(GameplayInputAction action, int localPlayerSlot = 0) =>
@@ -363,9 +368,30 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     public PlayerInputState GetPlayerInput(int networkId)
     {
-        return _gameplayInputByNetworkId.TryGetValue(networkId, out PlayerInputState state)
-            ? state
+        PlayerInputState state = _gameplayInputByNetworkId.TryGetValue(networkId, out PlayerInputState existing)
+            ? existing
             : PlayerInputState.Empty;
+        if (_pulseRespawn)
+        {
+            state = state with { RespawnPressed = true };
+        }
+
+        if (_pulseRestart)
+        {
+            state = state with { RestartPressed = true };
+        }
+
+        return state;
+    }
+
+    public void PulseRespawn() => _pulseRespawn = true;
+
+    public void PulseRestart() => _pulseRestart = true;
+
+    public void ConsumeEdgePulses()
+    {
+        _pulseRespawn = false;
+        _pulseRestart = false;
     }
 
     public bool IsGamepadConnected(int deviceIndex)
@@ -553,12 +579,13 @@ public sealed class InputManager : ILocalPlayerInputSource
 
     private static string FormatPadBind(GamepadActionBinding binding, GameplayInputAction action)
     {
+        GamepadLabelFamily family = GamepadDefaults.DetectActiveLabelFamily();
         if (binding.Kind == GamepadBindingKind.Button)
         {
-            return GamepadDefaults.FormatButton(binding.Button);
+            return GamepadDefaults.FormatButton(binding.Button, family);
         }
 
-        return GamepadDefaults.GetDisplayName(action);
+        return GamepadDefaults.GetDisplayName(action, family);
     }
 
     private void UpdateGameplayInputs()

@@ -22,6 +22,10 @@ public sealed class GameSettings
     [JsonPropertyName("continueMenuMusicInLevels")]
     public bool ContinueMenuMusicInLevels { get; set; }
 
+    /// <summary>When true, the in-level controls HUD lists current key/button bindings.</summary>
+    [JsonPropertyName("showControlsHud")]
+    public bool ShowControlsHud { get; set; } = true;
+
     // FPS cap. -1 = VSync (monitor refresh), 0 = Unlimited, >0 = hard cap.
     [JsonPropertyName("fpsLimit")]
     public int FpsLimit { get; set; } = 0;

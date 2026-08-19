@@ -23,7 +23,8 @@ public static class GameplayWorldRenderer
     bool debugDraw = false,
     GhostPlayer? ghostPlayer = null,
     bool drawPlayerIndicators = true,
-    GhostPlayer? worldRecordGhost = null)
+    GhostPlayer? worldRecordGhost = null,
+    bool useGamepadBindings = false)
   {
     spriteBatch.Begin(samplerState: SamplerState.PointClamp);
     spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(36, 41, 52));
@@ -33,7 +34,7 @@ public static class GameplayWorldRenderer
       samplerState: SamplerState.PointClamp,
       transformMatrix: camera.GetTransform(viewport));
 
-    level.Draw(spriteBatch, pixel, debugDraw, elapsedTime, isEditorMode: false);
+    level.Draw(spriteBatch, pixel, debugDraw, elapsedTime, isEditorMode: false, useGamepadBindings: useGamepadBindings);
     foreach (Rope rope in ropes)
     {
       rope.Draw(spriteBatch, pixel, debugDraw);

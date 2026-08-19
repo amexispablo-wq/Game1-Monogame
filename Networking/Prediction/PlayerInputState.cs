@@ -11,7 +11,8 @@ public readonly record struct PlayerInputState(
     bool PullRopeHeld,
     GameColor? RequestedColor,
     Vector2 Move = default,
-    Vector2 MenuNavigate = default)
+    Vector2 MenuNavigate = default,
+    bool RestartPressed = false)
 {
     public static PlayerInputState Empty { get; } = new(0f, false, false, false, false, null);
 
@@ -45,6 +46,7 @@ public readonly record struct PlayerInputState(
             b.PullRopeHeld,
             b.RequestedColor ?? a.RequestedColor,
             b.Move,
-            b.MenuNavigate);
+            b.MenuNavigate,
+            a.RestartPressed || b.RestartPressed);
     }
 }

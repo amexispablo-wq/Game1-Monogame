@@ -5,7 +5,7 @@ namespace ColorBlocks;
 
 public static class NetworkPacketCodec
 {
-    private const byte PacketVersion = 4;
+    private const byte PacketVersion = 5;
 
     public static byte[] EncodeInputFrame(InputFrame frame)
     {
@@ -36,6 +36,9 @@ public static class NetworkPacketCodec
         buffer.WriteByte((byte)snapshot.RopeMode);
         WriteTimer(buffer, snapshot.Timer);
         buffer.WriteSingle(snapshot.LavaSurfaceY);
+        buffer.WriteBool(snapshot.IsPlayerDead);
+        buffer.WriteInt32(snapshot.SpawnHoldTicksRemaining);
+        buffer.WriteBool(snapshot.HasCheckpoint);
 
         buffer.WriteUInt16((ushort)Math.Min(snapshot.Players.Count, ushort.MaxValue));
         foreach (PlayerSnapshot player in snapshot.Players)
@@ -132,6 +135,9 @@ public static class NetworkPacketCodec
             RopeMode = (RopeGameplayMode)reader.ReadByte(),
             Timer = ReadTimer(ref reader),
             LavaSurfaceY = reader.ReadSingle(),
+            IsPlayerDead = reader.ReadBool(),
+            SpawnHoldTicksRemaining = reader.ReadInt32(),
+            HasCheckpoint = reader.ReadBool(),
             Level = new LevelSnapshot()
         };
 
@@ -192,6 +198,11 @@ public static class NetworkPacketCodec
             flags |= 8;
         }
 
+        if (input.RestartPressed)
+        {
+            flags |= 16;
+        }
+
         buffer.WriteByte(flags);
         if (input.RequestedColor is GameColor color)
         {
@@ -220,7 +231,8 @@ public static class NetworkPacketCodec
             (flags & 2) != 0,
             (flags & 4) != 0,
             (flags & 8) != 0,
-            color);
+            color,
+            RestartPressed: (flags & 16) != 0);
     }
 
     private static void WriteTimer(PacketBuffer buffer, TimerSnapshot timer)
