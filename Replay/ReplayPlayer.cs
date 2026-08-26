@@ -90,6 +90,7 @@ public sealed class ReplayPlayer
     _loopCount = 0;
     _tickAccumulator = 0f;
     _isPlaying = true;
+    _world?.ClearPlayerMotionTrails();
     ApplyCurrentFrame();
   }
 
@@ -113,7 +114,13 @@ public sealed class ReplayPlayer
       return;
     }
 
-    _frameIndex = Math.Clamp(frameIndex, 0, _data.Frames.Length - 1);
+    int nextIndex = Math.Clamp(frameIndex, 0, _data.Frames.Length - 1);
+    if (nextIndex != _frameIndex + 1)
+    {
+      _world?.ClearPlayerMotionTrails();
+    }
+
+    _frameIndex = nextIndex;
     ApplyCurrentFrame();
   }
 
@@ -134,6 +141,7 @@ public sealed class ReplayPlayer
 
       _frameIndex = 0;
       _loopCount++;
+      _world?.ClearPlayerMotionTrails();
     }
     else
     {

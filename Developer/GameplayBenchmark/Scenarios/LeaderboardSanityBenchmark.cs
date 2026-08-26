@@ -38,21 +38,39 @@ public sealed class LeaderboardSanityBenchmark : BenchmarkScenario
 
     private static void AssertWallRatio(List<BenchmarkAssertion> assertions)
     {
-        // Legacy / absent → fail-open.
-        bool legacyOk = LeaderboardSanity.TryValidateActiveWallRatio(0f, 10f, out string legacyReason);
-        assertions.Add(legacyOk
-            ? BenchmarkAssertion.Pass("wall.legacy_skip", "ActiveWallSeconds=0 skips wall check.")
-            : BenchmarkAssertion.Fail("wall.legacy_skip", legacyReason));
+        // Missing wall → fail-closed (no Steam upload).
+        bool legacyRejected = !LeaderboardSanity.TryValidateActiveWallRatio(0f, 10f, out string legacyReason);
+        assertions.Add(legacyRejected
+            ? BenchmarkAssertion.Pass("wall.legacy_reject", "ActiveWallSeconds=0 rejected (fail-closed).")
+            : BenchmarkAssertion.Fail("wall.legacy_reject", "Expected reject for ActiveWallSeconds=0."));
 
         bool inBand = LeaderboardSanity.TryValidateActiveWallRatio(10.5f, 10f, out string inBandReason);
         assertions.Add(inBand
             ? BenchmarkAssertion.Pass("wall.in_band", "Ratio ~1.05 accepted.", 1.05f)
             : BenchmarkAssertion.Fail("wall.in_band", inBandReason));
 
+        // Just inside new MaxActiveWallRatio (1.25).
+        bool nearMax = LeaderboardSanity.TryValidateActiveWallRatio(12.4f, 10f, out string nearMaxReason);
+        assertions.Add(nearMax
+            ? BenchmarkAssertion.Pass("wall.near_max", "Ratio 1.24 accepted.", 1.24f)
+            : BenchmarkAssertion.Fail("wall.near_max", nearMaxReason));
+
+        // Just inside new MinActiveWallRatio (0.85).
+        bool nearMin = LeaderboardSanity.TryValidateActiveWallRatio(8.6f, 10f, out string nearMinReason);
+        assertions.Add(nearMin
+            ? BenchmarkAssertion.Pass("wall.near_min", "Ratio 0.86 accepted.", 0.86f)
+            : BenchmarkAssertion.Fail("wall.near_min", nearMinReason));
+
         bool slowMo = LeaderboardSanity.TryValidateActiveWallRatio(20f, 10f, out string slowReason);
         assertions.Add(!slowMo
             ? BenchmarkAssertion.Pass("wall.slowmo_reject", "Slow-mo ratio rejected.", 2f)
             : BenchmarkAssertion.Fail("wall.slowmo_reject", "Expected reject for wall/score=2."));
+
+        // Old band allowed 1.40; new Max=1.25 must reject.
+        bool oldBandSlow = LeaderboardSanity.TryValidateActiveWallRatio(14f, 10f, out _);
+        assertions.Add(!oldBandSlow
+            ? BenchmarkAssertion.Pass("wall.tight_max_reject", "Ratio 1.40 rejected under Max=1.25.", 1.4f)
+            : BenchmarkAssertion.Fail("wall.tight_max_reject", "Expected reject for wall/score=1.40."));
 
         bool fastFwd = LeaderboardSanity.TryValidateActiveWallRatio(5f, 10f, out string fastReason);
         assertions.Add(!fastFwd

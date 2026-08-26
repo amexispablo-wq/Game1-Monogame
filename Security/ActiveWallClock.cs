@@ -1,29 +1,27 @@
 #nullable enable
-using System.Diagnostics;
+using System;
 
 namespace ColorBlocks;
 
 /// <summary>
 /// Wall-clock that only accumulates during active gameplay (timer running, unpaused,
-/// focused). Used for upload-only speedhack checks — never alters simulation.
+/// focused). Fed trusted frame deltas from <see cref="TrustedFrameClock"/> — never
+/// alters simulation. Used for upload-only speedhack checks.
 /// </summary>
 public sealed class ActiveWallClock
 {
-    private readonly Stopwatch _stopwatch = new();
+    private double _elapsedSeconds;
+    private bool _accumulating;
     private bool _captured;
-    private double _capturedSeconds;
 
     /// <summary>Seconds accumulated for the current (or last captured) attempt.</summary>
-    public float ElapsedSeconds =>
-        _captured
-            ? (float)_capturedSeconds
-            : (float)_stopwatch.Elapsed.TotalSeconds;
+    public float ElapsedSeconds => (float)_elapsedSeconds;
 
     public void Reset()
     {
-        _stopwatch.Reset();
+        _elapsedSeconds = 0d;
+        _accumulating = false;
         _captured = false;
-        _capturedSeconds = 0d;
     }
 
     /// <summary>
@@ -37,20 +35,25 @@ public sealed class ActiveWallClock
             return;
         }
 
-        if (shouldAccumulate)
-        {
-            if (!_stopwatch.IsRunning)
-            {
-                _stopwatch.Start();
-            }
+        _accumulating = shouldAccumulate;
+    }
 
+    /// <summary>
+    /// Add one frame of trusted wall time when accumulating.
+    /// </summary>
+    public void AddDelta(float deltaSeconds)
+    {
+        if (_captured || !_accumulating)
+        {
             return;
         }
 
-        if (_stopwatch.IsRunning)
+        if (!float.IsFinite(deltaSeconds) || deltaSeconds <= 0f)
         {
-            _stopwatch.Stop();
+            return;
         }
+
+        _elapsedSeconds += deltaSeconds;
     }
 
     /// <summary>Freeze the value at level complete for replay metadata / upload.</summary>
@@ -61,8 +64,7 @@ public sealed class ActiveWallClock
             return;
         }
 
-        _stopwatch.Stop();
-        _capturedSeconds = _stopwatch.Elapsed.TotalSeconds;
+        _accumulating = false;
         _captured = true;
     }
 }

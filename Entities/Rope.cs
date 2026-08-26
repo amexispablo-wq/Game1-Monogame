@@ -22,6 +22,7 @@ public sealed class Rope : INetworkEntity
 
     private readonly IReadOnlyList<Player> _colorPlayers;
     private readonly List<Platform> _collidableScratch = new();
+    private Vector2[] _renderPreviousPositions = Array.Empty<Vector2>();
     private float _baseRestLength;
     private float _targetRestLength;
     private float _currentRestLength;
@@ -172,6 +173,49 @@ public sealed class Rope : INetworkEntity
         LastPulledNodeCount = snapshot.PulledNodeCount;
         RefreshGameplayModeState();
         UpdateDerivedMetrics(GetPlayerAnchor(StartPlayer), GetPlayerAnchor(EndPlayer));
+        SyncRenderPreviousToCurrent();
+    }
+
+    public void CaptureRenderPrevious()
+    {
+        EnsureRenderPreviousBuffer();
+        for (int i = 0; i < Nodes.Count; i++)
+        {
+            _renderPreviousPositions[i] = Nodes[i].Position;
+        }
+    }
+
+    public void SyncRenderPreviousToCurrent()
+    {
+        EnsureRenderPreviousBuffer();
+        for (int i = 0; i < Nodes.Count; i++)
+        {
+            _renderPreviousPositions[i] = Nodes[i].Position;
+        }
+    }
+
+    public Vector2 GetDrawNodePosition(int index, float alpha, Vector2 startAnchor, Vector2 endAnchor)
+    {
+        if (Nodes.Count == 0)
+        {
+            return startAnchor;
+        }
+
+        if (index <= 0)
+        {
+            return startAnchor;
+        }
+
+        if (index >= Nodes.Count - 1)
+        {
+            return endAnchor;
+        }
+
+        float t = MathHelper.Clamp(alpha, 0f, 1f);
+        Vector2 prev = index < _renderPreviousPositions.Length
+            ? _renderPreviousPositions[index]
+            : Nodes[index].Position;
+        return Vector2.Lerp(prev, Nodes[index].Position, t);
     }
 
     public void RefreshVisualState()
@@ -188,6 +232,7 @@ public sealed class Rope : INetworkEntity
         LastPulledNodeCount = 0;
         TensionPhase = RopeTensionPhase.Slack;
         IsPulling = false;
+        SyncRenderPreviousToCurrent();
     }
 
     public void Simulate(
@@ -288,33 +333,33 @@ public sealed class Rope : INetworkEntity
         }
     }
 
-    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw)
+    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, float interpolationAlpha = 1f)
     {
-        Vector2 startAnchor = GetPlayerAnchor(StartPlayer);
-        Vector2 endAnchor = GetPlayerAnchor(EndPlayer);
-        if (Nodes.Count >= 2)
-        {
-            Nodes[0].Position = startAnchor;
-            Nodes[^1].Position = endAnchor;
-        }
+        float alpha = MathHelper.Clamp(interpolationAlpha, 0f, 1f);
+        EnsureRenderPreviousBuffer();
 
-        UpdateDerivedMetrics(startAnchor, endAnchor);
+        Vector2 startAnchor = GetPlayerDrawAnchor(StartPlayer, alpha);
+        Vector2 endAnchor = GetPlayerDrawAnchor(EndPlayer, alpha);
 
         Color ropeColor = GetVisibleRopeColor();
         float tensionVisual = MathHelper.Clamp(FeedbackIntensity, 0f, 1f);
         int thickness = 8 + (int)MathF.Round(tensionVisual * 3f);
         Color feedbackColor = ropeColor;
 
-        if (Constraints.Count == 0)
+        if (Nodes.Count < 2 || Constraints.Count == 0)
         {
             DrawLine(spriteBatch, pixel, startAnchor, endAnchor, Color.Black * 0.8f, thickness + 2);
             DrawLine(spriteBatch, pixel, startAnchor, endAnchor, feedbackColor, thickness);
         }
-
-        foreach (RopeConstraint constraint in Constraints)
+        else
         {
-            DrawLine(spriteBatch, pixel, constraint.A.Position, constraint.B.Position, Color.Black * 0.8f, thickness + 2);
-            DrawLine(spriteBatch, pixel, constraint.A.Position, constraint.B.Position, feedbackColor, thickness);
+            for (int i = 0; i < Nodes.Count - 1; i++)
+            {
+                Vector2 a = GetDrawNodePosition(i, alpha, startAnchor, endAnchor);
+                Vector2 b = GetDrawNodePosition(i + 1, alpha, startAnchor, endAnchor);
+                DrawLine(spriteBatch, pixel, a, b, Color.Black * 0.8f, thickness + 2);
+                DrawLine(spriteBatch, pixel, a, b, feedbackColor, thickness);
+            }
         }
 
         if (!debugDraw)
@@ -322,12 +367,14 @@ public sealed class Rope : INetworkEntity
             return;
         }
 
-        foreach (RopeNode node in Nodes)
+        for (int i = 0; i < Nodes.Count; i++)
         {
+            RopeNode node = Nodes[i];
+            Vector2 drawPos = GetDrawNodePosition(i, alpha, startAnchor, endAnchor);
             int size = node.IsPinned ? 8 : 6;
             Rectangle bounds = new(
-                (int)MathF.Round(node.Position.X) - (size / 2),
-                (int)MathF.Round(node.Position.Y) - (size / 2),
+                (int)MathF.Round(drawPos.X) - (size / 2),
+                (int)MathF.Round(drawPos.Y) - (size / 2),
                 size,
                 size);
             Color fill = node.IsPinned ? Color.White : node.IsColliding ? new Color(255, 168, 64) : Color.Yellow;
@@ -1188,6 +1235,33 @@ public sealed class Rope : INetworkEntity
     private static Vector2 GetPlayerAnchor(Player player)
     {
         return player.Position + (player.Size * 0.5f);
+    }
+
+    private static Vector2 GetPlayerDrawAnchor(Player player, float alpha)
+    {
+        return player.GetDrawPosition(alpha) + (player.Size * 0.5f);
+    }
+
+    private void EnsureRenderPreviousBuffer()
+    {
+        if (_renderPreviousPositions.Length == Nodes.Count)
+        {
+            return;
+        }
+
+        var next = new Vector2[Nodes.Count];
+        int copy = Math.Min(_renderPreviousPositions.Length, next.Length);
+        for (int i = 0; i < copy; i++)
+        {
+            next[i] = _renderPreviousPositions[i];
+        }
+
+        for (int i = copy; i < next.Length; i++)
+        {
+            next[i] = Nodes[i].Position;
+        }
+
+        _renderPreviousPositions = next;
     }
 
     private static bool IsFinite(Vector2 value)

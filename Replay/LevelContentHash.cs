@@ -1,8 +1,6 @@
 #nullable enable
 using System;
 using System.IO;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace ColorBlocks.Replay;
 
@@ -18,9 +16,7 @@ public static class LevelContentHash
 
     try
     {
-      byte[] bytes = File.ReadAllBytes(metadata.FilePath);
-      byte[] hash = SHA256.HashData(bytes);
-      return Convert.ToHexString(hash);
+      return OfficialLevelManifest.ComputeFileHash(metadata.FilePath);
     }
     catch
     {

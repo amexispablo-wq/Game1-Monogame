@@ -123,6 +123,8 @@ public sealed class LevelSelectScene : IScene
     private Level? _selectedLevel;
     private Texture2D? _selectedLevelPreview;
     private string? _selectedLevelId;
+    private bool _pendingSelectedDetails;
+    private string? _pendingPreviewLevelId;
     private string _detailsLevelName = "";
     private string _detailsAuthorText = "";
     private string _detailsPlayersText = "";
@@ -149,6 +151,8 @@ public sealed class LevelSelectScene : IScene
         _focus.ResetFocus();
         RefreshLevelList();
         InitializeButtons();
+        ReplayFramePool.Prewarm(ReplayConstants.SessionBufferPrewarmFrames);
+        ReplayRopeState.Prewarm(ReplayConstants.SessionBufferPrewarmFrames * 3);
         if (_mode == LevelSelectMode.PlayMode
             && _game.LevelStartRouter.TryConsumePendingStartAlert(out string alertTitle, out string alertMessage))
         {
@@ -413,6 +417,19 @@ public sealed class LevelSelectScene : IScene
 
         HandleTabInput();
 
+        if (_pendingSelectedDetails)
+        {
+            _pendingSelectedDetails = false;
+            if (_selectedIndex.HasValue && _selectedIndex.Value >= 0 && _selectedIndex.Value < _levels.Count)
+            {
+                UpdateSelectedLevelDetails();
+            }
+        }
+        else
+        {
+            FlushPendingPreview();
+        }
+
         if (_mode == LevelSelectMode.PlayMode
             && _game.SteamWorkshop.ChangeStamp != _workshopChangeStamp)
         {
@@ -514,6 +531,7 @@ public sealed class LevelSelectScene : IScene
 
         if (_primaryFocus?.WasActivated == true && _selectedIndex.HasValue && CanActivatePrimary())
         {
+            FlushPendingSelectionForPlay();
             HandlePrimaryAction();
             return;
         }
@@ -568,7 +586,8 @@ public sealed class LevelSelectScene : IScene
                 string levelId = _levels[selectedIndex].Id;
                 if (_selectedLevelId != levelId)
                 {
-                    UpdateSelectedLevelDetails();
+                    HitchProfiler.Begin("select", _game.Party.Members.Count, levelId);
+                    _pendingSelectedDetails = true;
                 }
             }
         }
@@ -1847,13 +1866,15 @@ public sealed class LevelSelectScene : IScene
 
             try
             {
+                HitchProfiler.Begin("enter", _game.Party.Members.Count, levelId);
                 _game.ChangeScene(new GameScene(
                     _game,
                     levelId,
                     s_selectedRopeMode,
                     s_lavaRiseEnabled,
                     s_ghostMode,
-                    s_playerCollisionEnabled));
+                    s_playerCollisionEnabled,
+                    levelOverride: _selectedLevel));
             }
             catch (LevelIntegrityException ex)
             {
@@ -2191,7 +2212,11 @@ public sealed class LevelSelectScene : IScene
 
         LevelMetadata metadata = _levels[_selectedIndex.Value];
         _selectedLevelId = metadata.Id;
-        Level? loaded = LevelLibrary.TryLoadLevel(metadata.Id);
+        Level? loaded;
+        using (HitchProfiler.Scope("TryLoadLevel"))
+        {
+            loaded = LevelLibrary.TryLoadLevel(metadata.Id);
+        }
         if (loaded is null)
         {
             _selectedLevel = null;
@@ -2204,9 +2229,49 @@ public sealed class LevelSelectScene : IScene
         }
 
         _selectedLevel = loaded;
-        _selectedLevelPreview = LevelPreviewManager.GetPreview(_game.GraphicsDevice, _game.Pixel, _selectedLevel, metadata.Id);
-        RefreshDetailsPanelCache();
+        if (LevelPreviewManager.TryGetCachedPreview(metadata.Id, out Texture2D? cachedPreview))
+        {
+            _selectedLevelPreview = cachedPreview;
+            _pendingPreviewLevelId = null;
+        }
+        else
+        {
+            _pendingPreviewLevelId = metadata.Id;
+        }
+
+        using (HitchProfiler.Scope("RefreshDetailsPanelCache"))
+        {
+            RefreshDetailsPanelCache();
+        }
         ApplyLevelPlayDefaults(_selectedLevel);
+    }
+
+    private void FlushPendingPreview()
+    {
+        if (_pendingPreviewLevelId is null
+            || _selectedLevel is null
+            || _pendingPreviewLevelId != _selectedLevelId)
+        {
+            return;
+        }
+
+        using (HitchProfiler.Scope("GetPreview"))
+        {
+            _selectedLevelPreview = LevelPreviewManager.GetPreview(
+                _game.GraphicsDevice,
+                _game.Pixel,
+                _selectedLevel,
+                _pendingPreviewLevelId);
+        }
+
+        _pendingPreviewLevelId = null;
+    }
+
+    private void FlushPendingSelectionForPlay()
+    {
+        _pendingSelectedDetails = false;
+        UpdateSelectedLevelDetails();
+        _pendingPreviewLevelId = null;
     }
 
     private void RefreshDetailsPanelCache()
@@ -2425,6 +2490,7 @@ public sealed class LevelSelectScene : IScene
             syncPlayers,
             roundedLocal,
             steamWorldRecordSeconds: steamWorldRecord,
+            deferShareUntilIdle: true,
             onComplete: success =>
             {
                 if (_selectedLevelId != syncLevelId)

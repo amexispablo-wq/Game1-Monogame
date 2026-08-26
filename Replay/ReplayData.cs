@@ -18,7 +18,7 @@ public sealed class ReplayHeader
   public int TicksPerSecond { get; init; } = ReplayConstants.DefaultTicksPerSecond;
   public float LavaRiseSpeed { get; init; }
   public float LavaStartSurfaceY { get; init; }
-  public LevelData? RecordedLevel { get; init; }
+  public LevelData? RecordedLevel { get; set; }
 }
 
 /// <summary>Per-power-up runtime state captured each replay frame (pickup / respawn).</summary>

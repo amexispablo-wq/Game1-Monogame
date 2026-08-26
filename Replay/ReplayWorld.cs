@@ -59,10 +59,18 @@ public sealed class ReplayWorld
 
   public void ApplyFrame(ReplayFrameSnapshot frame)
   {
+    float tickSeconds = 1f / Math.Max(1, Header.TicksPerSecond);
+
     foreach (PlayerSnapshot playerSnapshot in frame.Players)
     {
       Player? player = FindPlayer(playerSnapshot.NetworkId);
-      player?.ApplySnapshot(playerSnapshot);
+      if (player is null)
+      {
+        continue;
+      }
+
+      player.ApplySnapshot(playerSnapshot);
+      player.UpdateMotionTrail(tickSeconds);
     }
 
     foreach (RopeSnapshot ropeSnapshot in frame.Ropes)
@@ -79,7 +87,6 @@ public sealed class ReplayWorld
     ElapsedTime = frame.Timer.ElapsedTime;
     LavaSurfaceY = frame.LavaSurfaceY;
 
-    float tickSeconds = 1f / Math.Max(1, Header.TicksPerSecond);
     float timeSeconds = frame.Tick * tickSeconds;
     foreach (Platform platform in Level.Platforms)
     {
@@ -138,6 +145,14 @@ public sealed class ReplayWorld
     {
       ReplayPowerUpRuntimeSnapshot snapshot = powerUpSnapshots[i];
       Level.PowerUps[i].ApplyRuntimeState(snapshot.IsAvailable, snapshot.RespawnRemaining);
+    }
+  }
+
+  public void ClearPlayerMotionTrails()
+  {
+    foreach (Player player in Players)
+    {
+      player.ClearMotionTrail();
     }
   }
 

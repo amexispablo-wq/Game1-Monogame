@@ -13,6 +13,24 @@ public static class LevelLibrary
 {
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
     private static bool _initialized;
+    private static readonly Dictionary<string, CachedLevelData> LevelDataCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly struct CachedLevelData
+    {
+        public CachedLevelData(long writeTicks, long length, LevelData data, bool verified)
+        {
+            WriteTicks = writeTicks;
+            Length = length;
+            Data = data;
+            Verified = verified;
+        }
+
+        public long WriteTicks { get; }
+        public long Length { get; }
+        public LevelData Data { get; }
+        public bool Verified { get; }
+    }
 
     public static void Initialize()
     {
@@ -106,13 +124,37 @@ public static class LevelLibrary
 
     public static Level LoadLevel(string levelId)
     {
+        return LoadLevel(levelId, verifyIntegrity: true);
+    }
+
+    public static Level LoadLevel(string levelId, bool verifyIntegrity)
+    {
         LevelMetadata? metadata = GetLevel(levelId);
         if (metadata is null)
         {
             return Level.CreateDefault();
         }
 
-        if (metadata.Source == LevelSource.Official
+        if (TryGetCachedLevelData(metadata, out CachedLevelData cached))
+        {
+            if (verifyIntegrity && metadata.Source == LevelSource.Official && !cached.Verified)
+            {
+                if (!OfficialLevelManifest.VerifyLevelFile(levelId, metadata.FilePath, out string cachedReason))
+                {
+                    throw new LevelIntegrityException(
+                        levelId,
+                        "Official level files were modified. Verify integrity of game files in Steam.",
+                        cachedReason);
+                }
+
+                StoreCachedLevelData(levelId, metadata.FilePath, cached.Data, verified: true);
+            }
+
+            return Level.FromData(cached.Data);
+        }
+
+        if (verifyIntegrity
+            && metadata.Source == LevelSource.Official
             && !OfficialLevelManifest.VerifyLevelFile(levelId, metadata.FilePath, out string manifestReason))
         {
             throw new LevelIntegrityException(
@@ -149,6 +191,11 @@ public static class LevelLibrary
                         return Level.CreateDefault();
                     }
 
+                    StoreCachedLevelData(
+                        levelId,
+                        metadata.FilePath,
+                        data,
+                        verified: verifyIntegrity || metadata.Source != LevelSource.Official);
                     return Level.FromData(data);
                 }
             }
@@ -178,12 +225,40 @@ public static class LevelLibrary
     {
         try
         {
-            return LoadLevel(levelId);
+            return LoadLevel(levelId, verifyIntegrity: false);
         }
         catch (LevelIntegrityException ex)
         {
             DiagnosticsLog.Info("LevelLibrary", $"TryLoadLevel blocked {levelId}: {ex.UserMessage}");
             return null;
+        }
+    }
+
+    /// <summary>Hash-check official files before play when the UI load skipped integrity.</summary>
+    public static void EnsureOfficialIntegrity(string levelId)
+    {
+        LevelMetadata? metadata = GetLevel(levelId);
+        if (metadata is null || metadata.Source != LevelSource.Official)
+        {
+            return;
+        }
+
+        if (TryGetCachedLevelData(metadata, out CachedLevelData cached) && cached.Verified)
+        {
+            return;
+        }
+
+        if (!OfficialLevelManifest.VerifyLevelFile(levelId, metadata.FilePath, out string reason))
+        {
+            throw new LevelIntegrityException(
+                levelId,
+                "Official level files were modified. Verify integrity of game files in Steam.",
+                reason);
+        }
+
+        if (TryGetCachedLevelData(metadata, out cached))
+        {
+            StoreCachedLevelData(levelId, metadata.FilePath, cached.Data, verified: true);
         }
     }
 
@@ -243,6 +318,7 @@ public static class LevelLibrary
 
             string json = JsonSerializer.Serialize(data, JsonOptions);
             AtomicFileWriter.WriteAllText(metadata.FilePath, json);
+            InvalidateLevelDataCache(levelId);
             if (metadata.Source == LevelSource.Official)
             {
                 OfficialLevelManifest.ResetCache();
@@ -762,6 +838,35 @@ public static class LevelLibrary
         }
 
         return LevelContentPaths.GetLevelsRoot(source);
+    }
+
+    private static bool TryGetCachedLevelData(LevelMetadata metadata, out CachedLevelData cached)
+    {
+        cached = default;
+        if (!File.Exists(metadata.FilePath)
+            || !LevelDataCache.TryGetValue(metadata.Id, out cached))
+        {
+            return false;
+        }
+
+        var info = new FileInfo(metadata.FilePath);
+        return cached.WriteTicks == info.LastWriteTimeUtc.Ticks && cached.Length == info.Length;
+    }
+
+    private static void StoreCachedLevelData(string levelId, string filePath, LevelData data, bool verified)
+    {
+        if (!File.Exists(filePath))
+        {
+            return;
+        }
+
+        var info = new FileInfo(filePath);
+        LevelDataCache[levelId] = new CachedLevelData(info.LastWriteTimeUtc.Ticks, info.Length, data, verified);
+    }
+
+    private static void InvalidateLevelDataCache(string levelId)
+    {
+        LevelDataCache.Remove(levelId);
     }
 
     private static JsonSerializerOptions CreateJsonOptions()

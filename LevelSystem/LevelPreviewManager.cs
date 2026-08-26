@@ -25,6 +25,17 @@ public static class LevelPreviewManager
         PreviewCache.Clear();
     }
 
+    public static bool TryGetCachedPreview(string levelId, out Texture2D? preview)
+    {
+        if (PreviewCache.TryGetValue(levelId, out preview) && preview is { IsDisposed: false })
+        {
+            return true;
+        }
+
+        preview = null;
+        return false;
+    }
+
     public static Texture2D GetPreview(GraphicsDevice graphicsDevice, Texture2D pixel, Level level, string levelId)
     {
         if (PreviewCache.TryGetValue(levelId, out Texture2D? cached) && cached is { IsDisposed: false })
@@ -32,9 +43,35 @@ public static class LevelPreviewManager
             return cached;
         }
 
-        // Always regenerate from the in-memory level. On-disk PNGs are only a
-        // side artifact and may be stale (older builds saved blank previews).
-        return GenerateAndSavePreview(graphicsDevice, pixel, level, levelId);
+        Texture2D? fromDisk;
+        using (HitchProfiler.Scope("GetPreview.disk"))
+        {
+            fromDisk = TryLoadDiskPreview(graphicsDevice, level, levelId);
+        }
+
+        if (fromDisk is not null)
+        {
+            PreviewCache[levelId] = fromDisk;
+            return fromDisk;
+        }
+
+        // Palette previews are RAM-only so they do not overwrite the Normal PNG.
+        if (ColorPaletteManager.CurrentMode != ColorMode.Normal)
+        {
+            Texture2D generated;
+            using (HitchProfiler.Scope("GetPreview.generate"))
+            {
+                generated = GeneratePreview(graphicsDevice, pixel, level);
+            }
+
+            PreviewCache[levelId] = generated;
+            return generated;
+        }
+
+        using (HitchProfiler.Scope("GetPreview.generate"))
+        {
+            return GenerateAndSavePreview(graphicsDevice, pixel, level, levelId);
+        }
     }
 
     public static Texture2D GenerateAndSavePreview(GraphicsDevice graphicsDevice, Texture2D pixel, Level level, string levelId)
@@ -227,6 +264,55 @@ public static class LevelPreviewManager
         texture.SetData(data);
         using FileStream writeStream = File.Create(destinationPath);
         texture.SaveAsPng(writeStream, size, size);
+    }
+
+    private static Texture2D? TryLoadDiskPreview(GraphicsDevice graphicsDevice, Level level, string levelId)
+    {
+        if (ColorPaletteManager.CurrentMode != ColorMode.Normal)
+        {
+            return null;
+        }
+
+        string previewsDir = GetPreviewDirectory(levelId);
+        string previewPath = GetPreviewPath(levelId, level.Name);
+        RenamePreviousPreviewFiles(previewsDir, levelId, previewPath);
+        if (!File.Exists(previewPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            if (new FileInfo(previewPath).Length < 1024)
+            {
+                return null;
+            }
+
+            LevelMetadata? metadata = LevelLibrary.GetLevel(levelId);
+            if (metadata is not null && File.Exists(metadata.FilePath))
+            {
+                DateTime previewTime = File.GetLastWriteTimeUtc(previewPath);
+                DateTime levelTime = File.GetLastWriteTimeUtc(metadata.FilePath);
+                if (previewTime < levelTime)
+                {
+                    return null;
+                }
+            }
+
+            Texture2D loaded = Texture2D.FromFile(graphicsDevice, previewPath);
+            if (loaded.Width != PreviewWidth || loaded.Height != PreviewHeight)
+            {
+                loaded.Dispose();
+                return null;
+            }
+
+            return loaded;
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsLog.Info("LevelPreview", $"Load UI preview failed level={levelId} path='{previewPath}': {ex.Message}");
+            return null;
+        }
     }
 
     private static void RenamePreviousPreviewFiles(string previewsDir, string levelId, string previewPath)

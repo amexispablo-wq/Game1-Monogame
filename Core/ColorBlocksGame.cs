@@ -414,6 +414,7 @@ public class ColorBlocksGame : Game
 
     protected override void Update(GameTime gameTime)
     {
+        HitchProfiler.BeginFrame(_currentScene?.GetType().Name ?? "none", Party.Members.Count);
         _steam.RunCallbacks();
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
         // Before Input.Update so the same frame can see pads plugged after launch.
@@ -460,6 +461,8 @@ public class ColorBlocksGame : Game
             _currentScene.Update(gameTime);
         }
 
+        HitchProfiler.EndUpdate();
+        MainThreadActions.Pump(allowIdle: _currentScene is not GameScene);
         base.Update(gameTime);
     }
 
@@ -486,6 +489,7 @@ public class ColorBlocksGame : Game
         }
 
         ReplayDebugOverlay.Draw(_spriteBatch, _pixel, Viewport);
+        HitchProfiler.Draw(_spriteBatch, _pixel);
         _partyInvitePopup?.Draw(gameTime, _spriteBatch, _pixel);
         _spriteBatch.End();
 
@@ -494,6 +498,7 @@ public class ColorBlocksGame : Game
 
         _presentation.EndDraw(GraphicsDevice, _spriteBatch, _pixel, new Color(23, 27, 34));
 
+        HitchProfiler.EndDraw();
         base.Draw(gameTime);
     }
 

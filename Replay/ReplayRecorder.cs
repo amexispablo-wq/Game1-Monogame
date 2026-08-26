@@ -12,7 +12,6 @@ public sealed class ReplayRecorder
 {
   private readonly ReplayBuffer _ringBuffer;
   private readonly ReplaySessionBuffer _sessionBuffer;
-  private readonly ReplayFrame _scratchFrame = new();
   private ReplayHeader? _header;
   private ReplayRecordingMode _mode = ReplayRecordingMode.FullSession;
   private bool _isRecording;
@@ -59,6 +58,21 @@ public sealed class ReplayRecorder
 
   public void StopRecording() => _isRecording = false;
 
+  public void AttachRecordedLevel(LevelData? recordedLevel)
+  {
+    if (_header is not null)
+    {
+      _header.RecordedLevel = recordedLevel;
+    }
+  }
+
+  public void Recycle()
+  {
+    _isRecording = false;
+    _sessionBuffer.Recycle();
+    _ringBuffer.Recycle();
+  }
+
   public void ResetSession()
   {
     if (_mode == ReplayRecordingMode.RingBuffer)
@@ -78,14 +92,13 @@ public sealed class ReplayRecorder
       return;
     }
 
-    _scratchFrame.CopyFrom(simulation, camera);
     if (_mode == ReplayRecordingMode.RingBuffer)
     {
-      _ringBuffer.Write(_scratchFrame);
+      _ringBuffer.WriteFrom(simulation, camera);
     }
     else
     {
-      _sessionBuffer.Write(_scratchFrame);
+      _sessionBuffer.WriteFrom(simulation, camera);
     }
   }
 

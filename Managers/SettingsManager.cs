@@ -36,8 +36,14 @@ public static class SettingsManager
                 GameSettings? loaded = JsonSerializer.Deserialize<GameSettings>(json, JsonOptions);
                 if (loaded != null)
                 {
+                    int mixVersion = loaded.AudioMixVersion;
                     _currentSettings = NormalizeSettings(loaded);
                     ColorPaletteManager.ApplySettings(_currentSettings.ColorMode);
+                    if (mixVersion < GameSettings.CurrentAudioMixVersion)
+                    {
+                        SaveSettings(_currentSettings);
+                    }
+
                     return;
                 }
             }
@@ -121,6 +127,19 @@ public static class SettingsManager
             settings.Keybindings["PullRope"] = defaults.Keybindings["PullRope"];
         }
 
+        if (settings.AudioMixVersion < GameSettings.CurrentAudioMixVersion)
+        {
+            settings.MusicVolume = 0.5f;
+            string[] mixKeys = new string[settings.SoundEffects.Count];
+            settings.SoundEffects.Keys.CopyTo(mixKeys, 0);
+            foreach (string key in mixKeys)
+            {
+                settings.SoundEffects[key] = 0.5f;
+            }
+
+            settings.AudioMixVersion = GameSettings.CurrentAudioMixVersion;
+        }
+
         return settings;
     }
 
@@ -132,8 +151,10 @@ public static class SettingsManager
             ResolutionWidth = source.ResolutionWidth,
             ResolutionHeight = source.ResolutionHeight,
             MusicVolume = source.MusicVolume,
+            AudioMixVersion = source.AudioMixVersion,
             ContinueMenuMusicInLevels = source.ContinueMenuMusicInLevels,
             ShowControlsHud = source.ShowControlsHud,
+            ShowSpawnCountdown = source.ShowSpawnCountdown,
             FpsLimit = source.FpsLimit,
             Keybindings = new Dictionary<string, string>(source.Keybindings),
             GamepadBindings = new Dictionary<string, string>(source.GamepadBindings),

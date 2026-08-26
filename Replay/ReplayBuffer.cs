@@ -6,18 +6,14 @@ namespace ColorBlocks.Replay;
 /// <summary>Fixed-capacity ring buffer that overwrites the oldest frame once full.</summary>
 public sealed class ReplayBuffer
 {
-  private readonly ReplayFrame[] _frames;
+  private readonly ReplayFrame?[] _frames;
   private int _writeIndex;
   private int _count;
 
   public ReplayBuffer(int capacity)
   {
     Capacity = capacity;
-    _frames = new ReplayFrame[capacity];
-    for (int i = 0; i < capacity; i++)
-    {
-      _frames[i] = new ReplayFrame();
-    }
+    _frames = new ReplayFrame?[capacity];
   }
 
   public int Capacity { get; }
@@ -29,7 +25,7 @@ public sealed class ReplayBuffer
     for (int i = 0; i < _count; i++)
     {
       int index = GetChronologicalIndex(i);
-      _frames[index].ReleaseRopeStates();
+      _frames[index]?.ReleaseRopeStates();
     }
 
     _writeIndex = 0;
@@ -38,7 +34,7 @@ public sealed class ReplayBuffer
 
   public void Write(ReplayFrame source)
   {
-    ReplayFrame slot = _frames[_writeIndex];
+    ReplayFrame slot = _frames[_writeIndex] ??= ReplayFramePool.Rent();
     slot.ReleaseRopeStates();
     slot.CopyFrom(source);
     _writeIndex = (_writeIndex + 1) % Capacity;
@@ -48,9 +44,36 @@ public sealed class ReplayBuffer
     }
   }
 
+  public void WriteFrom(GameSimulation simulation, Camera camera)
+  {
+    ReplayFrame slot = _frames[_writeIndex] ??= ReplayFramePool.Rent();
+    slot.CopyFrom(simulation, camera);
+    _writeIndex = (_writeIndex + 1) % Capacity;
+    if (_count < Capacity)
+    {
+      _count++;
+    }
+  }
+
   public ReplayFrame GetChronological(int chronologicalIndex)
   {
-    return _frames[GetChronologicalIndex(chronologicalIndex)];
+    ReplayFrame? frame = _frames[GetChronologicalIndex(chronologicalIndex)];
+    return frame ?? throw new InvalidOperationException($"Ring frame {chronologicalIndex} was not allocated.");
+  }
+
+  public void Recycle()
+  {
+    Clear();
+    for (int i = 0; i < _frames.Length; i++)
+    {
+      if (_frames[i] is ReplayFrame frame)
+      {
+        ReplayFramePool.Return(frame);
+        _frames[i] = null;
+      }
+    }
+
+    _writeIndex = 0;
   }
 
   private int GetChronologicalIndex(int chronologicalIndex)

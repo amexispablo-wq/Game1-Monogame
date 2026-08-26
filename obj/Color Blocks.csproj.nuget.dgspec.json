@@ -10,7 +10,7 @@
         "projectUniqueName": "C:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj",
         "projectName": "Color Blocks",
         "projectPath": "C:\\Users\\amexi\\Desktop\\Color Blocks\\Color Blocks.csproj",
-        "packagesPath": "C:\\Users\\amexi\\AppData\\Local\\Temp\\cursor-sandbox-cache\\901bf7e37f8691741755af60b98e8b7a\\nuget",
+        "packagesPath": "C:\\Users\\amexi\\.nuget\\packages\\",
         "outputPath": "C:\\Users\\amexi\\Desktop\\Color Blocks\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
@@ -80,6 +80,14 @@
               "version": "[9.0.15, 9.0.15]"
             },
             {
+              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
+              "version": "[9.0.15, 9.0.15]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Crossgen2.win-x64",
+              "version": "[9.0.15, 9.0.15]"
+            },
+            {
               "name": "Microsoft.NETCore.App.Host.win-x64",
               "version": "[9.0.15, 9.0.15]"
             },
@@ -88,7 +96,15 @@
               "version": "[9.0.15, 9.0.15]"
             },
             {
+              "name": "Microsoft.NETCore.App.Runtime.win-x64",
+              "version": "[9.0.15, 9.0.15]"
+            },
+            {
               "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[9.0.15, 9.0.15]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
               "version": "[9.0.15, 9.0.15]"
             }
           ],
@@ -98,6 +114,11 @@
             }
           },
           "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.203/PortableRuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "win-x64": {
+          "#import": []
         }
       }
     }

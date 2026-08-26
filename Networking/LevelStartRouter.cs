@@ -134,13 +134,20 @@ public sealed class LevelStartRouter
         _applying = true;
         try
         {
-            Level level = LevelLibrary.LoadLevel(message.LevelId);
+            HitchProfiler.Begin("enter", _game.Party.Members.Count, message.LevelId);
+            Level level;
+            using (HitchProfiler.Scope("LoadLevel"))
+            {
+                level = LevelLibrary.LoadLevel(message.LevelId);
+            }
+
             _game.ChangeScene(new GameScene(
                 _game,
                 message.LevelId,
                 message.RopeMode,
                 message.LavaRiseEnabled,
-                playerCollisionEnabled: level.PlayerCollision));
+                playerCollisionEnabled: level.PlayerCollision,
+                levelOverride: level));
         }
         catch (LevelIntegrityException ex)
         {

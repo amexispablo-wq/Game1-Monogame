@@ -276,16 +276,18 @@ public sealed class SteamGhostService
         });
     }
 
-    /// <summary>Validates through the existing replay loader without deleting on hash mismatch.</summary>
+    /// <summary>True when a WR ghost file exists. Does not deserialize the replay.</summary>
     public bool HasCachedWorldRecordGhost(string levelId, int playerCount)
     {
         string path = GetWorldRecordGhostPath(levelId, playerCount);
-        if (!File.Exists(path))
+        try
+        {
+            return File.Exists(path) && new FileInfo(path).Length > 0;
+        }
+        catch
         {
             return false;
         }
-
-        return ReplayFileSerializer.TryLoad(path, invalidateOnHashMismatch: false) is not null;
     }
 
     public bool TryLoadWorldRecordGhost(string levelId, int playerCount, out ReplayFile replayFile)

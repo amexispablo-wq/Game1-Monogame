@@ -49,10 +49,13 @@ public sealed class GameScene : IScene
     private const float ClientSnapshotStallSeconds = 2f;
     private readonly ReplayRecorder _replayRecorder = new();
     private readonly ActiveWallClock _activeWallClock = new();
+    private readonly TrustedFrameClock _trustedClock = new();
     private readonly GhostPlayer? _ghostPlayer;
     private readonly GhostPlayer? _worldRecordGhost;
     private readonly GhostMode _ghostMode;
     private readonly bool _editorTestMode;
+    private bool _deferredStartApplied;
+    private bool _ghostsLoaded;
     private bool _exited;
     private bool _savedNewRecordReplay;
     private bool _persistedNewRecordReplay;
@@ -89,6 +92,7 @@ public sealed class GameScene : IScene
         _playerCollisionEnabled = playerCollisionEnabled;
         _ghostMode = editorTestMode ? GhostMode.None : ghostMode;
         _editorTestMode = editorTestMode;
+        HitchProfiler.Begin("enter", _game.Party.Members.Count, levelId);
         int localOwnerId = _game.SteamLobby.IsAvailable
             ? SteamOwnerId.FromSteamId(_game.SteamLobby.LocalSteamId)
             : NetworkOwners.HostOwnerId;
@@ -108,7 +112,18 @@ public sealed class GameScene : IScene
         _session.LavaRiseEnabled = lavaRiseEnabled;
         _session.PlayerCollisionEnabled = playerCollisionEnabled;
         MultiplayerDebug.LogSim($"LevelLoadStarted level={levelId} override={levelOverride is not null}");
-        _level = levelOverride ?? LevelLibrary.LoadLevel(levelId);
+        using (HitchProfiler.Scope(levelOverride is not null ? "EnsureOfficialIntegrity" : "LoadLevel"))
+        {
+            if (levelOverride is not null)
+            {
+                LevelLibrary.EnsureOfficialIntegrity(levelId);
+                _level = levelOverride;
+            }
+            else
+            {
+                _level = LevelLibrary.LoadLevel(levelId);
+            }
+        }
         MultiplayerDebug.LogSim($"LevelLoaded level={levelId} name='{_level.Name}'");
         _playerManager = new PlayerManager(_session, _level);
         _game.ActiveTuningPanel = _tuningPanel;
@@ -120,59 +135,54 @@ public sealed class GameScene : IScene
 
         if (_editorTestMode)
         {
-            _playerManager.SpawnSoloTest(_game.Party.Members, _game.Input);
+            using (HitchProfiler.Scope("SpawnSoloTest"))
+            {
+                _playerManager.SpawnSoloTest(_game.Party.Members, _game.Input);
+            }
         }
         else
         {
-            _playerManager.SpawnFromParty(_game.Party.Members, _game.Input, _game.SteamLobby);
+            using (HitchProfiler.Scope("SpawnFromParty"))
+            {
+                _playerManager.SpawnFromParty(_game.Party.Members, _game.Input, _game.SteamLobby);
+            }
         }
 
-        _simulation = new GameSimulation(_session, _level, _playerManager, lavaRiseEnabled, playerCollisionEnabled)
+        using (HitchProfiler.Scope("GameSimulation"))
         {
-            RecordProgress = !_editorTestMode
-        };
+            _simulation = new GameSimulation(
+                _session,
+                _level,
+                _playerManager,
+                lavaRiseEnabled,
+                playerCollisionEnabled,
+                spawnHold: _session.IsHost)
+            {
+                RecordProgress = !_editorTestMode
+            };
+        }
 
         MultiplayerDebug.ValidateGameplayStart(_game.SteamLobby, _game.Party, _session, _simulation);
         MultiplayerDebug.LogSim(
             $"GameplayInitialized level={levelId} role={_session.Role} " +
             $"players={_simulation.Players.Count} ropes={_simulation.Ropes.Count}");
-        MultiplayerDebug.DumpEntityState(_session, _simulation);
-        _camera = new Camera(GetPlayersCenter());
-        if (!_editorTestMode)
+        using (HitchProfiler.Scope("DumpEntityState"))
         {
-            _replayRecorder.StartRecording(
-                _levelId,
-                _ropeGameplayMode,
-                _lavaRiseEnabled,
-                _session.Settings.SimulationTicksPerSecond,
-                _simulation.LavaRiseSpeed,
-                _level.Lava?.SurfaceY ?? 0f,
-                _level.ToData(),
-                ReplayRecordingMode.FullSession);
-            ReplayDiagnostics.ActiveRecorder = _replayRecorder;
+            MultiplayerDebug.DumpEntityState(_session, _simulation);
         }
-
+        _camera = new Camera(GetPlayersCenter());
         _simulation.FixedTickCompleted += OnSimulationFixedTick;
         _simulation.LevelRestarted += OnLevelRestarted;
 
         if (_ghostMode.IncludesPersonalBest())
         {
             _ghostPlayer = new GhostPlayer();
-            _ghostPlayer.TryLoadBestRun(_levelId, _playerManager.Players.Count);
         }
 
         if (_ghostMode.IncludesWorldRecord() && SteamGhostService.SupportsWorldRecordGhost(_levelId))
         {
             _worldRecordGhost = new GhostPlayer { BorderColor = new Color(255, 210, 90) };
-            if (_game.SteamGhosts.TryLoadWorldRecordGhost(_levelId, _playerManager.Players.Count, out ReplayFile cachedWorldRecord))
-            {
-                _worldRecordGhost.TryLoadReplayFile(cachedWorldRecord);
-            }
         }
-
-        InputDiagnostics.SetGhostOverlayActive(
-            personalBest: _ghostPlayer is { IsActive: true },
-            worldRecord: _worldRecordGhost is { IsActive: true });
 
         // Official/Workshop levels always refresh the cached World Record ghost in the
         // background for this run's player count; if a newer ghost lands while playing,
@@ -234,6 +244,7 @@ public sealed class GameScene : IScene
             _game.Party.UnlockAssignments();
             _replayRecorder.StopRecording();
             FinalizeSessionRecording();
+            _replayRecorder.Recycle();
         }
 
         _game.Input.GameplayInputBlocked = false;
@@ -245,10 +256,16 @@ public sealed class GameScene : IScene
         // Stopping here forced a new menu track + MediaPlayer Stop/Play flap (scratched disc).
     }
 
+    private ReplayData? ExportSessionReplay()
+    {
+        _replayRecorder.AttachRecordedLevel(_level.ToData());
+        return _replayRecorder.ExportReplay();
+    }
+
     private void FinalizeSessionRecording()
     {
         PersistNewRecordIfNeeded();
-        ReplayData? session = _replayRecorder.ExportReplay();
+        ReplayData? session = ExportSessionReplay();
         if (session is null)
         {
             return;
@@ -274,7 +291,7 @@ public sealed class GameScene : IScene
             return;
         }
 
-        ReplayData? session = _replayRecorder.ExportReplay();
+        ReplayData? session = ExportSessionReplay();
         if (session is null)
         {
             return;
@@ -508,18 +525,77 @@ public sealed class GameScene : IScene
         GameAudio.UpdateLavaProximity(nearest);
     }
 
+    private void EnsureDeferredStart()
+    {
+        if (_editorTestMode)
+        {
+            _deferredStartApplied = true;
+            _ghostsLoaded = true;
+            return;
+        }
+
+        if (!_deferredStartApplied)
+        {
+            using (HitchProfiler.Scope("StartRecording"))
+            {
+                _replayRecorder.StartRecording(
+                    _levelId,
+                    _ropeGameplayMode,
+                    _lavaRiseEnabled,
+                    _session.Settings.SimulationTicksPerSecond,
+                    _simulation.LavaRiseSpeed,
+                    _level.Lava?.SurfaceY ?? 0f,
+                    recordedLevel: null,
+                    ReplayRecordingMode.FullSession);
+            }
+
+            ReplayDiagnostics.ActiveRecorder = _replayRecorder;
+            _deferredStartApplied = true;
+            return;
+        }
+
+        if (_ghostsLoaded)
+        {
+            return;
+        }
+
+        _ghostsLoaded = true;
+        using (HitchProfiler.Scope("GhostLoad"))
+        {
+            if (_ghostMode.IncludesPersonalBest())
+            {
+                _ghostPlayer?.TryLoadBestRun(_levelId, _playerManager.Players.Count);
+            }
+
+            if (_ghostMode.IncludesWorldRecord() && _worldRecordGhost is not null)
+            {
+                if (_game.SteamGhosts.TryLoadWorldRecordGhost(_levelId, _playerManager.Players.Count, out ReplayFile cachedWorldRecord))
+                {
+                    _worldRecordGhost.TryLoadReplayFile(cachedWorldRecord);
+                }
+            }
+        }
+
+        InputDiagnostics.SetGhostOverlayActive(
+            personalBest: _ghostPlayer is { IsActive: true },
+            worldRecord: _worldRecordGhost is { IsActive: true });
+    }
+
     public void Update(GameTime gameTime)
     {
+        EnsureDeferredStart();
+        // UI / overlays: MonoGame frame time. Sim + wall integrity: multi-source trusted clock.
         float dt = Math.Min((float)gameTime.ElapsedGameTime.TotalSeconds, MaxSceneFrameTime);
+        float trustedDt = _trustedClock.Tick(MaxSceneFrameTime);
         Viewport viewport = _game.Viewport;
-        SyncActiveWallClock();
+        SyncActiveWallClock(trustedDt);
 
         if (!_editorTestMode && _game.Input.ReplayForceSavePressed)
         {
             // Never overwrite official best with an incomplete quit mid-run.
             if (_simulation.IsLevelComplete)
             {
-                ReplayData? forced = _replayRecorder.ExportReplay();
+                ReplayData? forced = ExportSessionReplay();
                 if (forced is not null)
                 {
                     _activeWallClock.CaptureFinal();
@@ -574,7 +650,7 @@ public sealed class GameScene : IScene
                 ExecuteConfirmedAction(action);
                 if (action == ConfirmActionKind.RestartLevel && !_exited)
                 {
-                    TickGameplaySimulation(gameTime, dt);
+                    TickGameplaySimulation(gameTime, dt, trustedDt);
                 }
             }
             else if (_confirmPopup.Result == PopupResult.Cancelled)
@@ -604,7 +680,7 @@ public sealed class GameScene : IScene
             GameAudio.SetPullRopeLoop(false);
             if (TryHotRestartLevel())
             {
-                TickGameplaySimulation(gameTime, dt);
+                TickGameplaySimulation(gameTime, dt, trustedDt);
                 return;
             }
 
@@ -614,7 +690,7 @@ public sealed class GameScene : IScene
                 HandlePauseMenuChoice(choice.Value);
                 if (choice.Value is PauseMenuChoice.Resume or PauseMenuChoice.Respawn)
                 {
-                    TickGameplaySimulation(gameTime, dt);
+                    TickGameplaySimulation(gameTime, dt, trustedDt);
                 }
             }
 
@@ -653,7 +729,7 @@ public sealed class GameScene : IScene
                 UpdateDeathUi(gameTime);
             }
 
-            TickGameplaySimulation(gameTime, dt);
+            TickGameplaySimulation(gameTime, dt, trustedDt);
             return;
         }
 
@@ -689,7 +765,7 @@ public sealed class GameScene : IScene
 
         if (TryHotRestartLevel())
         {
-            TickGameplaySimulation(gameTime, dt);
+            TickGameplaySimulation(gameTime, dt, trustedDt);
             return;
         }
 
@@ -705,10 +781,12 @@ public sealed class GameScene : IScene
 
         _tuningPanel.Update(gameTime, _game.Input, viewport, _game.Party);
 
-        TickGameplaySimulation(gameTime, dt);
+        TickGameplaySimulation(gameTime, dt, trustedDt);
     }
 
-    private void TickGameplaySimulation(GameTime gameTime, float dt)
+    /// <param name="uiDt">MonoGame frame dt — disconnect timers / non-sim UI.</param>
+    /// <param name="trustedDt">Multi-source wall dt — feeds sim Advance (anti CE speedhack).</param>
+    private void TickGameplaySimulation(GameTime gameTime, float uiDt, float trustedDt)
     {
         GameNetworkCoordinator network = _game.GameNetwork;
         network.PumpIncoming(_session, _simulation);
@@ -720,7 +798,7 @@ public sealed class GameScene : IScene
             MultiplayerDebug.LogSimulationRunningOnce(_session, _simulation);
             MultiplayerDebug.LogTickPeriodic(_session, _simulation);
             MultiplayerDebug.CheckClientStall(_session, _simulation);
-            CheckClientSessionEnd(dt);
+            CheckClientSessionEnd(uiDt);
         }
 
         if (_game.Party.TryHotSwapLocalInputFromActivity(_game.Input))
@@ -746,7 +824,7 @@ public sealed class GameScene : IScene
             }
             else
             {
-                _simulation.AdvanceReplicatedSpawnHold(dt);
+                _simulation.AdvanceReplicatedSpawnHold(trustedDt);
             }
 
             BeginCompletionUi();
@@ -754,7 +832,7 @@ public sealed class GameScene : IScene
             return;
         }
 
-        _simulation.Advance(dt, _game.Input);
+        _simulation.Advance(trustedDt, _game.Input);
         SyncGhostsToSimulation();
         UpdateGameplayAudio();
         BeginCompletionUi();
@@ -943,7 +1021,8 @@ public sealed class GameScene : IScene
             _ghostPlayer,
             drawPlayerIndicators: !_photoMode,
             worldRecordGhost: _worldRecordGhost,
-            useGamepadBindings: BindingDisplay.UseGamepadBindings(_game.Input.LastUsedPartyInputSource));
+            useGamepadBindings: BindingDisplay.UseGamepadBindings(_game.Input.LastUsedPartyInputSource),
+            interpolationAlpha: _simulation.InterpolationAlpha);
 
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         if (!_photoMode)
@@ -1028,12 +1107,19 @@ public sealed class GameScene : IScene
 
     private Vector2 GetPlayersCenter()
     {
-        return GameplayCameraHelper.GetPlayersCenter(Players, _level.PlayerStart);
+        return GameplayCameraHelper.GetPlayersCenter(
+            Players,
+            _level.PlayerStart,
+            _simulation.InterpolationAlpha);
     }
 
     private float GetTargetCameraZoom(Viewport viewport)
     {
-        return GameplayCameraHelper.GetTargetCameraZoom(Players, Ropes, viewport);
+        return GameplayCameraHelper.GetTargetCameraZoom(
+            Players,
+            Ropes,
+            viewport,
+            _simulation.InterpolationAlpha);
     }
 
     private void UpdateCamera(GameTime gameTime)
@@ -1223,7 +1309,8 @@ public sealed class GameScene : IScene
             ropeMode,
             lavaRise,
             _ghostMode,
-            playerCollision));
+            playerCollision,
+            levelOverride: nextLevel));
     }
 
     private void ReplayLevel()
@@ -1296,6 +1383,7 @@ public sealed class GameScene : IScene
         }
 
         _activeWallClock.Reset();
+        _trustedClock.Reset();
         _game.GameNetwork.ClearClientLatchedInput();
         _camera.Position = GetPlayersCenter();
         _camera.SetZoom(GetTargetCameraZoom(_game.Viewport));
@@ -1324,8 +1412,9 @@ public sealed class GameScene : IScene
     /// <summary>
     /// Upload-only integrity clock. Never feeds physics. Stops on pause, death,
     /// completion, photo mode, unfocused window, and clients (host uploads).
+    /// Accumulates trusted multi-source frame deltas (not QPC-only Stopwatch).
     /// </summary>
-    private void SyncActiveWallClock()
+    private void SyncActiveWallClock(float trustedDt)
     {
         if (_simulation.IsLevelComplete)
         {
@@ -1343,6 +1432,7 @@ public sealed class GameScene : IScene
             && _game.IsActive;
 
         _activeWallClock.SetAccumulating(accumulate);
+        _activeWallClock.AddDelta(trustedDt);
     }
 
     private void ReturnToLevelSelect()

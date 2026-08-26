@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ColorBlocks.Replay;
 using Microsoft.Xna.Framework;
@@ -24,8 +25,11 @@ public static class GameplayWorldRenderer
     GhostPlayer? ghostPlayer = null,
     bool drawPlayerIndicators = true,
     GhostPlayer? worldRecordGhost = null,
-    bool useGamepadBindings = false)
+    bool useGamepadBindings = false,
+    float interpolationAlpha = 1f)
   {
+    float alpha = MathHelper.Clamp(interpolationAlpha, 0f, 1f);
+
     spriteBatch.Begin(samplerState: SamplerState.PointClamp);
     spriteBatch.Draw(pixel, new Rectangle(0, 0, viewport.Width, viewport.Height), new Color(36, 41, 52));
     spriteBatch.End();
@@ -37,12 +41,12 @@ public static class GameplayWorldRenderer
     level.Draw(spriteBatch, pixel, debugDraw, elapsedTime, isEditorMode: false, useGamepadBindings: useGamepadBindings);
     foreach (Rope rope in ropes)
     {
-      rope.Draw(spriteBatch, pixel, debugDraw);
+      rope.Draw(spriteBatch, pixel, debugDraw, alpha);
     }
 
     foreach (Player player in players)
     {
-      player.Draw(spriteBatch, pixel, debugDraw, drawPlayerIndicators);
+      player.Draw(spriteBatch, pixel, debugDraw, drawPlayerIndicators, alpha);
     }
 
     worldRecordGhost?.Draw(spriteBatch, pixel, debugDraw);

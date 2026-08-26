@@ -16,23 +16,48 @@ public static class PlayerSkinRenderer
         PlayerSkinData? cosmeticSkin,
         float rotation = 0f)
     {
-        Vector2 center = new(bodyBounds.Center.X, bodyBounds.Center.Y);
+        DrawBody(
+            spriteBatch,
+            pixel,
+            new Vector2(bodyBounds.Center.X, bodyBounds.Center.Y),
+            bodyBounds.Width,
+            bodyBounds.Height,
+            gameplayColor,
+            cosmeticSkin,
+            rotation);
+    }
 
+    public static void DrawBody(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        Vector2 bodyCenter,
+        float bodyWidth,
+        float bodyHeight,
+        Color gameplayColor,
+        PlayerSkinData? cosmeticSkin,
+        float rotation = 0f)
+    {
         DrawRotatedRect(
             spriteBatch,
             pixel,
-            center,
-            bodyBounds.Width,
-            bodyBounds.Height,
+            bodyCenter,
+            bodyWidth,
+            bodyHeight,
             rotation,
             gameplayColor);
 
+        Rectangle borderBounds = new(
+            (int)MathF.Round(bodyCenter.X - (bodyWidth * 0.5f)),
+            (int)MathF.Round(bodyCenter.Y - (bodyHeight * 0.5f)),
+            Math.Max(1, (int)MathF.Round(bodyWidth)),
+            Math.Max(1, (int)MathF.Round(bodyHeight)));
+
         if (cosmeticSkin is not null)
         {
-            DrawSkinOverlay(spriteBatch, pixel, bodyBounds, cosmeticSkin, rotation);
+            DrawSkinOverlay(spriteBatch, pixel, borderBounds, bodyCenter, cosmeticSkin, rotation);
         }
 
-        DrawHelper.DrawBorder(spriteBatch, pixel, bodyBounds, Color.Black, 3, rotation);
+        DrawHelper.DrawBorder(spriteBatch, pixel, borderBounds, Color.Black, 3, rotation);
     }
 
     public static void DrawSkinOverlay(
@@ -42,10 +67,26 @@ public static class PlayerSkinRenderer
         PlayerSkinData skin,
         float rotation = 0f)
     {
+        DrawSkinOverlay(
+            spriteBatch,
+            pixel,
+            bodyBounds,
+            new Vector2(bodyBounds.Center.X, bodyBounds.Center.Y),
+            skin,
+            rotation);
+    }
+
+    public static void DrawSkinOverlay(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        Rectangle bodyBounds,
+        Vector2 center,
+        PlayerSkinData skin,
+        float rotation = 0f)
+    {
         int grid = PlayerSkinData.GridSize;
         float cellW = bodyBounds.Width / (float)grid;
         float cellH = bodyBounds.Height / (float)grid;
-        Vector2 center = new(bodyBounds.Center.X, bodyBounds.Center.Y);
         float cos = MathF.Cos(rotation);
         float sin = MathF.Sin(rotation);
 

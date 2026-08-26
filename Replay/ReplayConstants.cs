@@ -6,6 +6,8 @@ public static class ReplayConstants
   public const int DefaultBufferSeconds = 60;
   public const int DefaultBufferCapacity = DefaultTicksPerSecond * DefaultBufferSeconds;
   public const int MaxSessionFrames = DefaultTicksPerSecond * 60 * 30;
+  public const int SessionBufferInitialCapacity = 256;
+  public const int SessionBufferPrewarmFrames = 180;
   public const int HighlightClipMinSeconds = 8;
   public const int HighlightClipMaxSeconds = 12;
   public const int HighlightClipTargetSeconds = 10;

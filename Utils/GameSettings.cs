@@ -15,8 +15,17 @@ public sealed class GameSettings
     [JsonPropertyName("resolutionHeight")]
     public int ResolutionHeight { get; set; } = 1080;
 
+    public const int CurrentAudioMixVersion = 2;
+
     [JsonPropertyName("musicVolume")]
-    public float MusicVolume { get; set; } = 0.75f;
+    public float MusicVolume { get; set; } = 0.5f;
+
+    /// <summary>
+    /// Bumped when shipped audio files are recalibrated. Missing/older values reset
+    /// music and SFX sliders to 0.5 so saved mix values match the new files.
+    /// </summary>
+    [JsonPropertyName("audioMixVersion")]
+    public int AudioMixVersion { get; set; }
 
     /// <summary>When true, menu playlist keeps playing during levels instead of level/silence tracks.</summary>
     [JsonPropertyName("continueMenuMusicInLevels")]
@@ -25,6 +34,10 @@ public sealed class GameSettings
     /// <summary>When true, the in-level controls HUD lists current key/button bindings.</summary>
     [JsonPropertyName("showControlsHud")]
     public bool ShowControlsHud { get; set; } = true;
+
+    /// <summary>When true, a 3-second spawn-hold countdown runs on level start / restart / respawn.</summary>
+    [JsonPropertyName("showSpawnCountdown")]
+    public bool ShowSpawnCountdown { get; set; } = true;
 
     // FPS cap. -1 = VSync (monitor refresh), 0 = Unlimited, >0 = hard cap.
     [JsonPropertyName("fpsLimit")]
@@ -61,16 +74,16 @@ public sealed class GameSettings
     {
         return new Dictionary<string, float>
         {
-            { "Jump", 1f },
-            { "PullRope", 1f },
-            { "Red", 1f },
-            { "Blue", 1f },
-            { "Green", 1f },
-            { "Checkpoint", 1f },
-            { "PhysicsExpulsion", 1f },
-            { "LaunchPad", 1f },
-            { "MenuNavigation", 1f },
-            { "Lava", 1f }
+            { "Jump", 0.5f },
+            { "PullRope", 0.5f },
+            { "Red", 0.5f },
+            { "Blue", 0.5f },
+            { "Green", 0.5f },
+            { "Checkpoint", 0.5f },
+            { "PhysicsExpulsion", 0.5f },
+            { "LaunchPad", 0.5f },
+            { "MenuNavigation", 0.5f },
+            { "Lava", 0.5f }
         };
     }
 }

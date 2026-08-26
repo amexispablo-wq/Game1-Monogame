@@ -46,7 +46,7 @@ public sealed class ReplayFrame
       _players.Add(playerSnapshot);
     }
 
-    _ropes.Clear();
+    ReleaseRopeStates();
     foreach (Rope rope in simulation.Ropes)
     {
       ReplayRopeState ropeState = ReplayRopeState.Rent();
@@ -87,7 +87,7 @@ public sealed class ReplayFrame
       _players.Add(playerSnapshot);
     }
 
-    _ropes.Clear();
+    ReleaseRopeStates();
     foreach (ReplayRopeState ropeState in other._ropes)
     {
       ReplayRopeState copy = ReplayRopeState.Rent();
@@ -124,7 +124,7 @@ public sealed class ReplayRopeState
 {
   private static readonly Stack<ReplayRopeState> Pool = new();
 
-  private readonly List<NetworkVector2> _nodePositions = new(32);
+  private readonly List<NetworkVector2> _nodePositions = new(Rope.ColoredPhysicsMinNodeCount);
 
   public int NetworkId { get; private set; }
   public int OwnerId { get; private set; }
@@ -145,6 +145,15 @@ public sealed class ReplayRopeState
     }
 
     return new ReplayRopeState();
+  }
+
+  public static void Prewarm(int count)
+  {
+    int needed = Math.Max(0, count - Pool.Count);
+    for (int i = 0; i < needed; i++)
+    {
+      Pool.Push(new ReplayRopeState());
+    }
   }
 
   public static void Return(ReplayRopeState state)

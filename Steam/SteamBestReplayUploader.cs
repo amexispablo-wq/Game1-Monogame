@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using ColorBlocks.Replay;
 
 namespace ColorBlocks;
@@ -8,12 +9,17 @@ namespace ColorBlocks;
 /// <summary>
 /// Uploads a local official best replay to Steam. Shared by GameScene (on new PB)
 /// and LevelSelect (repair/sync when local best beats the peeked WR).
+/// Heavy JSON/hash work runs off the game thread so select/enter do not hitch.
 /// </summary>
 public static class SteamBestReplayUploader
 {
     /// <param name="steamWorldRecordSeconds">
     /// When set (Level Select catch-up), disk-PB recovery only uploads if that disk
     /// time still beats the peeked Steam WR.
+    /// </param>
+    /// <param name="deferShareUntilIdle">
+    /// Queue Steam Cloud share until the player is not in a level (catch-up from
+    /// level select). Gameplay PB uploads pass false so they still send after a run.
     /// </param>
     public static void TryUpload(
         ColorBlocksGame game,
@@ -22,7 +28,8 @@ public static class SteamBestReplayUploader
         float timeSeconds,
         IReadOnlyList<ulong>? steamIds = null,
         float? steamWorldRecordSeconds = null,
-        Action<bool>? onComplete = null)
+        Action<bool>? onComplete = null,
+        bool deferShareUntilIdle = false)
     {
         if (!SteamLeaderboardService.SupportsLeaderboards(levelId)
             || !game.SteamLeaderboards.IsAvailable)
@@ -33,73 +40,106 @@ public static class SteamBestReplayUploader
 
         int clampedPlayers = SteamLeaderboardService.ClampPlayerCount(playerCount);
         string replayPath = ReplayStorage.GetBestReplayPath(levelId, clampedPlayers);
-        if (!TryResolveUploadableTime(
-                levelId,
-                clampedPlayers,
-                replayPath,
-                timeSeconds,
-                steamWorldRecordSeconds,
-                out float uploadTime,
-                out string resolveReason))
-        {
-            DiagnosticsLog.Info("SteamLeaderboard", $"Skip upload — {resolveReason}");
-            onComplete?.Invoke(false);
-            return;
-        }
-
-        if (!LeaderboardSanity.TryValidateUpload(
-                levelId, uploadTime, clampedPlayers, replayPath, out string sanityReason))
-        {
-            DiagnosticsLog.Info("SteamLeaderboard", $"Skip upload — {sanityReason}");
-            onComplete?.Invoke(false);
-            return;
-        }
-
-        int levelVersion = LevelLibrary.GetLevel(levelId)?.Version ?? 1;
         IReadOnlyList<ulong> ids = steamIds ?? CollectPartySteamIds(game);
-        int scoreUnits = BestTimeStorage.ToLeaderboardScore(uploadTime);
-        string boardName = SteamLeaderboardService.GetLeaderboardName(levelId, levelVersion, clampedPlayers);
+        int levelVersion = LevelLibrary.GetLevel(levelId)?.Version ?? 1;
 
-        DiagnosticsLog.Info(
-            "SteamLeaderboard",
-            $"Upload start board='{boardName}' time={uploadTime:0.####}s score={scoreUnits}");
-
-        game.SteamReplays.ShareReplayFile(
-            replayPath,
-            SteamReplayService.GetRemoteReplayName(levelId, clampedPlayers, scoreUnits),
-            ugcHandle =>
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            try
             {
-                if (ugcHandle == 0)
+                if (!TryResolveUploadableTime(
+                        levelId,
+                        clampedPlayers,
+                        replayPath,
+                        timeSeconds,
+                        steamWorldRecordSeconds,
+                        out float uploadTime,
+                        out string resolveReason))
                 {
-                    DiagnosticsLog.Info(
-                        "SteamLeaderboard",
-                        $"Share returned UGC=0 for '{boardName}' — uploading score without ghost attachment");
+                    DiagnosticsLog.Info("SteamLeaderboard", $"Skip upload — {resolveReason}");
+                    CompleteOnMain(onComplete, false);
+                    return;
                 }
 
-                game.SteamLeaderboards.UploadRecord(
-                    new SteamLeaderboardRecord
-                    {
-                        LevelId = levelId,
-                        LevelVersion = levelVersion,
-                        TimeSeconds = uploadTime,
-                        PlayerCount = clampedPlayers,
-                        SteamIds = ids,
-                        ReplayUgcHandle = ugcHandle
-                    },
-                    success =>
-                    {
-                        if (success)
-                        {
-                            SteamGhostService.InvalidateWorldRecordGhost(levelId, clampedPlayers);
-                            if (ugcHandle != 0)
-                            {
-                                game.SteamGhosts.EnsureWorldRecordGhost(levelId, clampedPlayers);
-                            }
-                        }
+                if (!LeaderboardSanity.TryValidateUpload(
+                        levelId, uploadTime, clampedPlayers, replayPath, out string sanityReason))
+                {
+                    DiagnosticsLog.Info("SteamLeaderboard", $"Skip upload — {sanityReason}");
+                    CompleteOnMain(onComplete, false);
+                    return;
+                }
 
-                        onComplete?.Invoke(success);
-                    });
-            });
+                int scoreUnits = BestTimeStorage.ToLeaderboardScore(uploadTime);
+                string boardName = SteamLeaderboardService.GetLeaderboardName(levelId, levelVersion, clampedPlayers);
+                DiagnosticsLog.Info(
+                    "SteamLeaderboard",
+                    $"Upload start board='{boardName}' time={uploadTime:0.####}s score={scoreUnits}");
+
+                void StartShare()
+                {
+                    game.SteamReplays.ShareReplayFile(
+                        replayPath,
+                        SteamReplayService.GetRemoteReplayName(levelId, clampedPlayers, scoreUnits),
+                        ugcHandle =>
+                        {
+                            if (ugcHandle == 0)
+                            {
+                                DiagnosticsLog.Info(
+                                    "SteamLeaderboard",
+                                    $"Share returned UGC=0 for '{boardName}' — uploading score without ghost attachment");
+                            }
+
+                            game.SteamLeaderboards.UploadRecord(
+                                new SteamLeaderboardRecord
+                                {
+                                    LevelId = levelId,
+                                    LevelVersion = levelVersion,
+                                    TimeSeconds = uploadTime,
+                                    PlayerCount = clampedPlayers,
+                                    SteamIds = ids,
+                                    ReplayUgcHandle = ugcHandle
+                                },
+                                success =>
+                                {
+                                    if (success)
+                                    {
+                                        SteamGhostService.InvalidateWorldRecordGhost(levelId, clampedPlayers);
+                                        if (ugcHandle != 0)
+                                        {
+                                            game.SteamGhosts.EnsureWorldRecordGhost(levelId, clampedPlayers);
+                                        }
+                                    }
+
+                                    onComplete?.Invoke(success);
+                                });
+                        });
+                }
+
+                if (deferShareUntilIdle)
+                {
+                    MainThreadActions.PostIdle(StartShare);
+                }
+                else
+                {
+                    MainThreadActions.Post(StartShare);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLog.Info("SteamLeaderboard", $"Upload prepare failed: {ex.Message}");
+                CompleteOnMain(onComplete, false);
+            }
+        });
+    }
+
+    private static void CompleteOnMain(Action<bool>? onComplete, bool success)
+    {
+        if (onComplete is null)
+        {
+            return;
+        }
+
+        MainThreadActions.Post(() => onComplete(success));
     }
 
     /// <summary>

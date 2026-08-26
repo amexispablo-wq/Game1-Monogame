@@ -107,7 +107,7 @@ El render corre a la tasa de MonoGame (vsync), pero el **gameplay corre a tick f
 - Acumulador de tiempo, máximo `MaxFrameTime = 0.25s`, máximo `MaxTicksPerFrame = 5` (anti spiral-of-death).
 - Cada tick: input local → `NetworkInputBuffer` → física → checkpoints → timer → meta → `GameSnapshot`.
 
-**Regla de oro:** lógica determinista de gameplay en `StepFixedTick`. Render/cámara pueden correr por frame.
+**Regla de oro:** lógica determinista de gameplay en `StepFixedTick`. Render/cámara pueden correr por frame. `GameSimulation.InterpolationAlpha` + poses render-prev interpolan solo el dibujo (jugadores/cuerda/cámara) entre ticks — física intacta.
 
 ## Capas de responsabilidad
 

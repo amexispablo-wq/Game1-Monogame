@@ -6,15 +6,22 @@ namespace ColorBlocks;
 
 public sealed class ControlsHudOverlay
 {
-    private static readonly (GameplayInputAction Action, string Label)[] Rows =
+    private static readonly Color PanelFill = new(24, 28, 38, 210);
+    private static readonly Color PanelBorder = new(90, 104, 130);
+
+    private static readonly (GameplayInputAction Action, string Label, GameColor? Tint)[] ColorRows =
     {
-        (GameplayInputAction.Red, "RED"),
-        (GameplayInputAction.Green, "GREEN"),
-        (GameplayInputAction.Blue, "BLUE"),
-        (GameplayInputAction.Jump, "JUMP"),
-        (GameplayInputAction.PullRope, "PULL ROPE"),
-        (GameplayInputAction.Respawn, "RESPAWN"),
-        (GameplayInputAction.RestartLevel, "RESTART LEVEL")
+        (GameplayInputAction.Red, "RED", GameColor.Red),
+        (GameplayInputAction.Green, "GREEN", GameColor.Green),
+        (GameplayInputAction.Blue, "BLUE", GameColor.Blue)
+    };
+
+    private static readonly (GameplayInputAction Action, string Label, GameColor? Tint)[] ActionRows =
+    {
+        (GameplayInputAction.Jump, "JUMP", null),
+        (GameplayInputAction.PullRope, "PULL ROPE", null),
+        (GameplayInputAction.Respawn, "RESPAWN", null),
+        (GameplayInputAction.RestartLevel, "RESTART LEVEL", null)
     };
 
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel, Viewport viewport, bool useGamepadBindings)
@@ -23,37 +30,101 @@ public sealed class ControlsHudOverlay
         int rowHeight = SimpleTextRenderer.MeasureString("A", scale).Y + 6;
         int paddingX = 10;
         int paddingY = 8;
+        int margin = 12;
+        int gap = SimpleTextRenderer.MeasureString("  ", scale).X;
 
-        int maxWidth = 0;
-        var lines = new string[Rows.Length];
-        for (int i = 0; i < Rows.Length; i++)
+        DrawPanel(
+            spriteBatch,
+            pixel,
+            ColorRows,
+            scale,
+            rowHeight,
+            paddingX,
+            paddingY,
+            gap,
+            useGamepadBindings,
+            left: true,
+            viewport,
+            margin);
+
+        DrawPanel(
+            spriteBatch,
+            pixel,
+            ActionRows,
+            scale,
+            rowHeight,
+            paddingX,
+            paddingY,
+            gap,
+            useGamepadBindings,
+            left: false,
+            viewport,
+            margin);
+    }
+
+    private static void DrawPanel(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        (GameplayInputAction Action, string Label, GameColor? Tint)[] rows,
+        int scale,
+        int rowHeight,
+        int paddingX,
+        int paddingY,
+        int gap,
+        bool useGamepadBindings,
+        bool left,
+        Viewport viewport,
+        int margin)
+    {
+        var bindings = new string[rows.Length];
+        int maxLabelWidth = 0;
+        int maxKeyWidth = 0;
+        for (int i = 0; i < rows.Length; i++)
         {
-            string binding = BindingDisplay.ForAction(Rows[i].Action, useGamepadBindings);
-            lines[i] = $"{Rows[i].Label}  {binding}";
-            Point size = SimpleTextRenderer.MeasureString(lines[i], scale);
-            if (size.X > maxWidth)
+            bindings[i] = BindingDisplay.ForAction(rows[i].Action, useGamepadBindings);
+            int labelWidth = SimpleTextRenderer.MeasureString(rows[i].Label, scale).X;
+            int keyWidth = SimpleTextRenderer.MeasureString(bindings[i], scale).X;
+            if (labelWidth > maxLabelWidth)
             {
-                maxWidth = size.X;
+                maxLabelWidth = labelWidth;
+            }
+
+            if (keyWidth > maxKeyWidth)
+            {
+                maxKeyWidth = keyWidth;
             }
         }
 
-        int panelWidth = maxWidth + (paddingX * 2);
-        int panelHeight = paddingY + (Rows.Length * rowHeight) + 4;
-        int x = 12;
-        int y = Math.Max(8, (int)(viewport.Height * 0.035f));
+        int panelWidth = paddingX + maxLabelWidth + gap + maxKeyWidth + paddingX;
+        int panelHeight = paddingY + (rows.Length * rowHeight) + 4;
+        int x = left ? margin : viewport.Width - panelWidth - margin;
+        int y = viewport.Height - panelHeight - margin;
         var panel = new Rectangle(x, y, panelWidth, panelHeight);
 
-        spriteBatch.Draw(pixel, panel, new Color(24, 28, 38, 210));
-        DrawHelper.DrawBorder(spriteBatch, pixel, panel, new Color(90, 104, 130), 1);
+        spriteBatch.Draw(pixel, panel, PanelFill);
+        DrawHelper.DrawBorder(spriteBatch, pixel, panel, PanelBorder, 1);
 
         int rowY = panel.Y + paddingY;
-        for (int i = 0; i < lines.Length; i++)
+        int labelX = panel.X + paddingX;
+        int keyX = labelX + maxLabelWidth + gap;
+        for (int i = 0; i < rows.Length; i++)
         {
+            Color labelColor = rows[i].Tint is GameColor tint
+                ? ColorPaletteManager.GetGameColor(tint)
+                : Color.White;
+
             SimpleTextRenderer.DrawString(
                 spriteBatch,
                 pixel,
-                lines[i],
-                new Vector2(panel.X + paddingX, rowY),
+                rows[i].Label,
+                new Vector2(labelX, rowY),
+                scale,
+                labelColor);
+            SimpleTextRenderer.DrawString(
+                spriteBatch,
+                pixel,
+                bindings[i],
+                new Vector2(keyX, rowY),
                 scale,
                 Color.White);
             rowY += rowHeight;

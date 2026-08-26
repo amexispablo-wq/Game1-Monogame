@@ -56,6 +56,7 @@ public sealed class GameSimulation
             $"GameSimulation ctor role={session.Role} state={session.State} " +
             $"players={Players.Count} ropes={Ropes.Count} tickRate={TickRate.TicksPerSecond} " +
             $"snapshotSeq={LastSnapshot.Sequence}");
+        SyncRenderPreviousToCurrent();
     }
 
     public Level Level { get; }
@@ -86,6 +87,24 @@ public sealed class GameSimulation
     public bool RecordProgress { get; set; } = true;
     /// <summary>Peer left mid-run — completion saves as unofficial / no Steam leaderboard.</summary>
     public bool ForceUnofficial { get; private set; }
+
+    /// <summary>
+    /// Render-only blend factor in [0,1] from the fixed-timestep residual.
+    /// Draw with lerp(prev, curr, alpha); never feed into physics.
+    /// </summary>
+    public float InterpolationAlpha
+    {
+        get
+        {
+            float fixedDelta = TickRate.FixedDeltaSeconds;
+            if (fixedDelta <= 1e-8f)
+            {
+                return 0f;
+            }
+
+            return Math.Clamp(_fixedTimeAccumulator / fixedDelta, 0f, 1f);
+        }
+    }
 
     /// <summary>
     /// Host: remove all players owned by steam peer, rebuild ropes, mark run unofficial.
@@ -172,6 +191,12 @@ public sealed class GameSimulation
 
     public void BeginSpawnHold()
     {
+        if (!SettingsManager.CurrentSettings.ShowSpawnCountdown)
+        {
+            SpawnHoldTicksRemaining = 0;
+            return;
+        }
+
         int ticks = (int)MathF.Round(SpawnHoldSeconds * TickRate.TicksPerSecond);
         SpawnHoldTicksRemaining = Math.Max(1, ticks);
     }
@@ -230,6 +255,7 @@ public sealed class GameSimulation
         BeginSpawnHold();
         LastSnapshot = CreateSnapshot(SimulationTick.Zero);
         SnapshotCount++;
+        SyncRenderPreviousToCurrent();
         DiagnosticsLog.Info("Sim", "RestartLevel — cleared input latch + InputBuffer (tick→0)");
         LevelRestarted?.Invoke();
     }
@@ -291,6 +317,7 @@ public sealed class GameSimulation
             LevelRestarted?.Invoke();
         }
 
+        SyncRenderPreviousToCurrent();
         MultiplayerDebug.RecordSnapshotApplied();
         MultiplayerDebug.LogSimulationStartedOnce(_session, this);
     }
@@ -326,6 +353,9 @@ public sealed class GameSimulation
 
     private void StepFixedTick()
     {
+        // Pose before this tick becomes render-prev; residual alpha lerps toward post-tick pose.
+        CaptureRenderPreviousState();
+
         SimulationTick tick = CurrentTick;
         InputFrame localFrame = CaptureLocalInputFrame(tick);
         _inputBuffer.StoreFrame(localFrame);
@@ -439,6 +469,32 @@ public sealed class GameSimulation
 
     /// <summary>Host RestartLevel, or client snapshot tick rewind after a party restart.</summary>
     public event Action? LevelRestarted;
+
+    private void CaptureRenderPreviousState()
+    {
+        foreach (Player player in Players)
+        {
+            player.CaptureRenderPrevious();
+        }
+
+        foreach (Rope rope in Ropes)
+        {
+            rope.CaptureRenderPrevious();
+        }
+    }
+
+    private void SyncRenderPreviousToCurrent()
+    {
+        foreach (Player player in Players)
+        {
+            player.SyncRenderPreviousToCurrent();
+        }
+
+        foreach (Rope rope in Ropes)
+        {
+            rope.SyncRenderPreviousToCurrent();
+        }
+    }
 
     private void AccumulateLocalInput(ILocalPlayerInputSource localInputSource)
     {

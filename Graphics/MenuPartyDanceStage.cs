@@ -27,7 +27,7 @@ public sealed class MenuPartyDanceStage
         GameColor.White
     };
 
-    private static float s_restoreVolume = 0.75f;
+    private static float s_restoreVolume = 0.5f;
 
     private Rectangle _bounds;
     private Rectangle _boomboxHitBounds;
@@ -179,7 +179,7 @@ public sealed class MenuPartyDanceStage
         }
         else
         {
-            next = s_restoreVolume > 0f ? s_restoreVolume : 0.75f;
+            next = s_restoreVolume > 0f ? s_restoreVolume : 0.5f;
         }
 
         SettingsManager.PendingSettings.MusicVolume = next;

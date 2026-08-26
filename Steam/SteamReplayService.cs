@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
 using Steamworks;
 
 namespace ColorBlocks;
@@ -32,20 +33,40 @@ public sealed class SteamReplayService
     /// <summary>Writes a local replay file to Steam Cloud and shares it. Callback receives the UGC handle (0 on failure).</summary>
     public void ShareReplayFile(string localPath, string remoteFileName, Action<ulong> onComplete)
     {
-        if (!IsAvailable || !File.Exists(localPath))
+        if (!IsAvailable)
         {
             onComplete(0);
             return;
         }
 
-        byte[] bytes;
-        try
+        ThreadPool.QueueUserWorkItem(_ =>
         {
-            bytes = File.ReadAllBytes(localPath);
-        }
-        catch (Exception ex)
+            byte[] bytes;
+            try
+            {
+                if (!File.Exists(localPath))
+                {
+                    MainThreadActions.Post(() => onComplete(0));
+                    return;
+                }
+
+                bytes = File.ReadAllBytes(localPath);
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLog.Info("SteamReplay", $"Read failed for '{localPath}': {ex.Message}");
+                MainThreadActions.Post(() => onComplete(0));
+                return;
+            }
+
+            MainThreadActions.Post(() => ShareReplayBytes(remoteFileName, bytes, onComplete));
+        });
+    }
+
+    private void ShareReplayBytes(string remoteFileName, byte[] bytes, Action<ulong> onComplete)
+    {
+        if (!IsAvailable)
         {
-            DiagnosticsLog.Info("SteamReplay", $"Read failed for '{localPath}': {ex.Message}");
             onComplete(0);
             return;
         }

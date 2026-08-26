@@ -19,6 +19,8 @@ public static class OfficialLevelManifest
     private static readonly object LoadLock = new();
     private static Dictionary<string, string>? _hashes;
     private static bool _loadAttempted;
+    private static readonly Dictionary<string, (long WriteTicks, long Length, string Hash)> HashCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -34,6 +36,7 @@ public static class OfficialLevelManifest
         {
             _hashes = null;
             _loadAttempted = false;
+            HashCache.Clear();
         }
     }
 
@@ -105,8 +108,27 @@ public static class OfficialLevelManifest
 
     public static string ComputeFileHash(string filePath)
     {
+        var info = new FileInfo(filePath);
+        long writeTicks = info.LastWriteTimeUtc.Ticks;
+        long length = info.Length;
+        lock (LoadLock)
+        {
+            if (HashCache.TryGetValue(filePath, out (long WriteTicks, long Length, string Hash) cached)
+                && cached.WriteTicks == writeTicks
+                && cached.Length == length)
+            {
+                return cached.Hash;
+            }
+        }
+
         byte[] bytes = File.ReadAllBytes(filePath);
-        return Convert.ToHexString(SHA256.HashData(bytes));
+        string hash = Convert.ToHexString(SHA256.HashData(bytes));
+        lock (LoadLock)
+        {
+            HashCache[filePath] = (writeTicks, length, hash);
+        }
+
+        return hash;
     }
 
     private static void EnsureLoaded()

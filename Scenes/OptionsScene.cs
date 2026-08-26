@@ -36,15 +36,13 @@ public sealed class OptionsScene : IScene
     private CycleSelector<ColorMode> _colorModeSelector;
 
     // Audio settings
-    private Slider _volumeSlider = new("Music Volume", 0.75f, 0f, 1f);
+    private Slider _volumeSlider = new("Music Volume", 0.5f, 0f, 1f);
     private readonly Checkbox _continueMenuMusicCheckbox = new()
     {
         Label = "Continue in levels"
     };
-    private readonly Checkbox _controlsHudCheckbox = new()
-    {
-        Label = "On"
-    };
+    private readonly Checkbox _controlsHudCheckbox = new();
+    private readonly Checkbox _spawnCountdownCheckbox = new();
     private readonly List<(string Key, string Label, Slider Slider, FocusableSlider Focus)> _soundEffectVolumes = new();
 
     // Buttons
@@ -58,6 +56,7 @@ public sealed class OptionsScene : IScene
     private readonly FocusableSlider _volumeFocus;
     private readonly FocusableCheckbox _continueMenuMusicFocus;
     private readonly FocusableCheckbox _controlsHudFocus;
+    private readonly FocusableCheckbox _spawnCountdownFocus;
     private readonly FocusableResolutionDropdown _resolutionFocus;
     private readonly FocusableButton _applyFocus;
     private readonly FocusableButton _backFocus;
@@ -126,7 +125,7 @@ public sealed class OptionsScene : IScene
         };
         _displayModeSelector = new CycleSelector<DisplayMode>(displayModes, FormatDisplayMode);
 
-        var fpsOptions = new List<int> { -1, 0, 30, 60, 120, 144, 240 };
+        var fpsOptions = new List<int> { -1, 0, 30, 60, 120, 144, 180, 240 };
         _fpsLimitSelector = new CycleSelector<int>(fpsOptions, FormatFpsLimit);
 
         var colorModes = new List<ColorMode>
@@ -146,6 +145,7 @@ public sealed class OptionsScene : IScene
         _volumeSlider.Value = pending.MusicVolume;
         _continueMenuMusicCheckbox.IsChecked = pending.ContinueMenuMusicInLevels;
         _controlsHudCheckbox.IsChecked = pending.ShowControlsHud;
+        _spawnCountdownCheckbox.IsChecked = pending.ShowSpawnCountdown;
 
         _backButton.TextScale = 3;
         _applyButton.TextScale = 3;
@@ -176,6 +176,7 @@ public sealed class OptionsScene : IScene
         _volumeFocus = new FocusableSlider(_volumeSlider);
         _continueMenuMusicFocus = new FocusableCheckbox(_continueMenuMusicCheckbox);
         _controlsHudFocus = new FocusableCheckbox(_controlsHudCheckbox);
+        _spawnCountdownFocus = new FocusableCheckbox(_spawnCountdownCheckbox);
         _resolutionFocus = new FocusableResolutionDropdown(_resolutionDropdown);
         _resolutionDropdown.RefreshSupportedResolutions(_game.GraphicsDevice);
         _applyFocus = new FocusableButton(_applyButton);
@@ -210,7 +211,7 @@ public sealed class OptionsScene : IScene
 
         foreach ((string key, string label) in effects)
         {
-            float volume = pending.SoundEffects.TryGetValue(key, out float value) ? value : 1f;
+            float volume = pending.SoundEffects.TryGetValue(key, out float value) ? value : 0.5f;
             var slider = new Slider(label, volume, 0f, 1f) { Label = string.Empty };
             _soundEffectVolumes.Add((key, label, slider, new FocusableSlider(slider)));
         }
@@ -404,6 +405,7 @@ public sealed class OptionsScene : IScene
 
         int colorModeIndex = -1;
         int controlsHudIndex = -1;
+        int spawnCountdownIndex = -1;
         int continueIndex = -1;
         var sfxIndices = new List<int>();
         var keyIndices = new List<int>();
@@ -417,11 +419,13 @@ public sealed class OptionsScene : IScene
             int fpsIndex = _focus.Add(_fpsLimitFocus, "FpsLimit");
             colorModeIndex = _focus.Add(_colorModeFocus, "ColorMode");
             controlsHudIndex = _focus.Add(_controlsHudFocus, "ControlsHud");
+            spawnCountdownIndex = _focus.Add(_spawnCountdownFocus, "SpawnCountdown");
             _focus.Navigation.LinkVertical(displayTabIndex, displayModeIndex);
             _focus.Navigation.LinkVertical(displayModeIndex, resolutionIndex);
             _focus.Navigation.LinkVertical(resolutionIndex, fpsIndex);
             _focus.Navigation.LinkVertical(fpsIndex, colorModeIndex);
             _focus.Navigation.LinkVertical(colorModeIndex, controlsHudIndex);
+            _focus.Navigation.LinkVertical(controlsHudIndex, spawnCountdownIndex);
         }
         else if (_activeSection == OptionsSection.Audio)
         {
@@ -484,7 +488,7 @@ public sealed class OptionsScene : IScene
             backIndex,
             applyIndex,
             colorModeIndex,
-            controlsHudIndex,
+            spawnCountdownIndex >= 0 ? spawnCountdownIndex : controlsHudIndex,
             continueIndex,
             sfxIndices,
             layout.AudioSfxColumns,
@@ -776,11 +780,18 @@ public sealed class OptionsScene : IScene
             "CONTROLS HUD",
             new Rectangle(layout.DisplayLabelBounds.X, layout.ControlsHudBounds.Y, layout.DisplayLabelBounds.Width, layout.ControlsHudBounds.Height),
             layout.ControlsHudBounds);
+        DrawSettingLabel(
+            spriteBatch,
+            pixel,
+            "COUNTDOWN",
+            new Rectangle(layout.DisplayLabelBounds.X, layout.SpawnCountdownBounds.Y, layout.DisplayLabelBounds.Width, layout.SpawnCountdownBounds.Height),
+            layout.SpawnCountdownBounds);
 
         _displayModeSelector.Draw(spriteBatch, pixel);
         _fpsLimitSelector.Draw(spriteBatch, pixel);
         _colorModeSelector.Draw(spriteBatch, pixel);
         _controlsHudCheckbox.Draw(spriteBatch, pixel);
+        _spawnCountdownCheckbox.Draw(spriteBatch, pixel);
 
         if (!_resolutionDropdown.IsExpanded)
         {
@@ -1217,6 +1228,7 @@ public sealed class OptionsScene : IScene
         _volumeSlider.Bounds = layout.VolumeBounds;
         _continueMenuMusicCheckbox.Bounds = layout.ContinueMenuMusicBounds;
         _controlsHudCheckbox.Bounds = layout.ControlsHudBounds;
+        _spawnCountdownCheckbox.Bounds = layout.SpawnCountdownBounds;
         _colorModeSelector.Bounds = layout.ColorModeBounds;
 
         for (int i = 0; i < _soundEffectVolumes.Count; i++)
@@ -1270,7 +1282,7 @@ public sealed class OptionsScene : IScene
         bool showControlsFooter = _activeSection == OptionsSection.Controls;
         int buttonBlockHeight = ButtonHeight + sectionGap;
 
-        int displayRows = 5;
+        int displayRows = 6;
         int displayContentHeight = (sectionPadding * 2) + sectionTitleHeight + sectionTitleSpacing
             + (rowHeight + 10) * (displayRows - 1) + rowHeight;
 
@@ -1424,6 +1436,7 @@ public sealed class OptionsScene : IScene
         Rectangle fpsLimitBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 2), displayControlBounds.Width, rowHeight);
         Rectangle colorModeBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 3), displayControlBounds.Width, rowHeight);
         Rectangle controlsHudBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 4), displayControlBounds.Width, rowHeight);
+        Rectangle spawnCountdownBounds = new(displayControlBounds.X, rowStartY + ((rowHeight + 10) * 5), displayControlBounds.Width, rowHeight);
         Rectangle colorModeLabelBounds = new(displayLabelBounds.X, colorModeBounds.Y, displayLabelBounds.Width, rowHeight);
         Rectangle volumeBounds = new(audioControlBounds.X, rowStartY, audioControlBounds.Width, audioRowHeight);
         Rectangle continueMenuMusicBounds = new(
@@ -1490,6 +1503,7 @@ public sealed class OptionsScene : IScene
             continueMenuMusicBounds,
             colorModeBounds,
             controlsHudBounds,
+            spawnCountdownBounds,
             audioSfxArea,
             audioSfxTitleY,
             audioColumns,
@@ -1756,6 +1770,7 @@ public sealed class OptionsScene : IScene
         SettingsManager.PendingSettings.MusicVolume = _volumeSlider.Value;
         SettingsManager.PendingSettings.ContinueMenuMusicInLevels = _continueMenuMusicCheckbox.IsChecked;
         SettingsManager.PendingSettings.ShowControlsHud = _controlsHudCheckbox.IsChecked;
+        SettingsManager.PendingSettings.ShowSpawnCountdown = _spawnCountdownCheckbox.IsChecked;
         SettingsManager.PendingSettings.FpsLimit = _fpsLimitSelector.CurrentOption;
         SettingsManager.PendingSettings.ColorMode = _colorModeSelector.CurrentOption;
         SettingsManager.PendingSettings.DisplayMode = _displayModeSelector.CurrentOption.ToString();
@@ -1957,11 +1972,12 @@ public sealed class OptionsScene : IScene
         _volumeSlider.Value = pending.MusicVolume;
         _continueMenuMusicCheckbox.IsChecked = pending.ContinueMenuMusicInLevels;
         _controlsHudCheckbox.IsChecked = pending.ShowControlsHud;
+        _spawnCountdownCheckbox.IsChecked = pending.ShowSpawnCountdown;
         _fpsLimitSelector.CurrentOption = pending.FpsLimit;
 
         foreach ((string key, string _, Slider slider, _) in _soundEffectVolumes)
         {
-            slider.Value = pending.SoundEffects.TryGetValue(key, out float volume) ? volume : 1f;
+            slider.Value = pending.SoundEffects.TryGetValue(key, out float volume) ? volume : 0.5f;
         }
 
         string displayMode = pending.DisplayMode.ToLowerInvariant();
@@ -2005,6 +2021,7 @@ public sealed class OptionsScene : IScene
         Rectangle ContinueMenuMusicBounds,
         Rectangle ColorModeBounds,
         Rectangle ControlsHudBounds,
+        Rectangle SpawnCountdownBounds,
         Rectangle AudioSfxArea,
         int AudioSfxTitleY,
         int AudioSfxColumns,

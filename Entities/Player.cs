@@ -68,6 +68,7 @@ public sealed class Player : INetworkEntity
         DisplayLabel = displayLabel;
         CurrentColor = GameColor.Red;
         ConfigureNetworkOwnership(ownership);
+        SyncRenderPreviousToCurrent();
     }
 
     public int NetworkId { get; private set; }
@@ -81,10 +82,14 @@ public sealed class Player : INetworkEntity
     public string DisplayLabel { get; }
     public InputDevice AssignedInput { get; set; }
     public Vector2 Position { get; set; }
+    /// <summary>Pose at start of last fixed tick — render lerp only.</summary>
+    public Vector2 RenderPreviousPosition { get; private set; }
     public Vector2 Velocity { get; set; }
     public Vector2 Acceleration { get; private set; }
     public Vector2 Size { get; } = new(40f, 40f);
     public float VisualRotation { get; private set; }
+    /// <summary>VisualRotation at start of last fixed tick — render lerp only.</summary>
+    public float RenderPreviousVisualRotation { get; private set; }
     public GameColor CurrentColor { get; private set; }
     public GameColor PlayerColor => CurrentColor;
     private PlayerSkinData? _cosmeticSkin;
@@ -195,6 +200,59 @@ public sealed class Player : INetworkEntity
         _forceAccumulator = Vector2.Zero;
         _jumpBufferRemaining = 0f;
         ApplyCosmeticSkinFromSnapshot(snapshot);
+        ApplyEjectionVisualFromSnapshot();
+        SyncRenderPreviousToCurrent();
+    }
+
+    public void CaptureRenderPrevious()
+    {
+        RenderPreviousPosition = Position;
+        RenderPreviousVisualRotation = VisualRotation;
+    }
+
+    public void SyncRenderPreviousToCurrent()
+    {
+        RenderPreviousPosition = Position;
+        RenderPreviousVisualRotation = VisualRotation;
+    }
+
+    public Vector2 GetDrawPosition(float alpha)
+    {
+        float t = MathHelper.Clamp(alpha, 0f, 1f);
+        return Vector2.Lerp(RenderPreviousPosition, Position, t);
+    }
+
+    public float GetDrawVisualRotation(float alpha)
+    {
+        float t = MathHelper.Clamp(alpha, 0f, 1f);
+        return MathHelper.Lerp(RenderPreviousVisualRotation, VisualRotation, t);
+    }
+
+    /// <summary>
+    /// Snapshots omit ejection direction/ramp. Approximate glow/streaks from velocity so
+    /// Steam clients and replay/highlights still show eject feedback.
+    /// </summary>
+    private void ApplyEjectionVisualFromSnapshot()
+    {
+        if (State != PlayerState.Ejecting)
+        {
+            _ejectionForceDirection = Vector2.Zero;
+            _ejectionRampAmount = 0f;
+            return;
+        }
+
+        float speedSquared = Velocity.LengthSquared();
+        if (speedSquared < 1f)
+        {
+            _ejectionForceDirection = Vector2.Zero;
+            _ejectionRampAmount = 0f;
+            return;
+        }
+
+        float speed = MathF.Sqrt(speedSquared);
+        _ejectionForceDirection = Velocity / speed;
+        // Map typical eject speeds into a readable 0.35–1 ramp for glow intensity.
+        _ejectionRampAmount = MathHelper.Clamp(speed / 420f, 0.35f, 1f);
     }
 
     private void ApplyCosmeticSkinFromSnapshot(PlayerSnapshot snapshot)
@@ -267,6 +325,7 @@ public sealed class Player : INetworkEntity
         ClearBuffs();
         VisualRotation = 0f;
         _airSpinSign = 1f;
+        SyncRenderPreviousToCurrent();
     }
 
     public void LaunchFromPad(Vector2 launchVelocity)
@@ -381,20 +440,35 @@ public sealed class Player : INetworkEntity
             : 1f;
     }
 
-    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, bool drawIndicator = true)
+    public void Draw(SpriteBatch spriteBatch, Texture2D pixel, bool debugDraw, bool drawIndicator = true, float interpolationAlpha = 1f)
     {
-        Rectangle bounds = Bounds;
+        Vector2 drawPosition = GetDrawPosition(interpolationAlpha);
+        float drawRotation = GetDrawVisualRotation(interpolationAlpha);
+        Rectangle bounds = new(
+            (int)MathF.Round(drawPosition.X),
+            (int)MathF.Round(drawPosition.Y),
+            (int)MathF.Round(Size.X),
+            (int)MathF.Round(Size.Y));
         DrawMotionTrail(spriteBatch, pixel);
         DrawEjectionFeedback(spriteBatch, pixel, bounds);
 
         Rectangle bodyBounds = GetVisualBodyBounds(bounds);
+        // Sub-pixel center: keeps high-FPS motion smooth even when bounds snap to ints.
+        Vector2 bodyCenter = drawPosition + (Size * 0.5f);
+        if (State == PlayerState.Ejecting && _ejectionForceDirection != Vector2.Zero)
+        {
+            bodyCenter = new Vector2(bodyBounds.Center.X, bodyBounds.Center.Y);
+        }
+
         PlayerSkinRenderer.DrawBody(
             spriteBatch,
             pixel,
-            bodyBounds,
+            bodyCenter,
+            bodyBounds.Width,
+            bodyBounds.Height,
             CurrentColor.ToXnaColor(),
             _cosmeticSkin,
-            VisualRotation);
+            drawRotation);
 
         if (drawIndicator)
         {
@@ -597,7 +671,7 @@ public sealed class Player : INetworkEntity
         _lastTrailSampleCenter = center;
     }
 
-    private void ClearMotionTrail()
+    internal void ClearMotionTrail()
     {
         _motionTrail.Clear();
         _trailSampleInitialized = false;

@@ -57,7 +57,7 @@ public sealed class MusicManager
     private int _sameTrackRestarts;
     private bool _catalogLoaded;
 
-    public float Volume { get; private set; } = 0.75f;
+    public float Volume { get; private set; } = 0.5f;
     public bool IsPlaying => MediaPlayer.State == MediaState.Playing;
     public string? CurrentMusicId => _currentMusicId;
     /// <summary>Menu shuffle owns MediaPlayer (even when muted / under editor).</summary>

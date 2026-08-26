@@ -8,8 +8,9 @@ namespace ColorBlocks;
 /// <summary>Shared gameplay camera targeting for live play and replay playback.</summary>
 public static class GameplayCameraHelper
 {
-  public static Vector2 GetPlayersCenter(IReadOnlyList<Player> players, Vector2 fallback)
+  public static Vector2 GetPlayersCenter(IReadOnlyList<Player> players, Vector2 fallback, float interpolationAlpha = 1f)
   {
+    float alpha = MathHelper.Clamp(interpolationAlpha, 0f, 1f);
     int localCount = 0;
     Vector2 total = Vector2.Zero;
     foreach (Player player in players)
@@ -20,7 +21,7 @@ public static class GameplayCameraHelper
       }
 
       localCount++;
-      total += player.Position + (player.Size * 0.5f);
+      total += player.GetDrawPosition(alpha) + (player.Size * 0.5f);
     }
 
     if (localCount == 0)
@@ -34,8 +35,10 @@ public static class GameplayCameraHelper
   public static float GetTargetCameraZoom(
     IReadOnlyList<Player> players,
     IReadOnlyList<Rope> ropes,
-    Viewport viewport)
+    Viewport viewport,
+    float interpolationAlpha = 1f)
   {
+    float alpha = MathHelper.Clamp(interpolationAlpha, 0f, 1f);
     int localCount = 0;
     foreach (Player player in players)
     {
@@ -62,7 +65,7 @@ public static class GameplayCameraHelper
         continue;
       }
 
-      Vector2 center = player.Position + (player.Size * 0.5f);
+      Vector2 center = player.GetDrawPosition(alpha) + (player.Size * 0.5f);
       minX = MathF.Min(minX, center.X);
       minY = MathF.Min(minY, center.Y);
       maxX = MathF.Max(maxX, center.X);
@@ -71,12 +74,15 @@ public static class GameplayCameraHelper
 
     foreach (Rope rope in ropes)
     {
-      foreach (RopeNode node in rope.Nodes)
+      Vector2 startAnchor = PlayerDrawAnchor(rope.StartPlayer, alpha);
+      Vector2 endAnchor = PlayerDrawAnchor(rope.EndPlayer, alpha);
+      for (int i = 0; i < rope.Nodes.Count; i++)
       {
-        minX = MathF.Min(minX, node.Position.X);
-        minY = MathF.Min(minY, node.Position.Y);
-        maxX = MathF.Max(maxX, node.Position.X);
-        maxY = MathF.Max(maxY, node.Position.Y);
+        Vector2 p = rope.GetDrawNodePosition(i, alpha, startAnchor, endAnchor);
+        minX = MathF.Min(minX, p.X);
+        minY = MathF.Min(minY, p.Y);
+        maxX = MathF.Max(maxX, p.X);
+        maxY = MathF.Max(maxY, p.Y);
       }
     }
 
@@ -96,4 +102,7 @@ public static class GameplayCameraHelper
     camera.Position = Vector2.Lerp(camera.Position, targetCenter, smoothing);
     camera.SetZoom(MathHelper.Lerp(camera.Zoom, targetZoom, smoothing));
   }
+
+    private static Vector2 PlayerDrawAnchor(Player player, float alpha) =>
+      player.GetDrawPosition(alpha) + (player.Size * 0.5f);
 }

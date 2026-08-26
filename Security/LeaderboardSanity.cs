@@ -14,15 +14,15 @@ public static class LeaderboardSanity
 
     /// <summary>
     /// Min wall/sim ratio. Below = fast-forward speedhack.
-    /// Wide band avoids false rejects from GC/scheduling noise.
+    /// Tightened vs older 0.65 — wall pauses on focus loss already.
     /// </summary>
-    public const float MinActiveWallRatio = 0.65f;
+    public const float MinActiveWallRatio = 0.85f;
 
     /// <summary>
     /// Max wall/sim ratio. Above = slow-mo speedhack (CE).
-    /// Wide band avoids false rejects from brief focus loss edge cases.
+    /// 1.25 leaves hitch/GC headroom with MaxTicksPerFrame catch-up caps.
     /// </summary>
-    public const float MaxActiveWallRatio = 1.50f;
+    public const float MaxActiveWallRatio = 1.25f;
 
     /// <summary>Frozen ElapsedTime for this many running frames while moving → reject.</summary>
     public const int TimerFreezeFrameThreshold = 30;
@@ -142,7 +142,7 @@ public static class LeaderboardSanity
 
     /// <summary>
     /// Compares focused wall-clock to sim score. <paramref name="activeWallSeconds"/> ≤ 0
-    /// skips the check (legacy replays / fail-open).
+    /// fails closed (legacy / missing wall cannot upload).
     /// </summary>
     public static bool TryValidateActiveWallRatio(
         float activeWallSeconds,
@@ -153,7 +153,8 @@ public static class LeaderboardSanity
 
         if (!float.IsFinite(activeWallSeconds) || activeWallSeconds <= 0f)
         {
-            return true;
+            reason = "Active wall-clock missing or zero (fail-closed).";
+            return false;
         }
 
         if (!float.IsFinite(scoreSeconds) || scoreSeconds <= 0f)

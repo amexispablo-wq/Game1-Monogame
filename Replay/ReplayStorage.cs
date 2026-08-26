@@ -55,15 +55,9 @@ public static class ReplayStorage
       path = GetLegacyBestReplayPath(levelId);
     }
 
-    if (!File.Exists(path))
-    {
-      _bestReplayExistsCache[key] = false;
-      return false;
-    }
-
-    bool valid = ReplayFileSerializer.TryLoad(path) is not null;
-    _bestReplayExistsCache[key] = valid;
-    return valid;
+    bool exists = File.Exists(path) && new FileInfo(path).Length > 0;
+    _bestReplayExistsCache[key] = exists;
+    return exists;
   }
 
   public static void SaveBestReplay(ReplayFile file, int playerCount)
